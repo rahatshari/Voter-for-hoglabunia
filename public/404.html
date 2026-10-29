@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ভোটার তালিকা লোড হচ্ছে...</title>
+  <script>
+    (function() {
+      var pathname = window.location.pathname;
+      var segments = pathname.split('/').filter(Boolean);
+      // If at root domain (e.g. username.github.io/)
+      if (segments.length === 0) {
+        // Check if there is a known repo name in referrer or fallback to Voter-for-hoglabunia
+        var targetRepo = 'Voter-for-hoglabunia';
+        window.location.replace('/' + targetRepo + '/');
+        return;
+      }
+      // If inside repo but at invalid subpath (like /repo/assets/ or /repo/404)
+      var repoBase = '/' + segments[0] + '/';
+      window.location.replace(repoBase);
+    })();
+  </script>
+</head>
+<body style="font-family: system-ui, sans-serif; background-color: #f1f4f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; text-align: center;">
+  <div style="background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 320px;">
+    <h3 style="color: #4f46e5; margin-bottom: 10px;">ভোটার তালিকা লোড হচ্ছে...</h3>
+    <p style="color: #64748b; font-size: 14px; margin-bottom: 20px;">অনুগ্রহ করে অপেক্ষা করুন...</p>
+    <a href="./" style="display: inline-block; background: #4f46e5; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px;">সরাসরি প্রবেশ করুন</a>
+  </div>
+</body>
+</html>

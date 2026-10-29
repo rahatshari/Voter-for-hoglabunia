@@ -8,7 +8,7 @@
     <meta property="og:title" content="ইউনিয়ন ভোটার তালিকা">
     <meta property="og:description" content="ইউনিয়ন ভোটার তালিকা ও ভোটার অনুসন্ধান অ্যাপ্লিকেশন">
     <link rel="icon" href="./icon-192.png" type="image/png">
-    <link rel="manifest" href="./manifest.json">
+    <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="./icon-192.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,6 +18,27 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        try {
+          var p = window.location.pathname;
+          var base = p.endsWith('.html') ? p.substring(0, p.lastIndexOf('/') + 1) : p.endsWith('/') ? p : p + '/';
+          var link = document.querySelector('link[rel="manifest"]');
+          if (link) {
+            fetch(link.href)
+              .then(function(res) { return res.json(); })
+              .then(function(m) {
+                m.start_url = base;
+                m.scope = base;
+                m.id = base;
+                var blob = new Blob([JSON.stringify(m)], { type: 'application/manifest+json' });
+                link.href = URL.createObjectURL(blob);
+              })
+              .catch(function() {});
+          }
+        } catch (e) {}
+      })();
+    </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 antialiased">
     <div id="root"></div>

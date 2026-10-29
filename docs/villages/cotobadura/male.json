@@ -1622,14 +1622,14 @@
   {
     "serialNo": "১৩৬",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "১৩৭",
@@ -2018,14 +2018,14 @@
   {
     "serialNo": "১৬৯",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "১৭০",
@@ -2102,14 +2102,14 @@
   {
     "serialNo": "১৭৬",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "১৭৭",
@@ -3434,14 +3434,14 @@
   {
     "serialNo": "২৮৭",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "২৮৮",
@@ -3613,15 +3613,15 @@
   },
   {
     "serialNo": "৩০২",
-    "name": "মাইগ্রেটেড",
-    "gender": "পুরুষ",
+    "name": "মাইগ্রেট হয়েছে",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "৩০৩",
@@ -4741,15 +4741,15 @@
   },
   {
     "serialNo": "৩৯৬",
-    "name": "মাইগ্রেটেড",
-    "gender": "পুরুষ",
+    "name": "মাইগ্রেট হয়েছে",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "৩৯৭",
@@ -5953,15 +5953,15 @@
   },
   {
     "serialNo": "৪৯৭",
-    "name": "মাইগ্রেটেড",
-    "gender": "পুরুষ",
+    "name": "মাইগ্রেট হয়েছে",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "৪৯৮",
@@ -8294,26 +8294,26 @@
   {
     "serialNo": "৬৯২",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "৬৯৩",
     "name": "কর্তন করা হয়েছে",
-    "gender": "পুরুষ",
+    "gender": "",
     "dob": "",
     "fatherName": "",
     "motherName": "",
     "profession": "",
     "voterId": "",
     "address": "",
-    "villageName": "ছোটবাদুরা"
+    "villageName": ""
   },
   {
     "serialNo": "৬৯৪",

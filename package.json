@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && cp -r villages dist/ && cp logo.png dist/ 2>/dev/null || true && cp manifest.json dist/ 2>/dev/null || true && rm -rf docs && cp -r dist docs",
+    "build": "vite build && cp -r villages dist/ 2>/dev/null || true && cp public/icon*.png public/logo.png public/manifest.json public/candidate-default.jpg public/symbol-default.png dist/assets/ 2>/dev/null || true && touch dist/.nojekyll && rm -rf docs && cp -r dist docs && touch docs/.nojekyll",
     "start": "tsx server.ts",
     "lint": "tsc --noEmit"
   },

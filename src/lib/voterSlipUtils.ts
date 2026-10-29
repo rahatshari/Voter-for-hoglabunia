@@ -3,96 +3,49 @@ import { CandidateProfile, Voter } from '../types';
 
 export const DEFAULT_CANDIDATES: CandidateProfile[] = [
   {
-    id: 'cand_sohrab_eagle',
-    name: 'অ্যাড. মোঃ সোহরাব উদ্দিন',
-    postTitle: 'সংসদ সদস্য পদপ্রার্থী',
-    religiousHeader: 'আল্লাহ সর্বশক্তিমান',
-    electionTitle: 'আসন্ন দ্বাদশ জাতীয় সংসদ নির্বাচনে কিশোরগঞ্জ-২ আসনে',
-    electionSubtitle: 'শান্তির পক্ষে-সন্ত্রাসের বিরুদ্ধে সংসদ সদস্য পদে জনগণ মনোনীত',
-    candidateBadge: 'স্বতন্ত্র প্রার্থী',
-    candidateName: 'অ্যাড. মোঃ সোহরাব উদ্দিন',
-    candidatePhotoUrl: './candidate-default.jpg',
-    symbolName: 'ঈগল পাখি',
-    symbolPhotoUrl: './symbol-default.png',
-    symbolCallout: 'মার্কায় ভোট দিন',
-    pollingCenter: 'কালকা নগর সরকারি প্রাথমিক বিদ্যালয়',
-    voterArea: 'পূর্ব কালিঞ্জুরী',
-    wardNo: '০১',
-    isCustom: false,
-  },
-  {
-    id: 'cand_rafiq_pineapple',
-    name: 'মোঃ রফিকুল ইসলাম',
-    postTitle: 'চেয়ারম্যান পদপ্রার্থী',
+    id: 'cand_ismail_pathamara',
+    name: 'মাওলানা মোঃ ইসমাইল',
+    postTitle: 'মেম্বার পদপ্রার্থী',
     religiousHeader: 'বিসমিল্লাহির রাহমানির রাহিম',
     electionTitle: 'আসন্ন ইউনিয়ন পরিষদ নির্বাচনে',
-    electionSubtitle: 'উন্নয়ন ও সততার প্রতীক যোগ্য চেয়ারম্যান পদপ্রার্থী',
-    candidateBadge: 'স্বতন্ত্র প্রার্থী',
-    candidateName: 'মোঃ রফিকুল ইসলাম',
-    candidatePhotoUrl: './candidate-default.jpg',
-    symbolName: 'আনারস',
-    symbolPhotoUrl: './symbol-default.png',
-    symbolCallout: 'আনারস মার্কায় ভোট দিন',
-    pollingCenter: 'ছোট বাদুরা সরকারি প্রাথমিক বিদ্যালয়',
-    voterArea: 'ছোট বাদুরা',
-    wardNo: '০২',
-    isCustom: false,
-  },
-  {
-    id: 'cand_delwar_motorcycle',
-    name: 'হাজী মোঃ দেলোয়ার হোসেন',
-    postTitle: 'চেয়ারম্যান পদপ্রার্থী',
-    religiousHeader: 'আল্লাহ সর্বশক্তিমান',
-    electionTitle: 'আসন্ন ইউনিয়ন পরিষদ সাধারণ নির্বাচনে',
-    electionSubtitle: 'গরীবের বন্ধু, সমাজসেবক ও গণমানুষের মনোনীত প্রার্থী',
-    candidateBadge: 'জনগণের প্রার্থী',
-    candidateName: 'হাজী মোঃ দেলোয়ার হোসেন',
-    candidatePhotoUrl: './candidate-default.jpg',
-    symbolName: 'মোটরসাইকেল',
-    symbolPhotoUrl: './symbol-default.png',
-    symbolCallout: 'মোটরসাইকেল মার্কায় ভোট দিন',
-    pollingCenter: 'পাঠামারা মাদ্রাসা কেন্দ্র',
-    voterArea: 'পাঠামারা',
-    wardNo: '০৩',
-    isCustom: false,
-  },
-  {
-    id: 'cand_shafiq_football',
-    name: 'মোঃ শফিকুল ইসলাম',
-    postTitle: 'সাধারণ সদস্য (মেম্বার) পদপ্রার্থী',
-    religiousHeader: 'বিসমিল্লাহির রাহমানির রাহিম',
-    electionTitle: 'আসন্ন ইউনিয়ন পরিষদ সাধারণ নির্বাচন',
-    electionSubtitle: 'আপনাদের প্রিয় ও বিশ্বস্ত সেবক মেম্বার প্রার্থী',
+    electionSubtitle: 'সততা ও নিষ্ঠার সাথে গণমানুষের প্রিয় মেম্বার প্রার্থী',
     candidateBadge: 'মেম্বার প্রার্থী',
-    candidateName: 'মোঃ শফিকুল ইসলাম',
+    candidateName: 'মাওলানা মোঃ ইসমাইল',
     candidatePhotoUrl: './candidate-default.jpg',
-    symbolName: 'ফুটবল',
+    symbolName: 'তালা',
     symbolPhotoUrl: './symbol-default.png',
-    symbolCallout: 'ফুটবল মার্কায় ভোট দিন',
-    pollingCenter: 'ইউনিয়ন কমপ্লেক্স কেন্দ্র',
-    voterArea: 'ছোট বাদুরা',
-    wardNo: '০১',
+    symbolCallout: 'তালা মার্কায় ভোট দিন',
+    pollingCenter: 'দারুল কোরআন সিনিয়র মাদ্রাসা',
+    voterArea: 'পাঠামারা',
+    wardNo: '০৭',
     isCustom: false,
   },
 ];
 
 export const DEFAULT_SLIP_CONFIG = DEFAULT_CANDIDATES[0];
 
-const CANDIDATES_STORAGE_KEY = 'union_candidates_list_v2';
-const ACTIVE_CANDIDATE_ID_KEY = 'union_active_candidate_id_v2';
+const CANDIDATES_STORAGE_KEY = 'union_candidates_list_v3';
+const ACTIVE_CANDIDATE_ID_KEY = 'union_active_candidate_id_v3';
 
 export function getAllCandidates(): CandidateProfile[] {
   try {
     const raw = localStorage.getItem(CANDIDATES_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      // Ensure old dummy candidate records are cleared
+      const hasOldDummy = Array.isArray(parsed) && parsed.some((c) =>
+        ['cand_sohrab_eagle', 'cand_rafiq_pineapple', 'cand_delwar_motorcycle', 'cand_shafiq_football'].includes(c.id)
+      );
+      if (Array.isArray(parsed) && parsed.length > 0 && !hasOldDummy) {
         return parsed;
       }
     }
   } catch (e) {
     console.warn('Failed to parse candidates list:', e);
   }
+  // Initialize storage with Maulana Md. Ismail
+  localStorage.setItem(CANDIDATES_STORAGE_KEY, JSON.stringify(DEFAULT_CANDIDATES));
+  localStorage.setItem(ACTIVE_CANDIDATE_ID_KEY, DEFAULT_CANDIDATES[0].id);
   return DEFAULT_CANDIDATES;
 }
 

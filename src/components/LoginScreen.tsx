@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { signInWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 
 interface LoginScreenProps {
@@ -19,6 +19,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     initialMessage || null
   );
 
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
@@ -31,22 +34,58 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
     setLoading(true);
     setStatusMessage({ text: 'লগইন করা হচ্ছে...', isError: false });
+    setUnauthorizedDomain(null);
 
     try {
+      // Check block status from server before logging in
+      try {
+        const checkRes = await fetch(`/api/auth/check-status?email=${encodeURIComponent(cleanEmail)}`);
+        if (checkRes.ok) {
+          const checkJson = await checkRes.json();
+          if (checkJson.isBlocked) {
+            setLoading(false);
+            setStatusMessage({
+              text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+              isError: true,
+            });
+            return;
+          }
+        }
+      } catch (checkErr) {
+        console.warn('Block check bypassed due to network:', checkErr);
+      }
+
       const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
       localStorage.setItem('voter_device_session_id', newSessionId);
 
+      const ua = navigator.userAgent;
+      let detectedDevice = 'Mobile Web';
+      if (/Android/i.test(ua)) detectedDevice = 'Android Mobile';
+      else if (/iPhone|iPad|iPod/i.test(ua)) detectedDevice = 'iOS Device';
+      else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
+      else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
+
       try {
-        await fetch('/api/session/register', {
+        const regRes = await fetch('/api/session/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email: userCredential.user.email,
             sessionId: newSessionId,
-            deviceName: 'Mobile Web',
+            deviceName: detectedDevice,
           }),
         });
+
+        if (regRes.status === 403) {
+          await signOut(auth);
+          setLoading(false);
+          setStatusMessage({
+            text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+            isError: true,
+          });
+          return;
+        }
       } catch (err) {
         console.warn('Session registration sync:', err);
       }
@@ -60,7 +99,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       const code = error?.code || '';
 
       if (code === 'auth/unauthorized-domain') {
-        errMsg = `ফায়ারবেসে এই ডোমেনটি অনুমোদন দেওয়া নেই (${window.location.hostname})। ফায়ারবেস কনসোলে ডোমেন যুক্ত করুন।`;
+        setUnauthorizedDomain(window.location.hostname);
+        errMsg = `ফায়ারবেসে এই ডোমেনটি (${window.location.hostname}) অনুমোদন করা নেই। নিচের নির্দেশিকা অনুযায়ী ডোমেনটি যুক্ত করুন।`;
       } else if (
         code === 'auth/invalid-credential' ||
         code === 'auth/user-not-found' ||
@@ -108,30 +148,89 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-sm p-8 rounded-2xl shadow-xl border border-slate-100">
-        <div className="text-center mb-6">
-          <img
-            src="./logo.png"
-            alt="Logo"
-            className="w-16 h-16 rounded-full mx-auto mb-3 object-cover shadow-sm border border-slate-200"
-            onError={(e) => {
-              (e.target as HTMLElement).style.display = 'none';
-            }}
-          />
-          <h2 className="text-2xl font-bold text-slate-800">স্বাগতম</h2>
-          <p className="text-slate-500 text-sm mt-1">ইউনিয়ন ভোটার তালিকায় প্রবেশ করুন</p>
+    <div className="min-h-screen w-full bg-slate-200 flex flex-col items-center justify-center p-3 sm:p-5">
+      <div className="bg-white w-full max-w-sm p-6 sm:p-7 rounded-3xl shadow-2xl border border-slate-200/90 text-slate-800 animate-in fade-in duration-200">
+        <div className="text-center mb-5">
+          <div className="relative inline-block mx-auto mb-2.5">
+            <img
+              src="/assets/aistudio/1773413745252_4746e28f.png"
+              alt="মাওলানা মোঃ ইসমাইল"
+              className="w-20 h-24 rounded-2xl mx-auto object-cover shadow-md border-2 border-amber-400 bg-slate-800"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = './logo.png';
+              }}
+            />
+            <span className="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 text-[10px] px-1.5 py-0.2 rounded font-black shadow-xs">
+              তালা মার্কা
+            </span>
+          </div>
+
+          <h2 className="text-lg font-black text-slate-900 tracking-tight">
+            মাওলানা মোঃ ইসমাইল
+          </h2>
+          <p className="text-[11px] font-bold text-indigo-700 mt-0.5">
+            আসন্ন ইউনিয়ন পরিষদ নির্বাচন • ৭ নং ওয়ার্ড
+          </p>
+          <span className="inline-block mt-1 bg-slate-100 text-slate-600 text-[10px] px-2.5 py-0.5 rounded-full font-semibold">
+            ভোট কেন্দ্র: দারুল কোরআন সিনিয়র মাদ্রাসা
+          </span>
         </div>
 
         {statusMessage && (
           <div
-            className={`p-3 rounded-xl text-xs mb-5 text-center leading-relaxed font-medium ${
+            className={`p-3 rounded-xl text-xs mb-3 text-center leading-relaxed font-medium ${
               statusMessage.isError
                 ? 'bg-red-50 text-red-700 border border-red-200'
                 : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
             }`}
           >
             {statusMessage.text}
+          </div>
+        )}
+
+        {unauthorizedDomain && (
+          <div className="mb-5 p-4 rounded-xl bg-amber-50 border border-amber-200 text-left text-xs text-amber-900 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-amber-950">
+              <span className="text-base">🔐</span>
+              <span>ফায়ারবেস অনুমোদিত ডোমেন পারমিশন দিন</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-amber-800">
+              ফায়ারবেসের নিরাপত্তা নিয়মের কারণে নতুন হোস্টিং ডোমেনটিতে লগইন চালু করতে নিচের ডোমেনটি অনুমতি দিতে হবে:
+            </p>
+            <div className="flex items-center justify-between bg-white border border-amber-300 rounded-lg p-2 font-mono text-[11px]">
+              <span className="truncate select-all font-semibold text-slate-800">{unauthorizedDomain}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(unauthorizedDomain);
+                  setCopiedDomain(true);
+                  setTimeout(() => setCopiedDomain(false), 2500);
+                }}
+                className="ml-2 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded font-sans text-[11px] font-bold cursor-pointer transition shrink-0"
+              >
+                {copiedDomain ? '✓ কপি হয়েছে' : 'কপি করুন'}
+              </button>
+            </div>
+            <div className="space-y-1 text-[11px] text-amber-900 pt-1">
+              <p className="font-bold">অনুমোদন দেওয়ার ধাপসমূহ:</p>
+              <ol className="list-decimal list-inside space-y-1 pl-1">
+                <li>Firebase Console-এ আপনার <strong className="font-bold">voter-apps-14962</strong> প্রজেক্টে যান।</li>
+                <li>বাম পাশের মেনু থেকে <strong className="font-bold">Authentication</strong> &gt; <strong className="font-bold">Settings</strong> ট্যাবে যান।</li>
+                <li><strong className="font-bold">Authorized domains</strong> অপশনে গিয়ে <strong className="font-bold">Add domain</strong> বাটনে চাপ দিন।</li>
+                <li>কপি করা ডোমেনটি পেস্ট করে <strong className="font-bold">Save</strong> করলেই সাথে সাথে লগইন কার্যকর হবে।</li>
+              </ol>
+            </div>
+            <div className="pt-1.5 text-center">
+              <a
+                href="https://console.firebase.google.com/project/voter-apps-14962/authentication/settings"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+              >
+                <span>ফায়ারবেস কনসোলে যান</span>
+                <span>↗</span>
+              </a>
+            </div>
           </div>
         )}
 

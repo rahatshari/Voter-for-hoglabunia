@@ -13,6 +13,7 @@ import { AnotherDeviceModal } from './components/AnotherDeviceModal';
 import { Toast } from './components/Toast';
 import { InstallPwaBanner } from './components/InstallPwaBanner';
 import { VoterSlipModal } from './components/VoterSlipModal';
+import { AdminPanelModal } from './components/AdminPanelModal';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -47,6 +48,8 @@ export const App: React.FC = () => {
   const [isAnotherDeviceOpen, setIsAnotherDeviceOpen] = useState(false);
   const [isSlipModalOpen, setIsSlipModalOpen] = useState(false);
   const [slipModalVoter, setSlipModalVoter] = useState<Voter | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginAlert, setLoginAlert] = useState<{ text: string; isError: boolean } | null>(null);
 
@@ -80,6 +83,27 @@ export const App: React.FC = () => {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  // Verify Admin Permissions for currentUser
+  useEffect(() => {
+    if (!currentUser?.email) {
+      setIsAdmin(false);
+      return;
+    }
+    const cleanEmail = currentUser.email.trim().toLowerCase();
+    fetch(`/api/admin/check?email=${encodeURIComponent(cleanEmail)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setIsAdmin(Boolean(data?.isAdmin));
+      })
+      .catch(() => {
+        // Fallback for default primary admin email
+        const isDefaultAdmin =
+          cleanEmail === 'rahatsharif10448@gmail.com' ||
+          cleanEmail === 'rahatsharif504@gmail.com';
+        setIsAdmin(isDefaultAdmin);
+      });
+  }, [currentUser]);
 
   // Helper to resolve static asset path relative to current app URL
   const getStaticUrl = useCallback((path: string) => {
@@ -211,11 +235,18 @@ export const App: React.FC = () => {
         }
 
         if (user.email) {
+          const ua = navigator.userAgent;
+          let detectedDevice = 'Mobile Web';
+          if (/Android/i.test(ua)) detectedDevice = 'Android Mobile';
+          else if (/iPhone|iPad|iPod/i.test(ua)) detectedDevice = 'iOS Device';
+          else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
+          else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
+
           // Attempt session register only if API backend exists
           fetch('/api/session/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: user.email, sessionId: mySessionId }),
+            body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
           })
             .then((res) => {
               if (res.ok) {
@@ -469,85 +500,104 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#F0F3F8] p-2.5 sm:p-5 text-slate-800">
-      {activeScreen === 'home' && (
-        <HomeScreen
-          userEmail={currentUser.email}
-          villagesData={villagesData}
-          onSelectVillage={handleSelectVillage}
-          onOpenGlobalSearch={handleOpenGlobalSearch}
-          onOpenAnalytics={handleOpenAnalytics}
-          onOpenSlipModal={handleOpenSlipModal}
-          onLogoutClick={() => setIsLogoutOpen(true)}
-        />
-      )}
+    <div className="min-h-screen w-full bg-[#F0F3F8] flex flex-col justify-start text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
+      {/* Responsive Viewport Container: Fits mobile perfectly & expands beautifully on PC */}
+      <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 flex flex-col">
+        {/* Main Content Viewport */}
+        <main className="flex-1 pb-20 sm:pb-24">
+          {activeScreen === 'home' && (
+            <HomeScreen
+              userEmail={currentUser.email}
+              villagesData={villagesData}
+              onSelectVillage={handleSelectVillage}
+              onOpenGlobalSearch={handleOpenGlobalSearch}
+              onOpenAnalytics={handleOpenAnalytics}
+              onOpenSlipModal={handleOpenSlipModal}
+              isAdmin={isAdmin}
+              onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
+              onLogoutClick={() => setIsLogoutOpen(true)}
+            />
+          )}
 
-      {activeScreen === 'search' && (
-        <SearchScreen
-          villageTitle={searchTitle}
-          villageKey={activeVillageKey}
-          voters={currentVoters}
-          initialSearch={savedSearch}
-          initialSettings={savedSettings}
-          onBack={handleBackToHome}
-          onOpenAnalytics={handleOpenAnalytics}
-          onOpenSlipModal={handleOpenSlipModal}
-          onLogoutClick={() => setIsLogoutOpen(true)}
-          showToast={showToast}
-          onStateChange={handleStateChange}
-        />
-      )}
+          {activeScreen === 'search' && (
+            <SearchScreen
+              villageTitle={searchTitle}
+              villageKey={activeVillageKey}
+              voters={currentVoters}
+              initialSearch={savedSearch}
+              initialSettings={savedSettings}
+              onBack={handleBackToHome}
+              onOpenAnalytics={handleOpenAnalytics}
+              onOpenSlipModal={handleOpenSlipModal}
+              onLogoutClick={() => setIsLogoutOpen(true)}
+              showToast={showToast}
+              onStateChange={handleStateChange}
+            />
+          )}
 
-      {activeScreen === 'analytics' && (
-        <AnalyticsScreen
-          villagesData={villagesData}
-          initialVillage={analyticsVillage}
-          onNavigateHome={handleBackToHome}
-          onNavigateSearch={(village) => {
-            if (village && villagesData[village]) {
-              handleSelectVillage(village);
-            } else {
-              handleOpenGlobalSearch();
-            }
-          }}
-        />
-      )}
+          {activeScreen === 'analytics' && (
+            <AnalyticsScreen
+              villagesData={villagesData}
+              initialVillage={analyticsVillage}
+              onNavigateHome={handleBackToHome}
+              onNavigateSearch={(village) => {
+                if (village && villagesData[village]) {
+                  handleSelectVillage(village);
+                } else {
+                  handleOpenGlobalSearch();
+                }
+              }}
+            />
+          )}
+        </main>
+      </div>
 
-      {/* Floating Material Navigation Dock */}
+      {/* Floating Bottom Navigation Bar */}
       <NavigationDock
         activeScreen={activeScreen}
         onNavigate={handleDockNavigate}
         onOpenSlipModal={() => handleOpenSlipModal(null)}
+        isAdmin={isAdmin}
+        onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
         onLogoutClick={() => setIsLogoutOpen(true)}
       />
 
       {/* Logout Confirmation Modal */}
       <LogoutModal
         isOpen={isLogoutOpen}
-        isLoading={isLoggingOut}
-        onClose={() => setIsLogoutOpen(false)}
-        onConfirm={executeLogout}
-      />
+          isLoading={isLoggingOut}
+          onClose={() => setIsLogoutOpen(false)}
+          onConfirm={executeLogout}
+        />
 
-      {/* Another Device Logged In Modal */}
-      <AnotherDeviceModal
-        isOpen={isAnotherDeviceOpen}
-        onRedirect={handleKickedRedirect}
-      />
+        {/* Another Device Logged In Modal */}
+        <AnotherDeviceModal
+          isOpen={isAnotherDeviceOpen}
+          onRedirect={handleKickedRedirect}
+        />
 
-      {/* Voter Slip Maker & Print Modal */}
-      <VoterSlipModal
-        isOpen={isSlipModalOpen}
-        onClose={() => setIsSlipModalOpen(false)}
-        voter={slipModalVoter}
-        allVillages={villagesData}
-      />
+        {/* Voter Slip Maker & Print Modal */}
+        <VoterSlipModal
+          isOpen={isSlipModalOpen}
+          onClose={() => setIsSlipModalOpen(false)}
+          voter={slipModalVoter}
+          allVillages={villagesData}
+        />
 
-      {/* Toast Notification */}
-      <Toast message={toastMessage} />
+        {/* Super Admin Dashboard Modal (Protected: Only rendered/accessible for Admins) */}
+        {isAdmin && (
+          <AdminPanelModal
+            isOpen={isAdminPanelOpen}
+            onClose={() => setIsAdminPanelOpen(false)}
+            currentUserEmail={currentUser.email || ''}
+          />
+        )}
 
-      {/* PWA In-App Install Prompt Banner */}
-      <InstallPwaBanner />
-    </div>
+        {/* Toast Notification */}
+        <Toast message={toastMessage} />
+
+        {/* PWA In-App Install Prompt Banner */}
+        <InstallPwaBanner />
+      </div>
   );
 };

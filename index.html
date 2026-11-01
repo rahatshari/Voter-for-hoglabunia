@@ -2,7 +2,7 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>ইউনিয়ন ভোটার তালিকা</title>
     <meta name="description" content="ইউনিয়ন ভোটার তালিকা ও ভোটার অনুসন্ধান অ্যাপ্লিকেশন">
     <meta property="og:title" content="ইউনিয়ন ভোটার তালিকা">
@@ -12,12 +12,12 @@
     <link rel="apple-touch-icon" href="./icon-192.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="ভোটার তালিকা">
-    <meta name="theme-color" content="#4f46e5">
+    <meta name="theme-color" content="#312e81">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script>
       (function() {
         try {
@@ -40,8 +40,8 @@
       })();
     </script>
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800 antialiased">
-    <div id="root"></div>
+<body class="bg-slate-200 min-h-screen text-slate-800 antialiased selection:bg-indigo-500 selection:text-white" style="overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent;">
+    <div id="root" class="min-h-screen flex flex-col items-center justify-start"></div>
     <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

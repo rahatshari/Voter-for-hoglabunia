@@ -9,6 +9,9 @@ interface HomeScreenProps {
   onOpenGlobalSearch: () => void;
   onOpenAnalytics: (villageName?: string) => void;
   onOpenSlipModal?: (voter?: Voter | null) => void;
+  onOpenUserMonitoring?: () => void;
+  isAdmin?: boolean;
+  onOpenAdminPanel?: () => void;
   onLogoutClick: () => void;
 }
 
@@ -19,171 +22,316 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenGlobalSearch,
   onOpenAnalytics,
   onOpenSlipModal,
+  isAdmin,
+  onOpenAdminPanel,
   onLogoutClick,
 }) => {
   const villageNames = Object.keys(villagesData);
 
+  // Total voters across all villages
+  let grandTotalActive = 0;
+  let grandTotalMigrated = 0;
+  let totalMales = 0;
+  let totalFemales = 0;
+
+  Object.values(villagesData).forEach((list) => {
+    list.forEach((v) => {
+      const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
+      if (isMig) {
+        grandTotalMigrated++;
+      } else {
+        grandTotalActive++;
+        const g = v._gender || v.gender;
+        if (g === 'পুরুষ') totalMales++;
+        else if (g === 'মহিলা') totalFemales++;
+      }
+    });
+  });
+
   return (
-    <div className="max-w-5xl mx-auto soft-card p-4 sm:p-6 pb-20">
-      {/* Home Header */}
-      <div className="flex flex-wrap justify-between items-center pb-4 mb-5 border-b border-slate-200/80 gap-3">
+    <div className="space-y-4 sm:space-y-6">
+      {/* 1. Responsive Top Bar for HomeScreen (Looks great on Mobile & PC) */}
+      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-xs flex flex-wrap items-center justify-between gap-3.5">
         <div className="flex items-center gap-3">
           <img
             src="./logo.png"
-            alt="App Logo"
-            className="w-12 h-12 object-cover rounded-full border-2 border-white shadow-md"
+            alt="Logo"
+            className="w-11 h-11 sm:w-12 sm:h-12 object-cover rounded-2xl border-2 border-indigo-100 shadow-sm shrink-0"
             onError={(e) => {
               (e.target as HTMLElement).style.display = 'none';
             }}
           />
           <div>
-            <h2 className="text-lg font-bold text-slate-800">গ্রাম নির্বাচন করুন</h2>
-            {userEmail && (
-              <span className="text-xs text-slate-500 font-semibold">{userEmail}</span>
-            )}
+            <div className="flex items-center gap-2">
+              <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                গ্রাম নির্বাচন করুন
+              </h1>
+              <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                অনলাইন
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium truncate max-w-[220px] sm:max-w-md">
+              {userEmail ? (
+                <span>লগইন: <strong className="text-slate-700 font-semibold">{userEmail}</strong></span>
+              ) : (
+                'ইউনিয়ন ভোটার তালিকা ও নির্বাচনী স্লিপ'
+              )}
+            </p>
           </div>
         </div>
 
+        {/* Top Header Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Analytics Button with vibrant gradient styling matching the user reference image */}
-          <button
-            type="button"
-            onClick={() => onOpenAnalytics('all')}
-            className="bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-md hover:shadow-lg shadow-pink-500/25 cursor-pointer transition flex items-center gap-1.5"
-            title="ইউনিয়ন ভোটার ডাটা অ্যানালাইসিস"
-          >
-            <span>📊</span> ডাটা অ্যানালাইসিস
-          </button>
-
-          {/* Voter Slip Maker Button */}
-          {onOpenSlipModal && (
+          {/* Admin Panel Button (Only visible to authorized Admins) */}
+          {isAdmin && onOpenAdminPanel && (
             <button
               type="button"
-              onClick={() => onOpenSlipModal()}
-              className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-md hover:shadow-lg shadow-emerald-600/25 cursor-pointer transition flex items-center gap-1.5"
-              title="নির্বাচনী ভোটার স্লিপ প্রস্তুতকারক"
+              onClick={onOpenAdminPanel}
+              className="bg-slate-900 hover:bg-black text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+              title="সুপার অ্যাডমিন ড্যাশবোর্ড"
             >
-              <span>🗳️</span> ভোটার স্লিপ
+              <span>⚙️</span>
+              <span>অ্যাডমিন প্যানেল</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
             </button>
           )}
 
-          {/* Global Search Button */}
+          {/* Analytics Button */}
           <button
             type="button"
-            onClick={onOpenGlobalSearch}
-            className="soft-btn px-3 py-2 text-indigo-600 hover:text-indigo-800 flex items-center gap-1 text-xs font-bold cursor-pointer"
-            title="সকল গ্রামের তথ্য খুঁজুন"
+            onClick={() => onOpenAnalytics('all')}
+            className="bg-pink-50 hover:bg-pink-100 text-pink-700 border border-pink-200 px-3.5 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+            title="ইউনিয়ন ভোটার ডাটা অ্যানালাইসিস"
           >
-            <span>🔍</span> গ্লোবাল সার্চ
+            <span>📊</span>
+            <span className="hidden sm:inline">ডাটা</span> অ্যানালাইসিস
           </button>
+
+          {/* Voter Slip Maker */}
+          {onOpenSlipModal && (
+            <button
+              type="button"
+              onClick={() => onOpenSlipModal(null)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+              title="নির্বাচনী ভোটার স্লিপ প্রস্তুতকারক ও ব্লুটুথ প্রিন্টার"
+            >
+              <span>🗳️</span>
+              <span>ভোটার স্লিপ</span>
+            </button>
+          )}
 
           {/* Logout Button */}
           <button
             type="button"
             onClick={onLogoutClick}
-            className="soft-btn bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 text-xs font-bold cursor-pointer flex items-center gap-1.5"
+            className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1"
             title="লগআউট"
           >
-            🚪 লগআউট
+            <span>🚪</span>
+            <span className="hidden sm:inline">লগআউট</span>
           </button>
         </div>
       </div>
 
-      {/* Villages Grid */}
-      {villageNames.length === 0 ? (
-        <div className="text-center py-16 text-red-500 font-bold border border-dashed border-red-200 rounded-2xl bg-red-50/50">
-          এখনো কোনো গ্রামের ডাটা যোগ করা হয়নি।
+      {/* 2. Responsive Summary KPI Stats Bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3.5">
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 block">মোট সক্রিয় ভোটার</span>
+          <span className="text-xl sm:text-2xl font-black text-indigo-900">
+            {convertToBengaliNumbers(grandTotalActive)}
+          </span>
+          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">অরিজিনাল ভোটার</span>
         </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5 sm:gap-4">
-          {villageNames.map((village) => {
-            const voters = villagesData[village] || [];
-            const activeCount = voters.filter((v) =>
-              v._isMigrated !== undefined ? !v._isMigrated : !isMigrated(v)
-            ).length;
-            const migratedCount = voters.filter((v) =>
-              v._isMigrated !== undefined ? v._isMigrated : isMigrated(v)
-            ).length;
-            const malesCount = voters.filter(
-              (v) => (v._gender || v.gender) === 'পুরুষ'
-            ).length;
-            const femalesCount = voters.filter(
-              (v) => (v._gender || v.gender) === 'মহিলা'
-            ).length;
 
-            return (
-              <div
-                key={village}
-                className="soft-card p-4 text-center transition hover:-translate-y-1 hover:shadow-lg flex flex-col items-center justify-between gap-2.5 group relative border border-slate-200/70"
-              >
-                <div
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 block">পুরুষ ভোটার</span>
+          <span className="text-xl sm:text-2xl font-black text-blue-600">
+            {convertToBengaliNumbers(totalMales)}
+          </span>
+          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">মোট পুরুষ</span>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 block">মহিলা ভোটার</span>
+          <span className="text-xl sm:text-2xl font-black text-rose-600">
+            {convertToBengaliNumbers(totalFemales)}
+          </span>
+          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">মোট মহিলা</span>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 block">মোট গ্রাম এলাকা</span>
+          <span className="text-xl sm:text-2xl font-black text-emerald-600">
+            {convertToBengaliNumbers(villageNames.length)} টি
+          </span>
+          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">তালিকাভুক্ত এলাকা</span>
+        </div>
+      </div>
+
+      {/* 3. Quick Action Responsive Grid (2-cols on mobile, 4-cols on PC) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3.5">
+        {/* Action 1: Search */}
+        <button
+          type="button"
+          onClick={onOpenGlobalSearch}
+          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-indigo-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+        >
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xl shrink-0">
+            🔍
+          </div>
+          <div className="min-w-0">
+            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
+              ভোটার খুঁজুন
+            </h4>
+            <p className="text-[10px] text-slate-500 truncate mt-0.5">নাম, পিতা বা ক্রমিক</p>
+          </div>
+        </button>
+
+        {/* Action 2: Voter Slip */}
+        <button
+          type="button"
+          onClick={() => onOpenSlipModal && onOpenSlipModal(null)}
+          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-emerald-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+        >
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-xl shrink-0">
+            🗳️
+          </div>
+          <div className="min-w-0">
+            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
+              স্লিপ ও প্রিন্ট
+            </h4>
+            <p className="text-[10px] text-slate-500 truncate mt-0.5">থার্মাল ব্লুটুথ প্রিন্ট</p>
+          </div>
+        </button>
+
+        {/* Action 3: Analytics */}
+        <button
+          type="button"
+          onClick={() => onOpenAnalytics('all')}
+          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-pink-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+        >
+          <div className="w-10 h-10 rounded-xl bg-pink-50 border border-pink-100 flex items-center justify-center text-xl shrink-0">
+            📊
+          </div>
+          <div className="min-w-0">
+            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
+              অ্যানালাইসিস
+            </h4>
+            <p className="text-[10px] text-slate-500 truncate mt-0.5">পরিসংখ্যান ও চার্ট</p>
+          </div>
+        </button>
+
+        {/* Action 4: Admin Panel or Global List */}
+        {isAdmin && onOpenAdminPanel ? (
+          <button
+            type="button"
+            onClick={onOpenAdminPanel}
+            className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-3.5 rounded-2xl border border-slate-800 shadow-xs active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+          >
+            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-xl shrink-0 relative">
+              ⚙️
+              <span className="w-2 h-2 rounded-full bg-emerald-400 absolute top-1 right-1 animate-pulse" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="font-extrabold text-xs sm:text-sm text-white leading-tight">
+                অ্যাডমিন প্যানেল
+              </h4>
+              <p className="text-[10px] text-indigo-200 truncate mt-0.5">ইউজার সময় ও সেশন</p>
+            </div>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenGlobalSearch}
+            className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-blue-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-xl shrink-0">
+              📋
+            </div>
+            <div className="min-w-0">
+              <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
+                সম্পূর্ণ তালিকা
+              </h4>
+              <p className="text-[10px] text-slate-500 truncate mt-0.5">সব গ্রামের ভোটার</p>
+            </div>
+          </button>
+        )}
+      </div>
+
+      {/* 4. Village List Section (2 cols on mobile, 3-4 cols on PC) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🏡</span>
+            <h2 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">
+              গ্রামভিত্তিক ভোটার তালিকা ({convertToBengaliNumbers(villageNames.length)} টি)
+            </h2>
+          </div>
+          <span className="text-xs text-indigo-600 font-bold">
+            গ্রাম নির্বাচন করুন
+          </span>
+        </div>
+
+        {villageNames.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-slate-200 p-6">
+            <p className="text-xs text-slate-500 font-medium">কোনো গ্রামের ডাটা লোড করা যায়নি।</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+            {villageNames.map((village) => {
+              const voters = villagesData[village] || [];
+              const activeCount = voters.filter((v) =>
+                v._isMigrated !== undefined ? !v._isMigrated : !isMigrated(v)
+              ).length;
+              const malesCount = voters.filter(
+                (v) => (v._gender || v.gender) === 'পুরুষ'
+              ).length;
+              const femalesCount = voters.filter(
+                (v) => (v._gender || v.gender) === 'মহিলা'
+              ).length;
+
+              return (
+                <button
+                  key={village}
+                  type="button"
                   onClick={() => onSelectVillage(village)}
-                  className="w-full flex flex-col items-center cursor-pointer"
+                  className="bg-white hover:bg-slate-50 active:scale-[0.99] border border-slate-200 hover:border-indigo-300 rounded-2xl p-4 transition-all shadow-xs hover:shadow-md flex items-center justify-between text-left cursor-pointer gap-3 group"
                 >
-                  <span className="text-3xl transition group-hover:scale-110 mb-1">📍</span>
-                  <div className="flex items-center justify-center gap-1.5 flex-wrap mb-1.5">
-                    <span className="font-bold text-slate-800 text-base group-hover:text-indigo-600">
-                      {village}
-                    </span>
-                    <span className="text-[11px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full border border-slate-200">
-                      মোট: {convertToBengaliNumbers(voters.length)}
-                    </span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center text-xl shrink-0 font-bold group-hover:bg-indigo-600 group-hover:text-white transition">
+                      🏡
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-extrabold text-sm sm:text-base text-slate-900 leading-tight truncate group-hover:text-indigo-600 transition">
+                        {village}
+                      </h3>
+                      <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 font-medium flex-wrap">
+                        <span className="flex items-center gap-0.5 text-blue-600 font-semibold">
+                          <span>👨</span> {convertToBengaliNumbers(malesCount)}
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-0.5 text-rose-600 font-semibold">
+                          <span>👩</span> {convertToBengaliNumbers(femalesCount)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Original vs Struck-off / Migrated Voter Badges */}
-                  <div className="flex flex-col sm:flex-row items-center justify-center gap-1.5 w-full my-1">
-                    <span
-                      className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-full font-bold shadow-xs w-full sm:w-auto"
-                      title="অরিজিনাল / বৈধ ভোটার"
-                    >
-                      অরিজিনাল: {convertToBengaliNumbers(activeCount)} জন
-                    </span>
-                    {migratedCount > 0 ? (
-                      <span
-                        className="text-xs bg-rose-50 border border-rose-200 text-rose-600 px-2.5 py-1 rounded-full font-bold shadow-xs w-full sm:w-auto"
-                        title="কর্তিত / মাইগ্রেটেড ভোটার"
-                      >
-                        কর্তিত: {convertToBengaliNumbers(migratedCount)} জন
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <div className="text-right">
+                      <span className="block font-black text-indigo-600 text-sm sm:text-base">
+                        {convertToBengaliNumbers(activeCount)}
                       </span>
-                    ) : (
-                      <span
-                        className="text-[11px] bg-slate-50 border border-slate-200 text-slate-400 px-2 py-0.5 rounded-full font-medium"
-                      >
-                        কর্তিত: ০ জন
-                      </span>
-                    )}
+                      <span className="text-[10px] text-slate-400 font-semibold">ভোটার</span>
+                    </div>
+                    <span className="text-slate-400 group-hover:text-indigo-600 text-lg transition">›</span>
                   </div>
-
-                  {(malesCount > 0 || femalesCount > 0) && (
-                    <span className="text-[11px] text-slate-500 mt-1 font-medium">
-                      👨 {convertToBengaliNumbers(malesCount)} | 👩{' '}
-                      {convertToBengaliNumbers(femalesCount)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Village Quick Action Buttons */}
-                <div className="w-full grid grid-cols-2 gap-1.5 pt-2.5 mt-1 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => onSelectVillage(village)}
-                    className="py-1 px-1.5 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition cursor-pointer"
-                  >
-                    🔍 সার্চ
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAnalytics(village)}
-                    className="py-1 px-1.5 text-[11px] font-bold text-pink-600 bg-pink-50 hover:bg-pink-100 rounded-lg transition cursor-pointer"
-                  >
-                    📊 গ্রাফ
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

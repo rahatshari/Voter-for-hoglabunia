@@ -1,1 +1,22 @@
-{}
+{
+  "activeSessions": {
+    "rahatsharif504@gmail.com": {
+      "sessionId": "sess_1793237731730_kxzuijv6",
+      "email": "rahatsharif504@gmail.com",
+      "registeredAt": 1793503771574,
+      "lastActive": 1793503771574
+    }
+  },
+  "sessionHistory": [
+    {
+      "id": "hist_1793504148557_rnn9w",
+      "email": "rahatsharif10448@gmail.com",
+      "sessionId": "test_sess_active_1",
+      "deviceName": "Android Mobile (Chrome)",
+      "loginAt": 1793504139355,
+      "logoutAt": 1793504148557,
+      "durationMinutes": 1,
+      "endReason": "kicked"
+    }
+  ]
+}

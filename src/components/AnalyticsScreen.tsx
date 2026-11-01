@@ -198,7 +198,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5 animate-slide-down pb-12">
+    <div className="p-3 sm:p-4 space-y-4 animate-slide-down pb-24">
       {/* Top Header & Village Switcher Bar */}
       <div className="soft-card p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">

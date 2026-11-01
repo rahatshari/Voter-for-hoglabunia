@@ -61,6 +61,75 @@ export interface ActiveSessionInfo {
   lastActive: number;
 }
 
+export interface UserSessionData {
+  sessionId: string;
+  email: string;
+  deviceName?: string;
+  registeredAt: number;
+  lastActive: number;
+  isOnline: boolean;
+  durationMinutes: number;
+  lastSeenSecondsAgo?: number;
+}
+
+export interface SessionHistoryItem {
+  id: string;
+  email: string;
+  sessionId: string;
+  deviceName?: string;
+  loginAt: number;
+  logoutAt?: number;
+  durationMinutes: number;
+  endReason?: 'logout' | 'another_device' | 'kicked' | 'active';
+}
+
+export interface AdminSessionsResponse {
+  success: boolean;
+  activeUsers: UserSessionData[];
+  history: SessionHistoryItem[];
+  summary: {
+    totalDistinctEmails: number;
+    onlineCount: number;
+    totalRegisteredSessions: number;
+    totalHistoryCount: number;
+    avgDurationMinutes: number;
+  };
+}
+
+export interface AppUserRecord {
+  email: string;
+  name?: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'blocked';
+  createdAt: number;
+  lastLoginAt?: number;
+  totalMinutesSpent: number;
+  currentSessionDuration?: number;
+  isOnline?: boolean;
+  activeSessionId?: string;
+  deviceName?: string;
+  lastActive?: number;
+  lastPasswordChangedAt?: number | null;
+}
+
+export interface AdminPanelSummary {
+  totalRegisteredUsers: number;
+  onlineCount: number;
+  blockedCount: number;
+  totalCumulativeMinutes: number;
+  avgMinutesPerUser: number;
+}
+
+export interface AdminPanelData {
+  success: boolean;
+  isAdmin: boolean;
+  adminEmails: string[];
+  users: AppUserRecord[];
+  activeUsers: UserSessionData[];
+  history: SessionHistoryItem[];
+  summary: AdminPanelSummary;
+}
+
 export interface CandidateProfile {
   id: string;
   name: string;

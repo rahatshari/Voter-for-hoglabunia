@@ -326,7 +326,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     !search.gender;
 
   return (
-    <div className="max-w-5xl mx-auto soft-card p-4 sm:p-6 pb-20 relative">
+    <div className="soft-card p-3.5 sm:p-6 pb-24 relative space-y-4">
       {/* Search Header Row */}
       <div className="flex flex-wrap justify-between items-center pb-3 mb-3 border-b border-slate-200/80 gap-2">
         <div className="flex items-center gap-2">

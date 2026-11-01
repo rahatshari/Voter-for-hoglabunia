@@ -37,12 +37,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setUnauthorizedDomain(null);
 
     try {
-      // Check block status from server before logging in
+      // Check block status from server or client store on GitHub Pages
       try {
         const checkRes = await fetch(`/api/auth/check-status?email=${encodeURIComponent(cleanEmail)}`);
-        if (checkRes.ok) {
+        const ct = checkRes.headers.get('content-type') || '';
+        if (checkRes.ok && ct.includes('application/json')) {
           const checkJson = await checkRes.json();
           if (checkJson.isBlocked) {
+            setLoading(false);
+            setStatusMessage({
+              text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+              isError: true,
+            });
+            return;
+          }
+        } else {
+          // GitHub Pages client store check
+          const { loadStoredUsers } = await import('../lib/clientAdminStore');
+          const clientUsers = loadStoredUsers();
+          if (clientUsers[cleanEmail]?.status === 'blocked') {
             setLoading(false);
             setStatusMessage({
               text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
@@ -148,32 +161,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-200 flex flex-col items-center justify-center p-3 sm:p-5">
-      <div className="bg-white w-full max-w-sm p-6 sm:p-7 rounded-3xl shadow-2xl border border-slate-200/90 text-slate-800 animate-in fade-in duration-200">
-        <div className="text-center mb-5">
-          <div className="relative inline-block mx-auto mb-2.5">
-            <img
-              src="/assets/aistudio/1773413745252_4746e28f.png"
-              alt="মাওলানা মোঃ ইসমাইল"
-              className="w-20 h-24 rounded-2xl mx-auto object-cover shadow-md border-2 border-amber-400 bg-slate-800"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = './logo.png';
-              }}
-            />
-            <span className="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 text-[10px] px-1.5 py-0.2 rounded font-black shadow-xs">
-              তালা মার্কা
-            </span>
-          </div>
-
-          <h2 className="text-lg font-black text-slate-900 tracking-tight">
-            মাওলানা মোঃ ইসমাইল
-          </h2>
-          <p className="text-[11px] font-bold text-indigo-700 mt-0.5">
-            আসন্ন ইউনিয়ন পরিষদ নির্বাচন • ৭ নং ওয়ার্ড
-          </p>
-          <span className="inline-block mt-1 bg-slate-100 text-slate-600 text-[10px] px-2.5 py-0.5 rounded-full font-semibold">
-            ভোট কেন্দ্র: দারুল কোরআন সিনিয়র মাদ্রাসা
-          </span>
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-sm p-7 sm:p-8 rounded-3xl shadow-xl border border-slate-100">
+        <div className="text-center mb-6">
+          <img
+            src="./logo.png"
+            alt="Logo"
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full mx-auto mb-4 object-contain shadow-md border-2 border-indigo-100 p-1 bg-white ring-4 ring-indigo-50/80 transition-transform duration-200 hover:scale-105"
+            onError={(e) => {
+              (e.target as HTMLElement).style.display = 'none';
+            }}
+          />
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight">স্বাগতম</h2>
+          <p className="text-slate-500 text-sm mt-1">ইউনিয়ন ভোটার তালিকায় প্রবেশ করুন</p>
         </div>
 
         {statusMessage && (

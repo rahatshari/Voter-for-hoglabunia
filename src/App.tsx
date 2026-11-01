@@ -14,6 +14,12 @@ import { Toast } from './components/Toast';
 import { InstallPwaBanner } from './components/InstallPwaBanner';
 import { VoterSlipModal } from './components/VoterSlipModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
+import {
+  clientRegisterSession,
+  clientHeartbeat,
+  loadStoredAdminEmails,
+} from './lib/clientAdminStore';
+import { isEmailAdmin } from './lib/adminUtils';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -92,16 +98,21 @@ export const App: React.FC = () => {
     }
     const cleanEmail = currentUser.email.trim().toLowerCase();
     fetch(`/api/admin/check?email=${encodeURIComponent(cleanEmail)}`)
-      .then((res) => res.json())
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        if (res.ok && ct.includes('application/json')) {
+          return res.json();
+        }
+        throw new Error('Not JSON');
+      })
       .then((data) => {
         setIsAdmin(Boolean(data?.isAdmin));
       })
       .catch(() => {
-        // Fallback for default primary admin email
-        const isDefaultAdmin =
-          cleanEmail === 'rahatsharif10448@gmail.com' ||
-          cleanEmail === 'rahatsharif504@gmail.com';
-        setIsAdmin(isDefaultAdmin);
+        // Fallback for GitHub Pages and static hosts
+        const storedAdmins = loadStoredAdminEmails();
+        const userIsAdmin = isEmailAdmin(cleanEmail, storedAdmins);
+        setIsAdmin(userIsAdmin);
       });
   }, [currentUser]);
 
@@ -242,14 +253,15 @@ export const App: React.FC = () => {
           else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
           else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
 
-          // Attempt session register only if API backend exists
+          // Attempt session register with server, or fallback to client storage on GitHub Pages
           fetch('/api/session/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
           })
             .then((res) => {
-              if (res.ok) {
+              const ct = res.headers.get('content-type') || '';
+              if (res.ok && ct.includes('application/json')) {
                 // Poll validate session every 5 seconds if backend exists
                 if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
                 sessionIntervalRef.current = setInterval(async () => {
@@ -261,8 +273,8 @@ export const App: React.FC = () => {
                         user.email!
                       )}&sessionId=${encodeURIComponent(currentSid)}`
                     );
-                    const ct = valRes.headers.get('content-type') || '';
-                    if (valRes.ok && ct.includes('application/json')) {
+                    const vct = valRes.headers.get('content-type') || '';
+                    if (valRes.ok && vct.includes('application/json')) {
                       const data = await valRes.json();
                       if (data.isValid === false && data.reason === 'another_device_logged_in') {
                         if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
@@ -271,9 +283,21 @@ export const App: React.FC = () => {
                     }
                   } catch (e) {}
                 }, 5000);
+              } else {
+                throw new Error('Static host without /api');
               }
             })
-            .catch(() => {});
+            .catch(() => {
+              // GitHub Pages fallback: Register in client store and heartbeat
+              clientRegisterSession(user.email!, mySessionId!, detectedDevice);
+              if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+              sessionIntervalRef.current = setInterval(() => {
+                const currentSid = localStorage.getItem('voter_device_session_id');
+                if (currentSid) {
+                  clientHeartbeat(currentSid);
+                }
+              }, 5000);
+            });
         }
 
         const data = await loadVillages();

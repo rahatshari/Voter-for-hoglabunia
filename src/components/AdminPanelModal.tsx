@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../lib/firebase';
+import {
+  createFirebaseUserDirect,
+  sendPasswordResetSafe,
+} from '../lib/firebaseAuthAdmin';
 import {
   AdminPanelData,
   AppUserRecord,
@@ -54,12 +56,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user');
+  const [sendActivationEmail, setSendActivationEmail] = useState<boolean>(false);
+  const [showAddUserPassword, setShowAddUserPassword] = useState<boolean>(false);
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [addUserError, setAddUserError] = useState<string | null>(null);
 
   // Admin Emails Management State
   const [adminEmailsList, setAdminEmailsList] = useState<string[]>([]);
   const [newAdminInput, setNewAdminInput] = useState('');
+  const [newAdminError, setNewAdminError] = useState<string | null>(null);
   const [isSavingAdmins, setIsSavingAdmins] = useState(false);
 
   // Inline confirmations
@@ -139,76 +144,93 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     };
   }, [isOpen, autoRefresh, fetchAdminData]);
 
-  // Add User Handler (Hybrid: Server API with GitHub Pages Fallback)
+  // Add User Handler (Direct Firebase Auth + Hybrid Sync)
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddUserError(null);
-    const validation = validateNewUserForm(newEmail, newPassword);
+    const cleanMail = newEmail.trim().toLowerCase();
+    const cleanPass = newPassword.trim();
+    const cleanUserName = newName.trim();
+
+    const validation = validateNewUserForm(cleanMail, cleanPass);
     if (!validation.isValid) {
       setAddUserError(validation.error || 'ভুল তথ্য দেওয়া হয়েছে');
       return;
     }
 
     setIsSubmittingUser(true);
-    let handled = false;
-    const cleanMail = newEmail.trim().toLowerCase();
 
     try {
-      const res = await fetch('/api/admin/users/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-email': currentUserEmail,
-        },
-        body: JSON.stringify({
-          adminEmail: currentUserEmail,
-          email: cleanMail,
-          password: newPassword.trim(),
-          name: newName.trim(),
-          role: newRole,
-        }),
-      });
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        const json = await res.json();
-        if (json.success) {
-          handled = true;
-        }
+      // 1. Create user in Firebase Auth directly via Google Identity Toolkit API
+      // Works everywhere (GitHub Pages, Server, Dev) without logging out the current admin
+      const fbResult = await createFirebaseUserDirect(cleanMail, cleanPass, cleanUserName);
+      if (!fbResult.success) {
+        setAddUserError(fbResult.message);
+        setIsSubmittingUser(false);
+        return;
       }
-    } catch {
-      // Backend not running
-    }
 
-    // Client/GitHub Pages fallback:
-    if (!handled) {
+      // 2. Sync to Server if available
+      try {
+        await fetch('/api/admin/users/add', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-email': currentUserEmail,
+          },
+          body: JSON.stringify({
+            adminEmail: currentUserEmail,
+            email: cleanMail,
+            password: cleanPass,
+            name: cleanUserName,
+            role: newRole,
+          }),
+        });
+      } catch {
+        // Backend not running (e.g. GitHub Pages)
+      }
+
+      // 3. Sync to Client Store (guarantees local persistence on GitHub Pages)
       clientAddUser({
         email: cleanMail,
-        name: newName.trim(),
+        name: cleanUserName,
         role: newRole,
       });
 
-      // Try sending password reset / activation link via Firebase client SDK
-      try {
-        await sendPasswordResetEmail(auth, cleanMail);
-      } catch (fbErr) {
-        console.warn('Firebase reset email trigger on client:', fbErr);
+      // 4. If admin role, sync admin emails
+      if (newRole === 'admin') {
+        const storedAdmins = loadStoredAdminEmails();
+        if (!storedAdmins.includes(cleanMail)) {
+          const updated = [...storedAdmins, cleanMail];
+          saveStoredAdminEmails(updated);
+          setAdminEmailsList(updated);
+        }
       }
-      handled = true;
-    }
 
-    if (handled) {
-      showNotification(`✅ "${cleanMail}" সফলভাবে যুক্ত করা হয়েছে!`);
+      // 5. Send activation / password reset email if requested
+      if (sendActivationEmail) {
+        try {
+          await sendPasswordResetSafe(cleanMail);
+        } catch {}
+      }
+
+      showNotification(
+        fbResult.alreadyExists
+          ? `✅ "${cleanMail}" ব্যবহারকারী তালিকায় সফলভাবে যুক্ত ও সক্রিয় করা হয়েছে!`
+          : `✅ "${cleanMail}" অ্যাকাউন্টটি সফলভাবে ফায়ারবেসে তৈরি ও সক্রিয় করা হয়েছে!`
+      );
+
       setNewEmail('');
       setNewPassword('');
       setNewName('');
       setNewRole('user');
       setActiveTab('users');
       await fetchAdminData(true);
-    } else {
-      setAddUserError('ব্যবহারকারী যোগ করা সম্ভব হয়নি।');
+    } catch (err: any) {
+      setAddUserError(`ত্রুটি: ${err?.message || 'অ্যাকাউন্ট তৈরি করা সম্ভব হয়নি'}`);
+    } finally {
+      setIsSubmittingUser(false);
     }
-
-    setIsSubmittingUser(false);
   };
 
   // Toggle Block / Unblock (Hybrid: Server API with GitHub Pages Fallback)
@@ -252,32 +274,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setConfirmBlockEmail(null);
   };
 
-  // Send Password Reset (Uses Firebase Auth directly, works 100% on GitHub Pages)
+  // Send Password Reset (Uses Firebase Auth directly, works 100% on GitHub Pages & Server)
   const handleSendPasswordReset = async (email: string) => {
     setActionLoadingEmail(email);
     try {
-      // Always attempt Firebase direct client SDK first (works seamlessly on GitHub Pages)
-      await sendPasswordResetEmail(auth, email.trim());
-      showNotification(`🔑 "${email}" জিমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে!`);
-    } catch (err: any) {
-      // Try backend route as secondary fallback
-      try {
-        const res = await fetch('/api/admin/users/change-password', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-admin-email': currentUserEmail,
-          },
-          body: JSON.stringify({
-            adminEmail: currentUserEmail,
-            email,
-          }),
-        });
-        const json = await res.json();
-        showNotification(json.message || `🔑 "${email}" জিমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে!`);
-      } catch {
-        showNotification(`⚠️ ত্রুটি: ${err?.message || 'পাসওয়ার্ড লিংক পাঠানো যায়নি'}`);
-      }
+      const res = await sendPasswordResetSafe(email);
+      showNotification(res.message);
     } finally {
       setActionLoadingEmail(null);
     }
@@ -313,16 +315,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   };
 
   // Save Admin Emails (Hybrid: Server API with GitHub Pages Fallback)
-  const handleSaveAdmins = async () => {
-    if (adminEmailsList.length === 0) {
+  const handleSaveAdmins = async (customList?: string[]) => {
+    const listToSave = customList || adminEmailsList;
+    if (listToSave.length === 0) {
       showNotification('⚠️ কমপক্ষে ১টি অ্যাডমিন ইমেইল থাকতে হবে।');
       return;
     }
     setIsSavingAdmins(true);
-    let handled = false;
 
     try {
-      const res = await fetch('/api/admin/config/admins', {
+      await fetch('/api/admin/config/admins', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -330,19 +332,41 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         },
         body: JSON.stringify({
           adminEmail: currentUserEmail,
-          newAdminEmails: adminEmailsList,
+          newAdminEmails: listToSave,
         }),
       });
-      if (res.ok) handled = true;
     } catch {}
 
-    if (!handled) {
-      saveStoredAdminEmails(adminEmailsList);
-    }
+    saveStoredAdminEmails(listToSave);
+    setAdminEmailsList(listToSave);
 
-    showNotification('✅ অ্যাডমিন পারমিশন তালিকা সফলভাবে হালনাগাদ করা হয়েছে!');
+    showNotification('✅ অ্যাডমিন পারমিশন তালিকা সফলভাবে সংরক্ষিত হয়েছে!');
     await fetchAdminData(true);
     setIsSavingAdmins(false);
+  };
+
+  // Add new admin email directly
+  const handleAddAdminEmail = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setNewAdminError(null);
+    const clean = newAdminInput.trim().toLowerCase();
+    if (!clean) {
+      setNewAdminError('দয়া করে জিমেইল আইডি লিখুন।');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(clean)) {
+      setNewAdminError('সঠিক জিমেইল ফরম্যাট দিন (যেমন: admin@gmail.com)।');
+      return;
+    }
+    if (adminEmailsList.includes(clean)) {
+      setNewAdminError('এই জিমেইলটি ইতিমধ্যে অ্যাডমিন তালিকায় বিদ্যমান রয়েছে।');
+      return;
+    }
+
+    const updated = [...adminEmailsList, clean];
+    setNewAdminInput('');
+    await handleSaveAdmins(updated);
   };
 
   // Clear Session History (Hybrid: Server API with GitHub Pages Fallback)
@@ -815,6 +839,33 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 </button>
                               )
                             )}
+
+                            {/* Promote / Demote Admin Button */}
+                            {!isCurrentUser && user.email.toLowerCase() !== 'rahatsharif10448@gmail.com' && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const isCurrentlyAdmin =
+                                    user.role === 'admin' || adminEmailsList.includes(user.email.toLowerCase());
+                                  let updated: string[];
+                                  if (isCurrentlyAdmin) {
+                                    updated = adminEmailsList.filter((e) => e.toLowerCase() !== user.email.toLowerCase());
+                                    clientAddUser({ email: user.email, name: user.name, role: 'user' });
+                                    showNotification(`ℹ️ "${user.email}"-কে সাধারণ ব্যবহারকারী করা হয়েছে।`);
+                                  } else {
+                                    updated = [...adminEmailsList, user.email.toLowerCase()];
+                                    clientAddUser({ email: user.email, name: user.name, role: 'admin' });
+                                    showNotification(`🛡️ "${user.email}"-কে অ্যাডমিন হিসেবে যুক্ত করা হয়েছে!`);
+                                  }
+                                  await handleSaveAdmins(updated);
+                                }}
+                                className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                                title={user.role === 'admin' ? 'অ্যাডমিন পারমিশন বাতিল করুন' : 'অ্যাডমিন পারমিশন দিন'}
+                              >
+                                <span>🛡️</span>
+                                <span>{user.role === 'admin' ? 'অ্যাডমিন বাতিল' : 'অ্যাডমিন বানান'}</span>
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -875,13 +926,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <span>➕</span> নতুন জিমেইল অ্যাকাউন্ট তৈরি করুন
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  এখানে জিমেইল এবং পাসওয়ার্ড দিয়ে যুক্ত করলে তিনি সরাসরি অ্যাপে লগইন করতে পারবেন।
+                  এখানে জিমেইল এবং পাসওয়ার্ড দিয়ে যুক্ত করলে অ্যাকাউন্টটি তাৎক্ষণিকভাবে তৈরি হবে এবং ব্যবহারকারী সরাসরি অ্যাপে লগইন করতে পারবেন।
                 </p>
               </div>
 
               {addUserError && (
-                <div className="p-3 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-semibold">
-                  ⚠️ {addUserError}
+                <div className="p-3.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-semibold flex items-start gap-2">
+                  <span className="text-base">⚠️</span>
+                  <div className="flex-1">{addUserError}</div>
                 </div>
               )}
 
@@ -901,17 +953,39 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    প্রাথমিক পাসওয়ার্ড <span className="text-red-500">* (কমপক্ষে ৬ অক্ষর)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="পাসওয়ার্ড লিখুন (যেমন: 123456)"
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">
+                      লগইন পাসওয়ার্ড <span className="text-red-500">* (কমপক্ষে ৬ অক্ষর)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setNewPassword('123456')}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg cursor-pointer"
+                    >
+                      💡 ডিফল্ট পাসওয়ার্ড (123456) দিন
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showAddUserPassword ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="পাসওয়ার্ড লিখুন (যেমন: 123456)"
+                      required
+                      minLength={6}
+                      className="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAddUserPassword(!showAddUserPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                    >
+                      {showAddUserPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    ব্যবহারকারী এই পাসওয়ার্ড দিয়ে অ্যাপে লগইন করতে পারবেন।
+                  </span>
                 </div>
 
                 <div>
@@ -931,7 +1005,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     অ্যাকাউন্ট রোল / অনুমতি
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${newRole === 'user' ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold' : 'border-slate-200 text-slate-600'}`}>
                       <input
                         type="radio"
@@ -940,7 +1014,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         checked={newRole === 'user'}
                         onChange={() => setNewRole('user')}
                       />
-                      <span className="text-xs">সাধারণ ব্যবহারকারী (শুধু ভোটার স্লিপ ও সার্চ)</span>
+                      <span className="text-xs">সাধারণ ব্যবহারকারী (ভোটার সার্চ ও স্লিপ)</span>
                     </label>
 
                     <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${newRole === 'admin' ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold' : 'border-slate-200 text-slate-600'}`}>
@@ -951,18 +1025,40 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         checked={newRole === 'admin'}
                         onChange={() => setNewRole('admin')}
                       />
-                      <span className="text-xs">অ্যাডমিন (এই ড্যাশবোর্ড ব্যবহারের অনুমতি পাবে)</span>
+                      <span className="text-xs">অ্যাডমিন (ড্যাশবোর্ড অ্যাক্সেস ও নিয়ন্ত্রণ)</span>
                     </label>
                   </div>
+                </div>
+
+                <div className="pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
+                    <input
+                      type="checkbox"
+                      checked={sendActivationEmail}
+                      onChange={(e) => setSendActivationEmail(e.target.checked)}
+                      className="w-4 h-4 text-indigo-600 rounded"
+                    />
+                    <span>জিমেইলে পাসওয়ার্ড রিসেট বা অ্যাক্টিভেশন ইমেইল লিংকও পাঠান</span>
+                  </label>
                 </div>
 
                 <div className="pt-2">
                   <button
                     type="submit"
                     disabled={isSubmittingUser}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-md shadow-indigo-500/20"
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2"
                   >
-                    {isSubmittingUser ? 'যুক্ত করা হচ্ছে...' : 'যুক্ত করুন ও সক্রিয় করুন'}
+                    {isSubmittingUser ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>অ্যাকাউন্ট তৈরি হচ্ছে...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>➕</span>
+                        <span>যুক্ত করুন ও তাৎক্ষণিক সক্রিয় করুন</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
@@ -974,82 +1070,107 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             <div className="max-w-xl mx-auto bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-5">
               <div className="border-b border-slate-100 pb-3">
                 <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                  <span>🛡️</span> অ্যাডমিন পারমিশন ব্যবস্থাপনা (১ বা ২টি ইমেইল)
+                  <span>🛡️</span> অ্যাডমিন পারমিশন ব্যবস্থাপনা
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  এখানে সংরক্ষিত ইমেইলগুলো ছাড়া অন্য কোনো ব্যবহারকারী এই অ্যাডমিন প্যানেল বা ইউজার তথ্য দেখতে পারবে না।
+                  এখানে অনুমোদিত যেকোনো জিমেইল দিয়ে লগইন করলে এই অ্যাডমিন ড্যাশবোর্ড দেখা ও পরিচালনা করা যাবে।
                 </p>
               </div>
 
-              <div className="space-y-3">
+              {newAdminError && (
+                <div className="p-3 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-semibold flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span>{newAdminError}</span>
+                </div>
+              )}
+
+              {/* Add New Admin Form */}
+              <form onSubmit={handleAddAdminEmail} className="space-y-2">
                 <label className="block text-xs font-bold text-slate-700">
-                  বর্তমান অনুমোদিত অ্যাডমিন তালিকা:
+                  নতুন অ্যাডমিন জিমেইল যুক্ত করুন:
                 </label>
-
-                {adminEmailsList.map((email, idx) => (
-                  <div
-                    key={email}
-                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200"
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={newAdminInput}
+                    onChange={(e) => {
+                      setNewAdminInput(e.target.value);
+                      if (newAdminError) setNewAdminError(null);
+                    }}
+                    placeholder="যেমন: newadmin@gmail.com"
+                    required
+                    className="flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-indigo-600 focus:bg-white transition"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSavingAdmins}
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-xs flex items-center gap-1.5 whitespace-nowrap"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-800 text-xs font-bold flex items-center justify-center">
-                        {convertToBengaliNumbers(idx + 1)}
-                      </span>
-                      <span className="font-bold text-xs text-slate-800">{email}</span>
-                      {idx === 0 && (
-                        <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">
-                          মূল সুপার অ্যাডমিন
-                        </span>
-                      )}
-                    </div>
+                    <span>🛡️</span>
+                    <span>অ্যাডমিন যোগ করুন</span>
+                  </button>
+                </div>
+                <span className="text-[10px] text-slate-400 block">
+                  জিমেইল আইডি লিখে 'অ্যাডমিন যোগ করুন' চাপলে সাথে সাথে সংরক্ষিত হয়ে যাবে।
+                </span>
+              </form>
 
-                    {idx > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAdminEmailsList(adminEmailsList.filter((_, i) => i !== idx));
-                        }}
-                        className="text-xs text-red-600 hover:text-red-700 font-bold cursor-pointer"
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700">
+                    বর্তমান অনুমোদিত অ্যাডমিন তালিকা:
+                  </label>
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
+                    মোট: {convertToBengaliNumbers(adminEmailsList.length)} জন
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {adminEmailsList.map((email, idx) => {
+                    const isPrimary = email.toLowerCase() === 'rahatsharif10448@gmail.com' || idx === 0;
+                    return (
+                      <div
+                        key={email}
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200"
                       >
-                        বাদ দিন
-                      </button>
-                    )}
-                  </div>
-                ))}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-6 h-6 shrink-0 rounded-full bg-indigo-100 text-indigo-800 text-xs font-bold flex items-center justify-center">
+                            {convertToBengaliNumbers(idx + 1)}
+                          </span>
+                          <span className="font-bold text-xs text-slate-800 truncate">{email}</span>
+                          {isPrimary && (
+                            <span className="shrink-0 text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">
+                              সুপার অ্যাডমিন
+                            </span>
+                          )}
+                        </div>
 
-                {adminEmailsList.length < 3 && (
-                  <div className="flex gap-2 pt-2">
-                    <input
-                      type="email"
-                      value={newAdminInput}
-                      onChange={(e) => setNewAdminInput(e.target.value)}
-                      placeholder="নতুন অ্যাডমিন জিমেইল লিখুন..."
-                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-indigo-600"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const clean = newAdminInput.trim().toLowerCase();
-                        if (clean && !adminEmailsList.includes(clean)) {
-                          setAdminEmailsList([...adminEmailsList, clean]);
-                          setNewAdminInput('');
-                        }
-                      }}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer"
-                    >
-                      যোগ করুন
-                    </button>
-                  </div>
-                )}
+                        {!isPrimary && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = adminEmailsList.filter((_, i) => i !== idx);
+                              handleSaveAdmins(updated);
+                            }}
+                            disabled={isSavingAdmins}
+                            className="text-xs text-red-600 hover:text-red-700 font-bold cursor-pointer px-2 py-1 rounded hover:bg-red-50"
+                          >
+                            বাদ দিন
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
 
-                <div className="pt-3">
+                <div className="pt-2">
                   <button
                     type="button"
-                    onClick={handleSaveAdmins}
+                    onClick={() => handleSaveAdmins()}
                     disabled={isSavingAdmins}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-md shadow-indigo-500/20"
+                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition"
                   >
-                    {isSavingAdmins ? 'সংরক্ষণ হচ্ছে...' : 'অ্যাডমিন তালিকা সংরক্ষণ করুন'}
+                    {isSavingAdmins ? 'সংরক্ষণ হচ্ছে...' : '💾 অ্যাডমিন তালিকা পুনরায় সংরক্ষণ করুন'}
                   </button>
                 </div>
               </div>

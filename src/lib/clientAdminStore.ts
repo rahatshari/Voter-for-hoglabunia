@@ -294,20 +294,31 @@ export function clientAddUser(data: {
   const users = loadStoredUsers();
   const cleanEmail = data.email.trim().toLowerCase();
   const now = Date.now();
+  const existing = users[cleanEmail];
 
   const newUser: AppUserRecord = {
     email: cleanEmail,
-    name: data.name?.trim() || cleanEmail.split('@')[0],
-    role: data.role || 'user',
+    name: data.name?.trim() || existing?.name || cleanEmail.split('@')[0],
+    role: data.role || existing?.role || 'user',
     status: 'active',
-    createdAt: now,
-    lastLoginAt: undefined,
-    totalMinutesSpent: 0,
-    lastPasswordChangedAt: null,
+    createdAt: existing?.createdAt || now,
+    lastLoginAt: existing?.lastLoginAt,
+    totalMinutesSpent: existing?.totalMinutesSpent || 0,
+    lastPasswordChangedAt: existing?.lastPasswordChangedAt || null,
   };
 
   users[cleanEmail] = newUser;
   saveStoredUsers(users);
+
+  // If role is admin, automatically ensure included in admin emails list
+  if (data.role === 'admin') {
+    const adminEmails = loadStoredAdminEmails();
+    if (!adminEmails.includes(cleanEmail)) {
+      adminEmails.push(cleanEmail);
+      saveStoredAdminEmails(adminEmails);
+    }
+  }
+
   return newUser;
 }
 

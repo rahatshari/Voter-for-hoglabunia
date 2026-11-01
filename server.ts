@@ -721,11 +721,6 @@ app.post('/api/admin/users/add', async (req: Request, res: Response) => {
   }
   const cleanEmail = String(email).trim().toLowerCase();
 
-  // If user already exists in appUsers
-  if (appUsers[cleanEmail]) {
-    return res.status(400).json({ error: 'এই জিমেইলটি ইতিমধ্যে তালিকায় বিদ্যমান রয়েছে।' });
-  }
-
   // Attempt creating user in Firebase Auth via Identity Toolkit REST API
   const FIREBASE_API_KEY =
     process.env.VITE_FIREBASE_API_KEY || 'AIzaSyDSE5kxWXULnlTB2sOY7AE6MLFLmHuguWg';
@@ -751,23 +746,33 @@ app.post('/api/admin/users/add', async (req: Request, res: Response) => {
     }
   }
 
+  const existingUser = appUsers[cleanEmail];
+  const userRole = role === 'admin' ? 'admin' : 'user';
+
   appUsers[cleanEmail] = {
     email: cleanEmail,
-    name: name ? String(name).trim() : cleanEmail.split('@')[0],
-    role: role === 'admin' ? 'admin' : 'user',
+    name: name ? String(name).trim() : existingUser?.name || cleanEmail.split('@')[0],
+    role: userRole,
     status: 'active',
-    createdAt: Date.now(),
-    lastLoginAt: undefined,
-    totalMinutesSpent: 0,
-    lastPasswordChangedAt: null,
+    createdAt: existingUser?.createdAt || Date.now(),
+    lastLoginAt: existingUser?.lastLoginAt,
+    totalMinutesSpent: existingUser?.totalMinutesSpent || 0,
+    lastPasswordChangedAt: existingUser?.lastPasswordChangedAt || null,
   };
   saveUsers();
+
+  // If role is admin, sync to adminEmails list
+  if (userRole === 'admin' && !adminEmails.includes(cleanEmail)) {
+    adminEmails.push(cleanEmail);
+    saveAdminConfig();
+  }
 
   res.json({
     success: true,
     user: appUsers[cleanEmail],
     firebaseCreated: !firebaseResult?.error,
     firebaseMessage: firebaseResult?.error?.message,
+    wasAlreadyExisted: !!existingUser,
   });
 });
 

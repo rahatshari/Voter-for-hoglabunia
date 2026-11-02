@@ -529,9 +529,13 @@ export function listenForSessionTermination(
   onTerminated: (reason: string) => void
 ): Unsubscribe {
   const sessionRef = ref(database, `sessions/${sessionId}`);
+  let hasEverExisted = false;
+
   return onValue(sessionRef, (snap) => {
-    // If the session was deleted from Cloud, check history to find why
-    if (!snap.exists()) {
+    if (snap.exists()) {
+      hasEverExisted = true;
+    } else if (hasEverExisted) {
+      // ONLY trigger if session previously existed and was subsequently removed
       onTerminated('session_removed');
     }
   });

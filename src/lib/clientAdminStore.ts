@@ -259,6 +259,36 @@ export function clientRegisterSession(
   return { success: true, isBlocked: false };
 }
 
+// Client End Session (on manual logout)
+export function clientEndSession(
+  sessionId: string,
+  email: string,
+  reason: 'logout' | 'kicked' | 'another_device' = 'logout'
+): void {
+  const sessions = loadStoredSessions();
+  const cleanEmail = email.trim().toLowerCase();
+  const sess = sessions[sessionId];
+  const now = Date.now();
+
+  if (sess) {
+    const duration = Math.max(1, Math.round((now - sess.registeredAt) / 60000));
+    const history = loadStoredHistory();
+    history.unshift({
+      id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
+      email: cleanEmail,
+      sessionId,
+      deviceName: sess.deviceName,
+      loginAt: sess.registeredAt,
+      logoutAt: now,
+      durationMinutes: duration,
+      endReason: reason,
+    });
+    saveStoredHistory(history);
+    delete sessions[sessionId];
+    saveStoredSessions(sessions);
+  }
+}
+
 // Client Heartbeat: updates lastActive and increments cumulative minutes
 export function clientHeartbeat(sessionId: string): void {
   const sessions = loadStoredSessions();

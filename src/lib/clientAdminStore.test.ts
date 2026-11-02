@@ -40,3 +40,21 @@ test('clientToggleBlock changes user status', () => {
   assert.ok(worker);
   assert.strictEqual(worker?.status, 'blocked');
 });
+
+test('clientEndSession records logout in history and removes session', async () => {
+  const { clientEndSession, loadStoredSessions, loadStoredHistory } = await import('./clientAdminStore');
+  const sid = 'sess_test_logout_' + Date.now();
+  clientRegisterSession('logoutuser@gmail.com', sid, 'Test Mobile');
+  
+  const sessionsBefore = loadStoredSessions();
+  assert.ok(sessionsBefore[sid], 'Session should exist before endSession');
+  
+  clientEndSession(sid, 'logoutuser@gmail.com', 'logout');
+  const sessionsAfter = loadStoredSessions();
+  assert.strictEqual(sessionsAfter[sid], undefined, 'Session should be removed after endSession');
+  
+  const history = loadStoredHistory();
+  const histItem = history.find((h) => h.sessionId === sid);
+  assert.ok(histItem, 'History should record the ended session');
+  assert.strictEqual(histItem?.endReason, 'logout');
+});

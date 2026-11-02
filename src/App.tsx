@@ -18,6 +18,7 @@ import { AdminPanelModal } from './components/AdminPanelModal';
 import {
   clientRegisterSession,
   clientHeartbeat,
+  clientEndSession,
   loadStoredAdminEmails,
 } from './lib/clientAdminStore';
 import {
@@ -73,6 +74,7 @@ export const App: React.FC = () => {
   };
 
   const sessionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const sessionListenerUnsubRef = useRef<(() => void) | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -269,17 +271,27 @@ export const App: React.FC = () => {
           else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
           else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
 
+          // Clean up any existing listeners before setting up new ones
+          if (sessionListenerUnsubRef.current) {
+            sessionListenerUnsubRef.current();
+            sessionListenerUnsubRef.current = null;
+          }
+          if (sessionIntervalRef.current) {
+            clearInterval(sessionIntervalRef.current);
+            sessionIntervalRef.current = null;
+          }
+
           // 1. Central Firebase Cloud Session Registration (Permanent history + real-time multi-admin visibility)
-          cloudRegisterSession(user.email, mySessionId, detectedDevice)
-            .then((res) => {
-              if (res.isBlocked) {
-                signOut(auth);
-                showToast('🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।');
-              }
-            })
-            .catch((err) => {
-              console.warn('Notice: cloudRegisterSession fallback:', err);
-            });
+          try {
+            const res = await cloudRegisterSession(user.email, mySessionId, detectedDevice);
+            if (res.isBlocked) {
+              await signOut(auth);
+              showToast('🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।');
+              return;
+            }
+          } catch (err) {
+            console.warn('Notice: cloudRegisterSession fallback:', err);
+          }
 
           // 2. Client store backup for offline resilience
           clientRegisterSession(user.email, mySessionId, detectedDevice);
@@ -292,7 +304,6 @@ export const App: React.FC = () => {
           }).catch(() => null);
 
           // 4. Set up periodic heartbeat (every 8 seconds) and session validation
-          if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
           sessionIntervalRef.current = setInterval(async () => {
             const currentSid = localStorage.getItem('voter_device_session_id');
             if (!currentSid || !user.email) return;
@@ -312,8 +323,14 @@ export const App: React.FC = () => {
               if (valRes.ok && vct.includes('application/json')) {
                 const data = await valRes.json();
                 if (data.isValid === false && data.reason === 'another_device_logged_in') {
-                  if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
-                  setIsAnotherDeviceOpen(true);
+                  const activeSid = localStorage.getItem('voter_device_session_id');
+                  if (activeSid === mySessionId && !isLoggingOut) {
+                    if (sessionIntervalRef.current) {
+                      clearInterval(sessionIntervalRef.current);
+                      sessionIntervalRef.current = null;
+                    }
+                    setIsAnotherDeviceOpen(true);
+                  }
                 }
               }
             } catch (e) {}
@@ -321,19 +338,18 @@ export const App: React.FC = () => {
 
           // 5. Real-time Firebase Cloud listener for remote kicks or another device login
           try {
-            const unsubscribeSession = listenForSessionTermination(mySessionId, () => {
+            sessionListenerUnsubRef.current = listenForSessionTermination(mySessionId, () => {
               // Check if session was terminated in cloud
               const currentSid = localStorage.getItem('voter_device_session_id');
               if (currentSid === mySessionId && !isLoggingOut) {
                 // Another device logged in or admin kicked this session
-                if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+                if (sessionIntervalRef.current) {
+                  clearInterval(sessionIntervalRef.current);
+                  sessionIntervalRef.current = null;
+                }
                 setIsAnotherDeviceOpen(true);
               }
             });
-            // Cleanup on logout/unmount
-            window.addEventListener('beforeunload', () => {
-              unsubscribeSession();
-            }, { once: true });
           } catch (e) {}
         }
 
@@ -490,7 +506,15 @@ export const App: React.FC = () => {
 
   const executeLogout = async () => {
     setIsLoggingOut(true);
-    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+    // Unsubscribe from session listener and stop heartbeat
+    if (sessionListenerUnsubRef.current) {
+      sessionListenerUnsubRef.current();
+      sessionListenerUnsubRef.current = null;
+    }
+    if (sessionIntervalRef.current) {
+      clearInterval(sessionIntervalRef.current);
+      sessionIntervalRef.current = null;
+    }
 
     const email = currentUser?.email;
     const sessionId = localStorage.getItem('voter_device_session_id');
@@ -501,6 +525,10 @@ export const App: React.FC = () => {
     if (email && sessionId) {
       try {
         await cloudEndSession(sessionId, email, 'logout');
+      } catch (e) {}
+
+      try {
+        clientEndSession(sessionId, email, 'logout');
       } catch (e) {}
 
       try {
@@ -520,11 +548,21 @@ export const App: React.FC = () => {
 
     setIsLoggingOut(false);
     setIsLogoutOpen(false);
+    setIsAnotherDeviceOpen(false);
+    setLoginAlert(null); // Clear any old login alerts
     setCurrentUser(null);
     setActiveScreen('home');
   };
 
   const handleKickedRedirect = () => {
+    if (sessionListenerUnsubRef.current) {
+      sessionListenerUnsubRef.current();
+      sessionListenerUnsubRef.current = null;
+    }
+    if (sessionIntervalRef.current) {
+      clearInterval(sessionIntervalRef.current);
+      sessionIntervalRef.current = null;
+    }
     setIsAnotherDeviceOpen(false);
     localStorage.removeItem('voter_device_session_id');
     localStorage.removeItem('voterAppSavedState');

@@ -339,7 +339,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             ⬅️
           </button>
           <img
-            src="/logo.png"
+            src="./logo.png"
             alt="Logo"
             className="w-8 h-8 rounded-full object-cover border border-slate-200"
             onError={(e) => {

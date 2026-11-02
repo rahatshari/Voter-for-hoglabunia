@@ -30,6 +30,14 @@ import {
   saveStoredHistory,
   loadStoredAdminEmails,
 } from '../lib/clientAdminStore';
+import {
+  fetchCloudAdminData,
+  cloudAddUser,
+  cloudToggleBlock,
+  cloudKickSession,
+  saveCloudAdminEmails,
+  getCloudAdminEmails,
+} from '../lib/cloudStore';
 
 interface AdminPanelModalProps {
   isOpen: boolean;
@@ -82,8 +90,29 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const fetchAdminData = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
-    let loadedFromServer = false;
 
+    // 1. First priority: Central Firebase Cloud Database (Real-time synchronization across all devices and admins)
+    try {
+      const cloudData = await fetchCloudAdminData(currentUserEmail);
+      if (cloudData) {
+        if (cloudData.isAdmin) {
+          setData(cloudData);
+          setAdminEmailsList(cloudData.adminEmails || []);
+          setError(null);
+          if (!isSilent) setLoading(false);
+          return;
+        } else {
+          setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
+          if (!isSilent) setLoading(false);
+          return;
+        }
+      }
+    } catch (cloudErr) {
+      console.warn('Notice: Firebase Cloud fetch error, attempting server/local fallback:', cloudErr);
+    }
+
+    // 2. Second priority: Backend Express Server if running (Dev mode)
+    let loadedFromServer = false;
     try {
       const res = await fetch(`/api/admin/data?adminEmail=${encodeURIComponent(currentUserEmail)}`, {
         headers: {
@@ -106,7 +135,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       // Backend not running (e.g. GitHub Pages or static host)
     }
 
-    // If server API wasn't available (e.g. running on GitHub Pages), use Client-Cloud Store fallback:
+    // 3. Third priority: Client local store fallback (offline resilience)
     if (!loadedFromServer) {
       try {
         const clientData = buildClientAdminData(currentUserEmail);
@@ -170,7 +199,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         return;
       }
 
-      // 2. Sync to Server if available
+      // 2. Sync to Central Firebase Cloud Realtime Database (so all admins immediately see them)
+      try {
+        await cloudAddUser({
+          email: cleanMail,
+          name: cleanUserName,
+          role: newRole,
+        });
+      } catch (cloudErr) {
+        console.warn('Notice: cloudAddUser error:', cloudErr);
+      }
+
+      // 3. Sync to Server if available
       try {
         await fetch('/api/admin/users/add', {
           method: 'POST',
@@ -190,24 +230,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         // Backend not running (e.g. GitHub Pages)
       }
 
-      // 3. Sync to Client Store (guarantees local persistence on GitHub Pages)
+      // 4. Sync to Client Store (guarantees local persistence on GitHub Pages)
       clientAddUser({
         email: cleanMail,
         name: cleanUserName,
         role: newRole,
       });
 
-      // 4. If admin role, sync admin emails
+      // 5. If admin role, sync admin emails to Cloud and Local
       if (newRole === 'admin') {
         const storedAdmins = loadStoredAdminEmails();
         if (!storedAdmins.includes(cleanMail)) {
           const updated = [...storedAdmins, cleanMail];
+          await saveCloudAdminEmails(updated);
           saveStoredAdminEmails(updated);
           setAdminEmailsList(updated);
         }
       }
 
-      // 5. Send activation / password reset email if requested
+      // 6. Send activation / password reset email if requested
       if (sendActivationEmail) {
         try {
           await sendPasswordResetSafe(cleanMail);
@@ -233,14 +274,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  // Toggle Block / Unblock (Hybrid: Server API with GitHub Pages Fallback)
+  // Toggle Block / Unblock (Cloud Realtime Sync + Server API + Local Fallback)
   const handleToggleBlock = async (email: string, currentStatus: 'active' | 'blocked') => {
     setActionLoadingEmail(email);
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active';
-    let handled = false;
 
     try {
-      const res = await fetch('/api/admin/users/toggle-block', {
+      await cloudToggleBlock(email, newStatus);
+    } catch (err) {
+      console.warn('Notice: cloudToggleBlock error:', err);
+    }
+
+    try {
+      await fetch('/api/admin/users/toggle-block', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -252,17 +298,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           status: newStatus,
         }),
       });
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        handled = true;
-      }
     } catch {}
 
-    // GitHub Pages fallback:
-    if (!handled) {
-      clientToggleBlock(email, newStatus);
-      handled = true;
-    }
+    clientToggleBlock(email, newStatus);
 
     showNotification(
       newStatus === 'blocked'
@@ -285,12 +323,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  // Kick Session (Hybrid: Server API with GitHub Pages Fallback)
+  // Kick Session (Cloud Realtime Sync + Server API + Local Fallback)
   const handleKickSession = async (email: string) => {
     setActionLoadingEmail(email);
-    let handled = false;
+
     try {
-      const res = await fetch('/api/admin/kick', {
+      await cloudKickSession(email);
+    } catch (err) {
+      console.warn('Notice: cloudKickSession error:', err);
+    }
+
+    try {
+      await fetch('/api/admin/kick', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -301,12 +345,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           email,
         }),
       });
-      if (res.ok) handled = true;
     } catch {}
 
-    if (!handled) {
-      clientKickSession(email);
-    }
+    clientKickSession(email);
 
     showNotification(`🚪 "${email}" অ্যাকাউন্টটি সফলভাবে লগআউট করানো হয়েছে।`);
     await fetchAdminData(true);
@@ -314,7 +355,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setConfirmKickEmail(null);
   };
 
-  // Save Admin Emails (Hybrid: Server API with GitHub Pages Fallback)
+  // Save Admin Emails (Cloud Realtime Sync + Server API + Local Fallback)
   const handleSaveAdmins = async (customList?: string[]) => {
     const listToSave = customList || adminEmailsList;
     if (listToSave.length === 0) {
@@ -322,6 +363,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       return;
     }
     setIsSavingAdmins(true);
+
+    try {
+      await saveCloudAdminEmails(listToSave);
+    } catch (err) {
+      console.warn('Notice: saveCloudAdminEmails error:', err);
+    }
 
     try {
       await fetch('/api/admin/config/admins', {
@@ -1184,35 +1231,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <span className="text-xs font-bold text-slate-600">
                   সর্বশেষ সেশন রেকর্ড ({convertToBengaliNumbers(history.length)} টি)
                 </span>
-                {history.length > 0 && (
-                  confirmClearHistory ? (
-                    <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 px-2.5 py-1 rounded-xl">
-                      <span className="text-[11px] font-bold text-red-700">সব রেকর্ড মুছবেন?</span>
-                      <button
-                        type="button"
-                        onClick={handleClearHistory}
-                        className="bg-red-600 hover:bg-red-700 text-white px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer"
-                      >
-                        হ্যাঁ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmClearHistory(false)}
-                        className="bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer"
-                      >
-                        না
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmClearHistory(true)}
-                      className="text-xs text-red-600 hover:text-red-700 font-bold hover:underline cursor-pointer"
-                    >
-                      হিস্ট্রি মুছুন
-                    </button>
-                  )
-                )}
+                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] px-2.5 py-1 rounded-xl font-bold">
+                  <span>🔒</span>
+                  <span>স্থায়ী অডিট ট্রেইল (রেকর্ড সর্বদা সংরক্ষিত)</span>
+                </div>
               </div>
 
               {history.length === 0 ? (

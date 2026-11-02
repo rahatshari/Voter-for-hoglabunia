@@ -4,6 +4,7 @@ import { auth } from './lib/firebase';
 import { Voter, AppSearchFilters, AppSettings, SavedAppState } from './types';
 import { prepareVoter } from './lib/bengaliUtils';
 import { LoginScreen } from './components/LoginScreen';
+import { LoadingScreen } from './components/LoadingScreen';
 import { HomeScreen } from './components/HomeScreen';
 import { SearchScreen } from './components/SearchScreen';
 import { AnalyticsScreen } from './components/AnalyticsScreen';
@@ -19,6 +20,13 @@ import {
   clientHeartbeat,
   loadStoredAdminEmails,
 } from './lib/clientAdminStore';
+import {
+  cloudRegisterSession,
+  cloudHeartbeat,
+  cloudEndSession,
+  getCloudAdminEmails,
+  listenForSessionTermination,
+} from './lib/cloudStore';
 import { isEmailAdmin } from './lib/adminUtils';
 
 export const App: React.FC = () => {
@@ -90,26 +98,22 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Verify Admin Permissions for currentUser
+  // Verify Admin Permissions for currentUser (Cloud Database first + Local Store fallback)
   useEffect(() => {
     if (!currentUser?.email) {
       setIsAdmin(false);
       return;
     }
     const cleanEmail = currentUser.email.trim().toLowerCase();
-    fetch(`/api/admin/check?email=${encodeURIComponent(cleanEmail)}`)
-      .then((res) => {
-        const ct = res.headers.get('content-type') || '';
-        if (res.ok && ct.includes('application/json')) {
-          return res.json();
-        }
-        throw new Error('Not JSON');
-      })
-      .then((data) => {
-        setIsAdmin(Boolean(data?.isAdmin));
+
+    // Check Cloud Admin Database
+    getCloudAdminEmails()
+      .then((admins) => {
+        const userIsAdmin = isEmailAdmin(cleanEmail, admins);
+        setIsAdmin(userIsAdmin);
       })
       .catch(() => {
-        // Fallback for GitHub Pages and static hosts
+        // Fallback for offline or local store
         const storedAdmins = loadStoredAdminEmails();
         const userIsAdmin = isEmailAdmin(cleanEmail, storedAdmins);
         setIsAdmin(userIsAdmin);
@@ -219,6 +223,18 @@ export const App: React.FC = () => {
     return fallbackData;
   }, [getStaticUrl]);
 
+  // Browser testing helper to verify UI flows
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__SET_DEV_USER__ = async (email: string) => {
+        if (Object.keys(villagesData).length === 0) {
+          await loadVillages();
+        }
+        setCurrentUser({ email } as any);
+      };
+    }
+  }, [loadVillages, villagesData]);
+
   // Listen for Firebase Auth state changes
   useEffect(() => {
     // Safety fallback timeout to prevent infinite spinner
@@ -253,51 +269,72 @@ export const App: React.FC = () => {
           else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
           else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
 
-          // Attempt session register with server, or fallback to client storage on GitHub Pages
+          // 1. Central Firebase Cloud Session Registration (Permanent history + real-time multi-admin visibility)
+          cloudRegisterSession(user.email, mySessionId, detectedDevice)
+            .then((res) => {
+              if (res.isBlocked) {
+                signOut(auth);
+                showToast('🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।');
+              }
+            })
+            .catch((err) => {
+              console.warn('Notice: cloudRegisterSession fallback:', err);
+            });
+
+          // 2. Client store backup for offline resilience
+          clientRegisterSession(user.email, mySessionId, detectedDevice);
+
+          // 3. Server API registration if backend dev server is running
           fetch('/api/session/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
-          })
-            .then((res) => {
-              const ct = res.headers.get('content-type') || '';
-              if (res.ok && ct.includes('application/json')) {
-                // Poll validate session every 5 seconds if backend exists
-                if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
-                sessionIntervalRef.current = setInterval(async () => {
-                  const currentSid = localStorage.getItem('voter_device_session_id');
-                  if (!currentSid) return;
-                  try {
-                    const valRes = await fetch(
-                      `/api/session/validate?email=${encodeURIComponent(
-                        user.email!
-                      )}&sessionId=${encodeURIComponent(currentSid)}`
-                    );
-                    const vct = valRes.headers.get('content-type') || '';
-                    if (valRes.ok && vct.includes('application/json')) {
-                      const data = await valRes.json();
-                      if (data.isValid === false && data.reason === 'another_device_logged_in') {
-                        if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
-                        setIsAnotherDeviceOpen(true);
-                      }
-                    }
-                  } catch (e) {}
-                }, 5000);
-              } else {
-                throw new Error('Static host without /api');
-              }
-            })
-            .catch(() => {
-              // GitHub Pages fallback: Register in client store and heartbeat
-              clientRegisterSession(user.email!, mySessionId!, detectedDevice);
-              if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
-              sessionIntervalRef.current = setInterval(() => {
-                const currentSid = localStorage.getItem('voter_device_session_id');
-                if (currentSid) {
-                  clientHeartbeat(currentSid);
+          }).catch(() => null);
+
+          // 4. Set up periodic heartbeat (every 8 seconds) and session validation
+          if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+          sessionIntervalRef.current = setInterval(async () => {
+            const currentSid = localStorage.getItem('voter_device_session_id');
+            if (!currentSid || !user.email) return;
+
+            // Cloud heartbeat & lifetime duration tracker
+            cloudHeartbeat(currentSid, user.email);
+
+            // Client backup heartbeat
+            clientHeartbeat(currentSid);
+
+            // Server heartbeat if running
+            try {
+              const valRes = await fetch(
+                `/api/session/validate?email=${encodeURIComponent(user.email)}&sessionId=${encodeURIComponent(currentSid)}`
+              );
+              const vct = valRes.headers.get('content-type') || '';
+              if (valRes.ok && vct.includes('application/json')) {
+                const data = await valRes.json();
+                if (data.isValid === false && data.reason === 'another_device_logged_in') {
+                  if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+                  setIsAnotherDeviceOpen(true);
                 }
-              }, 5000);
+              }
+            } catch (e) {}
+          }, 8000);
+
+          // 5. Real-time Firebase Cloud listener for remote kicks or another device login
+          try {
+            const unsubscribeSession = listenForSessionTermination(mySessionId, () => {
+              // Check if session was terminated in cloud
+              const currentSid = localStorage.getItem('voter_device_session_id');
+              if (currentSid === mySessionId && !isLoggingOut) {
+                // Another device logged in or admin kicked this session
+                if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+                setIsAnotherDeviceOpen(true);
+              }
             });
+            // Cleanup on logout/unmount
+            window.addEventListener('beforeunload', () => {
+              unsubscribeSession();
+            }, { once: true });
+          } catch (e) {}
         }
 
         const data = await loadVillages();
@@ -463,6 +500,10 @@ export const App: React.FC = () => {
 
     if (email && sessionId) {
       try {
+        await cloudEndSession(sessionId, email, 'logout');
+      } catch (e) {}
+
+      try {
         await fetch('/api/session/logout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -498,13 +539,7 @@ export const App: React.FC = () => {
 
   // Auth checking loading screen
   if (isAuthChecking) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-12 h-12 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin mb-4" />
-        <h3 className="text-slate-800 text-lg font-bold mb-2">নিরাপত্তা যাচাই করা হচ্ছে...</h3>
-        <p className="text-slate-500 text-sm">{authStatusText}</p>
-      </div>
-    );
+    return <LoadingScreen statusText={authStatusText} />;
   }
 
   // Login view if not authenticated

@@ -24,21 +24,15 @@ export const InstallPwaBanner: React.FC = () => {
     const handler = (e: Event) => {
       e.preventDefault();
       setInstallPrompt(e as BeforeInstallPromptEvent);
-      setIsVisible(true);
+      if (!sessionStorage.getItem('pwa_install_dismissed')) {
+        setIsVisible(true);
+      }
     };
 
     window.addEventListener('beforeinstallprompt', handler);
 
-    // Show banner after 2 seconds if not installed
-    const timer = setTimeout(() => {
-      if (!sessionStorage.getItem('pwa_install_dismissed')) {
-        setIsVisible(true);
-      }
-    }, 2000);
-
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
-      clearTimeout(timer);
     };
   }, []);
 
@@ -67,9 +61,9 @@ export const InstallPwaBanner: React.FC = () => {
 
   if (!isVisible || isDismissed) return null;
 
-  return (
+    return (
     <>
-      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-lg animate-slide-down">
+      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-50 w-[94%] sm:w-auto sm:max-w-md animate-slide-down">
         <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-purple-600 text-white p-3 sm:p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-indigo-400/40">
           <div className="flex items-center gap-2.5">
             <img

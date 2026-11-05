@@ -37,7 +37,17 @@
     </script>
 </head>
 <body class="bg-[#F0F3F8] min-h-screen text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
-    <div id="root" class="min-h-screen w-full flex flex-col"></div>
+    <div id="root" class="min-h-screen w-full flex flex-col">
+        <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #F0F3F8; font-family: 'Noto Sans Bengali', system-ui, sans-serif; padding: 20px; text-align: center;">
+            <div style="background: #ffffff; padding: 32px 24px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); max-width: 320px; width: 100%; display: flex; flex-direction: column; align-items: center; border: 1px solid #e2e8f0;">
+                <img src="./logo.png" alt="লোগো" style="width: 96px; height: 96px; border-radius: 50%; margin-bottom: 16px; object-fit: contain; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15); border: 2px solid #e0e7ff; padding: 4px;" onerror="this.src='./icon-192.png';" />
+                <h2 style="margin: 0 0 6px 0; color: #1e293b; font-size: 20px; font-weight: 800;">ইউনিয়ন ভোটার তালিকা</h2>
+                <p style="margin: 0 0 20px 0; color: #64748b; font-size: 13px;">লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</p>
+                <div style="width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top-color: #4f46e5; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            </div>
+            <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+        </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

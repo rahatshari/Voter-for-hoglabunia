@@ -24,6 +24,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewAssetLoader.AssetsPathHandler
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,13 +35,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errorView: View
     private lateinit var btnRetry: Button
 
+    private lateinit var assetLoader: WebViewAssetLoader
+
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var doubleBackToExitPressedOnce = false
 
-    // App URL Configuration:
-    // When built with embedded assets: file:///android_asset/public/index.html
-    // Hosted live backup: https://rahatsharif10448.github.io/voter-apps/
-    private val localAssetUrl = "file:///android_asset/public/index.html"
+    // WebViewAssetLoader serves assets from secure HTTPS origin to enable ES Modules & CORS without blank screen
+    private val localAppUrl = "https://appassets.androidplatform.net/assets/public/index.html"
     private val defaultLiveUrl = "https://rahatsharif10448.github.io/voter-apps/"
 
     // File Chooser Launcher for uploads
@@ -85,6 +87,12 @@ class MainActivity : AppCompatActivity() {
         swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout)
         errorView = findViewById(R.id.errorView)
         btnRetry = findViewById(R.id.btnRetry)
+
+        // Initialize Android Jetpack WebViewAssetLoader for secure HTTPS local asset loading
+        assetLoader = WebViewAssetLoader.Builder()
+            .setDomain("appassets.androidplatform.net")
+            .addPathHandler("/assets/", AssetsPathHandler(this))
+            .build()
 
         requestBluetoothPermissions()
         setupWebView()
@@ -132,6 +140,12 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.allowFileAccess = true
         settings.allowContentAccess = true
+
+        @Suppress("DEPRECATION")
+        settings.allowFileAccessFromFileURLs = true
+        @Suppress("DEPRECATION")
+        settings.allowUniversalAccessFromFileURLs = true
+
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
 
@@ -195,8 +209,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Setup WebViewClient
+        // Setup WebViewClient with WebViewAssetLoader interceptor
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url ?: return null
+                return assetLoader.shouldInterceptRequest(url)
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
 
@@ -239,8 +261,14 @@ class MainActivity : AppCompatActivity() {
                 if (request?.isForMainFrame == true) {
                     progressBar.visibility = View.GONE
                     swipeRefreshLayout.isRefreshing = false
-                    // If local asset loading failed or internet unavailable
-                    if (!checkLocalAssetExists()) {
+                    val failedUrl = request.url.toString()
+                    Log.e("VoterApp", "Failed to load: $failedUrl - ${error?.description}")
+
+                    // If local asset failed, fallback to live URL
+                    if (failedUrl.contains("appassets.androidplatform.net")) {
+                        Log.i("VoterApp", "Falling back to live hosted URL: $defaultLiveUrl")
+                        view?.loadUrl(defaultLiveUrl)
+                    } else {
                         errorView.visibility = View.VISIBLE
                     }
                 }
@@ -258,11 +286,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadTargetUrl() {
-        // If embedded assets exist in APK (offline first), load them!
         if (checkLocalAssetExists()) {
-            webView.loadUrl(localAssetUrl)
+            webView.loadUrl(localAppUrl)
         } else {
-            // Otherwise load live deployment
             webView.loadUrl(defaultLiveUrl)
         }
     }

@@ -1,0 +1,105 @@
+name: Build Android APK (Kotlin)
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+          - both
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: 📦 Install Web Dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: 🔨 Build Web Production Bundle
+        run: npm run build
+
+      - name: 📂 Embed Web Assets into Android App
+        run: |
+          mkdir -p android/app/src/main/assets/public
+          cp -r dist/* android/app/src/main/assets/public/ 2>/dev/null || true
+          cp -r villages android/app/src/main/assets/public/ 2>/dev/null || true
+          echo "Assets bundled successfully:"
+          ls -la android/app/src/main/assets/public/
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: ⚙️ Generate Gradle Wrapper
+        working-directory: android
+        run: |
+          gradle wrapper --gradle-version 8.5
+          chmod +x gradlew
+
+      - name: 🚀 Build Debug APK (Ready to install on any Android phone)
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: 🚀 Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --stacktrace || true
+
+      - name: 📤 Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Union-Voter-App-APK
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: 🏷️ Publish GitHub Release (if tagged or manual trigger)
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || 'v1.0.0-apk' }}
+          name: "ইউনিয়ন ভোটার তালিকা Android APK"
+          body: |
+            ## 📱 ইউনিয়ন ভোটার তালিকা - Android APK
+
+            অ্যান্ড্রয়েড ফোনের জন্য প্রস্তুতকৃত অ্যাপ্লিকেশন প্যাকেজ (APK)।
+            
+            ### ⬇️ ইন্সটল করার নিয়ম:
+            1. নিচে দেওয়া `app-debug.apk` ডাউনলোড করুন।
+            2. মোবাইলে APK ফাইলটি ওপেন করে **Install** বাটনে চাপ দিন।
+            3. "Unknown Sources" বা "Install Unknown Apps" চাইলে অনুমতি দিন।
+            4. সরাসরি অ্যাপটি ওপেন করে ব্যবহার করুন।
+          files: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

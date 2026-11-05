@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && cp -r villages dist/ 2>/dev/null || true && cp public/icon*.png public/logo.png public/manifest.json public/candidate-default.jpg public/symbol-default.png dist/assets/ 2>/dev/null || true && cp public/404.html dist/404.html 2>/dev/null || true && touch dist/.nojekyll && rm -rf docs && cp -r dist docs && touch docs/.nojekyll",
+    "build:android-assets": "npm run build && mkdir -p android/app/src/main/assets/public && cp -r dist/* android/app/src/main/assets/public/ 2>/dev/null || true && cp -r villages android/app/src/main/assets/public/ 2>/dev/null || true",
     "start": "tsx server.ts",
     "lint": "tsc --noEmit"
   },

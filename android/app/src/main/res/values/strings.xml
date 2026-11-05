@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">ইউনিয়ন ভোটার তালিকা</string>
+    <string name="app_description">ইউনিয়ন ভোটার তালিকা ও নির্বাচনী স্লিপ ব্যবস্থাপনা</string>
+    <string name="exit_prompt">অ্যাপ থেকে বের হতে আবার ব্যাক বাটনে চাপ দিন</string>
+    <string name="no_internet">ইন্টারনেট সংযোগ পাওয়া যায়নি। পুনরায় চেষ্টা করুন।</string>
+    <string name="retry">পুনরায় চেষ্টা করুন</string>
+</resources>

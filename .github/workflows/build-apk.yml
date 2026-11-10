@@ -77,9 +77,13 @@ jobs:
             -srckeystore android/app/voter-release-key.p12 \
             -srcstoretype PKCS12 \
             -srcstorepass voter123456 \
+            -srckeypass voter123456 \
+            -srcalias voterkey \
             -destkeystore android/app/voter-release-key.jks \
             -deststoretype JKS \
             -deststorepass voter123456 \
+            -destkeypass voter123456 \
+            -destalias voterkey \
             -noprompt || cp android/app/voter-release-key.p12 android/app/voter-release-key.jks
           keytool -list -v -keystore android/app/voter-release-key.jks -storepass voter123456 | head -n 18
 
@@ -98,8 +102,7 @@ jobs:
           ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
-            -x lint -x lintVitalRelease \
-            --stacktrace
+            --no-daemon
           cp app/build/outputs/apk/release/app-release.apk ../Union-Voter-App.apk
           cp ../Union-Voter-App.apk "../Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk"
 

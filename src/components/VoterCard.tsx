@@ -6,9 +6,17 @@ interface VoterCardProps {
   voter: Voter;
   onCopy: (voter: Voter) => void;
   onPrint: (voter: Voter) => void;
+  isQueued?: boolean;
+  onToggleQueue?: (voter: Voter) => void;
 }
 
-export const VoterCard: React.FC<VoterCardProps> = ({ voter, onCopy, onPrint }) => {
+export const VoterCard: React.FC<VoterCardProps> = ({
+  voter,
+  onCopy,
+  onPrint,
+  isQueued = false,
+  onToggleQueue,
+}) => {
   const isMig = isMigrated(voter);
   const calculatedAge = voter._age || calculateAge(voter.dob);
   const displayName = voter.name || (isMig ? 'মাইগ্রেট হয়েছে' : '-');
@@ -16,7 +24,11 @@ export const VoterCard: React.FC<VoterCardProps> = ({ voter, onCopy, onPrint }) 
   return (
     <div
       className={`border rounded-xl p-4 shadow-xs transition hover:shadow-md relative overflow-hidden ${
-        isMig ? 'border-red-300 bg-red-50/60' : 'border-slate-200 bg-white'
+        isMig
+          ? 'border-red-300 bg-red-50/60'
+          : isQueued
+          ? 'border-emerald-400 bg-emerald-50/30 ring-1 ring-emerald-300'
+          : 'border-slate-200 bg-white'
       }`}
     >
       {/* Header */}
@@ -36,6 +48,11 @@ export const VoterCard: React.FC<VoterCardProps> = ({ voter, onCopy, onPrint }) 
             {isMig && (
               <span className="text-[11px] bg-red-100 text-red-700 border border-red-200 px-2.5 py-0.5 rounded-full font-bold">
                 🚫 {voter.name || 'স্থানান্তরিত/কর্তিত'}
+              </span>
+            )}
+            {isQueued && (
+              <span className="text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                👨‍👩‍👧‍👦 একসাথে স্লিপ লিস্টে যুক্ত
               </span>
             )}
           </div>
@@ -91,7 +108,21 @@ export const VoterCard: React.FC<VoterCardProps> = ({ voter, onCopy, onPrint }) 
       </div>
 
       {/* Action Buttons */}
-      <div className="flex justify-end gap-2 mt-3 pt-2.5 border-t border-slate-100">
+      <div className="flex justify-end gap-2 mt-3 pt-2.5 border-t border-slate-100 flex-wrap">
+        {onToggleQueue && (
+          <button
+            type="button"
+            onClick={() => onToggleQueue(voter)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition flex items-center gap-1 shadow-xs border ${
+              isQueued
+                ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+            }`}
+            title="পরিবারের সদস্য বা একাধিক ভোটার একসাথে এক পেজে প্রিন্ট করার লিস্টে নিন"
+          >
+            {isQueued ? '✅ একসাথে লিস্টে আছে' : '➕ একসাথে প্রিন্টে নিন'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => onCopy(voter)}

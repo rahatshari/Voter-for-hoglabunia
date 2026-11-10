@@ -1,4 +1,4 @@
-name: Build Android APK (Kotlin)
+name: Build & Release Signed Android APK (Auto-Version)
 
 on:
   push:
@@ -7,28 +7,36 @@ on:
       - 'README.md'
       - '.gitignore'
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build Type'
-        required: true
-        default: 'debug'
-        type: choice
-        options:
-          - debug
-          - release
-          - both
 
 permissions:
   contents: write
 
 jobs:
   build-apk:
-    name: Build Android APK
+    name: Build & Publish Signed APK
     runs-on: ubuntu-latest
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+
+      - name: 🔢 Calculate Auto-Incrementing App Version
+        id: version
+        run: |
+          VERSION_CODE=$((100 + ${{ github.run_number }}))
+          VERSION_NAME="1.0.${{ github.run_number }}"
+          echo "version_code=${VERSION_CODE}" >> $GITHUB_OUTPUT
+          echo "version_name=${VERSION_NAME}" >> $GITHUB_OUTPUT
+          cat <<EOF > public/version.json
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "repo": "${{ github.repository }}",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/latest/download/Union-Voter-App.apk",
+            "releaseNotes": "ভার্সন v${VERSION_NAME} (বিল্ড #${{ github.run_number }}) — স্বয়ংক্রিয়ভাবে গিটহাব পুশ থেকে আপডেটকৃত।"
+          }
+          EOF
+          cat public/version.json
 
       - name: 🟢 Setup Node.js 22
         uses: actions/setup-node@v4
@@ -53,8 +61,16 @@ jobs:
           mkdir -p android/app/src/main/assets/public
           cp -r dist/* android/app/src/main/assets/public/ 2>/dev/null || true
           cp -r villages android/app/src/main/assets/public/ 2>/dev/null || true
+          cp public/version.json android/app/src/main/assets/public/version.json 2>/dev/null || true
           echo "Assets bundled successfully:"
           ls -la android/app/src/main/assets/public/
+
+      - name: 🔐 Verify Deterministic Signing Keystore
+        run: |
+          if [ ! -s android/app/voter-release-key.jks ] && [ -f android/app/voter-release-key.base64 ]; then
+            base64 -d android/app/voter-release-key.base64 > android/app/voter-release-key.jks
+          fi
+          ls -la android/app/voter-release-key.jks
 
       - name: 🐘 Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -65,41 +81,43 @@ jobs:
           gradle wrapper --gradle-version 8.5
           chmod +x gradlew
 
-      - name: 🚀 Build Debug APK (Ready to install on any Android phone)
+      - name: 🚀 Build Consistently Signed APK (v${{ steps.version.outputs.version_name }})
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: 🚀 Build Release APK
-        working-directory: android
-        run: ./gradlew assembleRelease --stacktrace || true
+        run: |
+          ./gradlew assembleRelease assembleDebug \
+            -PversionCode=${{ steps.version.outputs.version_code }} \
+            -PversionName=${{ steps.version.outputs.version_name }} \
+            --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../Union-Voter-App.apk || cp app/build/outputs/apk/debug/app-debug.apk ../Union-Voter-App.apk
+          cp ../Union-Voter-App.apk "../Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk"
 
       - name: 📤 Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Union-Voter-App-APK
+          name: Union-Voter-App-v${{ steps.version.outputs.version_name }}
           path: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
+            Union-Voter-App.apk
+            Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk
+            public/version.json
           retention-days: 30
 
-      - name: 🏷️ Publish GitHub Release (if tagged or manual trigger)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      - name: 🏷️ Publish APK to GitHub Releases Automatically on Push
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || 'v1.0.0-apk' }}
-          name: "ইউনিয়ন ভোটার তালিকা Android APK"
+          tag_name: v${{ steps.version.outputs.version_name }}
+          name: "ইউনিয়ন ভোটার তালিকা APK v${{ steps.version.outputs.version_name }}"
+          make_latest: true
           body: |
-            ## 📱 ইউনিয়ন ভোটার তালিকা - Android APK
+            ## 📱 ইউনিয়ন ভোটার তালিকা - Android APK (v${{ steps.version.outputs.version_name }})
+            - **ভার্সন:** `v${{ steps.version.outputs.version_name }}` (Version Code: `${{ steps.version.outputs.version_code }}`)
+            - **সিগনেচার:** স্থায়ী রিলিজ সিগনেচার (পূর্বের অ্যাপ আনইন্সটল না করেই সরাসরি আপডেট হবে)
 
-            অ্যান্ড্রয়েড ফোনের জন্য প্রস্তুতকৃত অ্যাপ্লিকেশন প্যাকেজ (APK)।
-            
-            ### ⬇️ ইন্সটল করার নিয়ম:
-            1. নিচে দেওয়া `app-debug.apk` ডাউনলোড করুন।
-            2. মোবাইলে APK ফাইলটি ওপেন করে **Install** বাটনে চাপ দিন।
-            3. "Unknown Sources" বা "Install Unknown Apps" চাইলে অনুমতি দিন।
-            4. সরাসরি অ্যাপটি ওপেন করে ব্যবহার করুন।
+            ### ⬇️ ডাউনলোড ও আপডেট করার নিয়ম:
+            1. নিচে থেকে **`Union-Voter-App.apk`** ডাউনলোড করুন (অথবা অ্যাপের ভেতরে থাকা **এখনই আপডেট করুন** নোটিফিকেশনে চাপ দিন)।
+            2. মোবাইলে APK ফাইলটি ওপেন করে **Update / Install** বাটনে চাপ দিন।
           files: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
+            Union-Voter-App.apk
+            Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk
+            public/version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

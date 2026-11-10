@@ -130,25 +130,46 @@ export interface AdminPanelData {
   summary: AdminPanelSummary;
 }
 
+export type SlipDesignStyle =
+  | 'classic_voter_card'
+  | 'upazila_horizontal'
+  | 'poster_banner_card'
+  | 'royal_framed_slip'
+  | 'official_table_grid'
+  | 'compact_thermal_slip';
+
+export type VoterInfoFillMode = 'auto' | 'lined' | 'blank';
+
 export interface CandidateProfile {
   id: string;
+  templateTitle?: string;
+  designStyle?: SlipDesignStyle;
+  voterInfoMode?: VoterInfoFillMode;
   name: string;
   postTitle?: string;
   religiousHeader: string;
+  cardBadgeText?: string;
   electionTitle: string;
+  constituencyText?: string;
   electionSubtitle: string;
   candidateBadge: string;
   candidateName: string;
+  candidateSuffix?: string;
   candidatePhotoUrl: string;
   symbolName: string;
   symbolPhotoUrl: string;
   symbolCallout: string;
+  sloganText?: string;
   pollingCenter: string;
   voterArea: string;
   wardNo: string;
+  footerLeftText?: string;
+  footerCenterText?: string;
+  footerRightText?: string;
   isCustom?: boolean;
 }
 
 export type ElectionSlipConfig = CandidateProfile;
+
 
 

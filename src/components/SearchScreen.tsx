@@ -8,6 +8,13 @@ import {
   calculateAge,
   isMigrated,
 } from '../lib/bengaliUtils';
+import {
+  getSlipQueue,
+  toggleVoterInSlipQueue,
+  clearSlipQueue,
+  isVoterInSlipQueue,
+  addToSlipQueue,
+} from '../lib/voterSlipUtils';
 import { VoterCard } from './VoterCard';
 
 interface SearchScreenProps {
@@ -56,8 +63,36 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
   );
 
+  const [slipQueue, setSlipQueue] = useState<Voter[]>(() => getSlipQueue());
   const [renderedCount, setRenderedCount] = useState(RENDER_BATCH_SIZE);
   const observerRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync slip queue on focus or interval so modal changes reflect here
+  useEffect(() => {
+    const syncQueue = () => setSlipQueue(getSlipQueue());
+    window.addEventListener('focus', syncQueue);
+    const interval = setInterval(syncQueue, 1500);
+    return () => {
+      window.removeEventListener('focus', syncQueue);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleToggleQueue = (voter: Voter) => {
+    const res = toggleVoterInSlipQueue(voter);
+    setSlipQueue(res.queue);
+    if (res.added) {
+      showToast(`👨‍👩‍👧‍👦 "${voter.name}" একসাথে প্রিন্ট লিস্টে যুক্ত হয়েছে (${convertToBengaliNumbers(res.queue.length)} জন)`);
+    } else {
+      showToast(`🗑️ "${voter.name}" লিস্ট থেকে সরানো হয়েছে`);
+    }
+  };
+
+  const handleClearQueue = () => {
+    clearSlipQueue();
+    setSlipQueue([]);
+    showToast('🗑️ একসাথে প্রিন্ট লিস্ট খালি করা হয়েছে');
+  };
 
   // Sync state changes with parent / localStorage
   useEffect(() => {
@@ -568,6 +603,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             : 'কোনো ভোটার পাওয়া যায়নি ❌'}
         </div>
 
+        {filteredVoters.length > 0 && filteredVoters.length <= 20 && (
+          <button
+            type="button"
+            onClick={() => {
+              const updated = addToSlipQueue(filteredVoters);
+              setSlipQueue(updated);
+              showToast(
+                `👨‍👩‍👧‍👦 ${convertToBengaliNumbers(filteredVoters.length)} জন ভোটার একসাথে প্রিন্ট লিস্টে যুক্ত হয়েছে!`
+              );
+            }}
+            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold cursor-pointer transition"
+          >
+            👨‍👩‍👧‍👦 সবাইকে একসাথে প্রিন্টে নিন
+          </button>
+        )}
+
         <button
           type="button"
           onClick={handleClear}
@@ -577,6 +628,55 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </button>
       </div>
 
+      {/* Multi-Voter / Family Collector Banner */}
+      {slipQueue.length > 0 && (
+        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 text-white rounded-2xl p-3.5 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border border-emerald-400/40">
+          <div className="flex flex-col gap-1">
+            <div className="text-xs sm:text-sm font-black flex items-center gap-1.5">
+              <span>👨‍👩‍👧‍👦</span> একসাথে স্লিপ প্রিন্ট লিস্টে{' '}
+              <span className="bg-white text-emerald-800 px-2 py-0.5 rounded-full text-xs font-black">
+                {convertToBengaliNumbers(slipQueue.length)} জন
+              </span>{' '}
+              ভোটার যুক্ত আছেন
+            </div>
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {slipQueue.slice(0, 6).map((qv, idx) => (
+                <span
+                  key={idx}
+                  className="text-[11px] bg-white/15 backdrop-blur-xs px-2 py-0.5 rounded-md font-semibold"
+                >
+                  #{qv.serialNo} {qv.name}
+                </span>
+              ))}
+              {slipQueue.length > 6 && (
+                <span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-md font-bold">
+                  +{convertToBengaliNumbers(slipQueue.length - 6)} জন
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleClearQueue}
+              className="px-2.5 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-bold cursor-pointer transition"
+            >
+              🗑️ খালি করুন
+            </button>
+            {onOpenSlipModal && (
+              <button
+                type="button"
+                onClick={() => onOpenSlipModal(slipQueue[0])}
+                className="px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-900 rounded-xl text-xs font-black shadow-md cursor-pointer transition flex items-center gap-1"
+              >
+                🖨️ একসাথে এক পেজে প্রিন্ট করুন
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Voter Cards List */}
       <div className="flex flex-col gap-3">
         {displayedVoters.map((voter, index) => (
@@ -585,6 +685,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             voter={voter}
             onCopy={handleCopy}
             onPrint={handlePrint}
+            isQueued={isVoterInSlipQueue(voter, slipQueue)}
+            onToggleQueue={handleToggleQueue}
           />
         ))}
 

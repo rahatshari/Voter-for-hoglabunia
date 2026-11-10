@@ -3,6 +3,9 @@ plugins {
     id 'kotlin-android'
 }
 
+def dynamicVersionCode = project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 100
+def dynamicVersionName = project.hasProperty('versionName') ? project.property('versionName').toString() : "1.0.0"
+
 android {
     namespace 'com.voterapp.union'
     compileSdk 34
@@ -11,19 +14,33 @@ android {
         applicationId "com.voterapp.union"
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode dynamicVersionCode
+        versionName dynamicVersionName
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            storeFile file("voter-release-key.jks")
+            storePassword "voter123456"
+            keyAlias "voterkey"
+            keyPassword "voter123456"
+            enableV1Signing true
+            enableV2Signing true
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            applicationIdSuffix ".debug"
+            // Use the exact same signature and applicationId so updates install seamlessly without conflicts
+            signingConfig signingConfigs.release
             debuggable true
         }
     }

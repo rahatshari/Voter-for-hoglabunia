@@ -24,6 +24,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Update Version Metadata
+        run: |
+          VERSION_CODE=$((100 + ${{ github.run_number }}))
+          VERSION_NAME="1.0.${{ github.run_number }}"
+          cat <<EOF > public/version.json
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "repo": "${{ github.repository }}",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/latest/download/Union-Voter-App.apk",
+            "releaseNotes": "ভার্সন v${VERSION_NAME} (বিল্ড #${{ github.run_number }}) — স্বয়ংক্রিয়ভাবে গিটহাব পুশ থেকে আপডেটকৃত।"
+          }
+          EOF
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

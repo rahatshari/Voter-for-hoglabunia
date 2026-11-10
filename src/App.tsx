@@ -13,6 +13,7 @@ import { LogoutModal } from './components/LogoutModal';
 import { AnotherDeviceModal } from './components/AnotherDeviceModal';
 import { Toast } from './components/Toast';
 import { InstallPwaBanner } from './components/InstallPwaBanner';
+import { AppUpdateBanner } from './components/AppUpdateBanner';
 import { VoterSlipModal } from './components/VoterSlipModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import {
@@ -31,8 +32,16 @@ import {
 import { isEmailAdmin } from './lib/adminUtils';
 
 export const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const initialDevEmail =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('dev_user') ||
+        localStorage.getItem('voter_dev_test_email')
+      : null;
+
+  const [currentUser, setCurrentUser] = useState<User | null>(
+    initialDevEmail ? ({ email: initialDevEmail } as any) : null
+  );
+  const [isAuthChecking, setIsAuthChecking] = useState(!initialDevEmail);
   const [authStatusText, setAuthStatusText] = useState('নিরাপত্তা যাচাই করা হচ্ছে...');
   const [villagesData, setVillagesData] = useState<Record<string, Voter[]>>({});
   const [activeScreen, setActiveScreen] = useState<'home' | 'search' | 'analytics'>('home');
@@ -225,17 +234,24 @@ export const App: React.FC = () => {
     return fallbackData;
   }, [getStaticUrl]);
 
+  const isDevUserActiveRef = useRef(Boolean(initialDevEmail));
+
   // Browser testing helper to verify UI flows
   useEffect(() => {
+    if (initialDevEmail) {
+      loadVillages();
+    }
     if (typeof window !== 'undefined') {
       (window as any).__SET_DEV_USER__ = async (email: string) => {
+        isDevUserActiveRef.current = true;
+        setCurrentUser({ email } as any);
+        setIsAuthChecking(false);
         if (Object.keys(villagesData).length === 0) {
           await loadVillages();
         }
-        setCurrentUser({ email } as any);
       };
     }
-  }, [loadVillages, villagesData]);
+  }, [initialDevEmail, loadVillages, villagesData]);
 
   // Listen for Firebase Auth state changes
   useEffect(() => {
@@ -248,10 +264,14 @@ export const App: React.FC = () => {
         }
         return false;
       });
-    }, 5000);
+    }, 1500);
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       clearTimeout(authSafetyTimer);
+      if (isDevUserActiveRef.current && !user) {
+        setIsAuthChecking(false);
+        return;
+      }
       if (user) {
         setCurrentUser(user);
         setAuthStatusText('ভোটার ডাটা লোড হচ্ছে...');
@@ -583,21 +603,27 @@ export const App: React.FC = () => {
   // Login view if not authenticated
   if (!currentUser) {
     return (
-      <LoginScreen
-        initialMessage={loginAlert}
-        onLoginSuccess={async (email) => {
-          setLoginAlert(null);
-          if (Object.keys(villagesData).length === 0) {
-            await loadVillages();
-          }
-          setCurrentUser({ email } as any);
-        }}
-      />
+      <>
+        <AppUpdateBanner />
+        <LoginScreen
+          initialMessage={loginAlert}
+          onLoginSuccess={async (email) => {
+            setLoginAlert(null);
+            if (Object.keys(villagesData).length === 0) {
+              await loadVillages();
+            }
+            setCurrentUser({ email } as any);
+          }}
+        />
+      </>
     );
   }
 
   return (
     <div className="min-h-screen w-full bg-[#F0F3F8] flex flex-col justify-start text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
+      {/* In-App APK Auto Update Notification Banner */}
+      <AppUpdateBanner />
+
       {/* Responsive Viewport Container: Fits mobile perfectly & expands beautifully on PC */}
       <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 flex flex-col">
         {/* Main Content Viewport */}

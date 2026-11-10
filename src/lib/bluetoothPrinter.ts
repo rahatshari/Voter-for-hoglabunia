@@ -1,41 +1,192 @@
 /// <reference types="web-bluetooth" />
 
-// Web Bluetooth ESC/POS Driver for 58mm / 80mm Mini Portable Thermal Printers
-// Supports any standard BLE POS printer (MPT-II, PT-210, RPP02, POS-58, Goojprt, etc.)
+// Enhanced Bluetooth ESC/POS Driver for 58mm / 80mm Mini Portable Thermal Printers
+// Supports:
+// 1. Android Native Bluetooth SPP Bridge (auto-detects & connects printers paired in Phone Bluetooth Settings!)
+// 2. Web Bluetooth API with automatic reconnection via navigator.bluetooth.getDevices()
 
 export interface BluetoothPrinterDevice {
-  device: BluetoothDevice;
-  characteristic: BluetoothRemoteGATTCharacteristic;
+  device?: BluetoothDevice;
+  characteristic?: BluetoothRemoteGATTCharacteristic;
   name: string;
+  isNativeAndroid?: boolean;
+  address?: string;
 }
 
 const COMMON_BLE_PRINT_SERVICES = [
   '000018f0-0000-1000-8000-00805f9b34fb', // Standard Print Service
-  '0000ffe0-0000-1000-8000-00805f9b34fb', // Common Chinese POS (MPT-II, Goojprt)
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // Common POS (MPT-II, Goojprt, PT-210)
   '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC Transparent UART
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // XPrinter / Netum
   '0000af30-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
 ];
+
+const LAST_PRINTER_STORAGE_KEY = 'voter_app_last_bt_printer_v1';
 
 let connectedPrinter: BluetoothPrinterDevice | null = null;
 
 export function isBluetoothSupported(): boolean {
+  if (typeof window !== 'undefined' && (window as any).AndroidNative) {
+    return true;
+  }
   return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
 }
 
 export function getConnectedPrinter(): BluetoothPrinterDevice | null {
-  if (connectedPrinter && connectedPrinter.device.gatt?.connected) {
-    return connectedPrinter;
+  if (connectedPrinter) {
+    if (connectedPrinter.isNativeAndroid) {
+      return connectedPrinter;
+    }
+    if (connectedPrinter.device?.gatt?.connected) {
+      return connectedPrinter;
+    }
   }
   return null;
 }
 
-export async function connectBluetoothPrinter(): Promise<BluetoothPrinterDevice> {
-  if (!isBluetoothSupported()) {
-    throw new Error('আপনার ব্রাউজারে Web Bluetooth সাপোর্ট করছে না। গুগল ক্রোম (Google Chrome) ব্যবহার করুন।');
+async function findWritableCharacteristic(
+  server: BluetoothRemoteGATTServer
+): Promise<BluetoothRemoteGATTCharacteristic | null> {
+  for (const serviceUuid of COMMON_BLE_PRINT_SERVICES) {
+    try {
+      const service = await server.getPrimaryService(serviceUuid);
+      const characteristics = await service.getCharacteristics();
+      for (const char of characteristics) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          return char;
+        }
+      }
+    } catch {
+      // Continue to next service
+    }
   }
 
-  // Request device
+  try {
+    const services = await server.getPrimaryServices();
+    for (const service of services) {
+      const characteristics = await service.getCharacteristics();
+      for (const char of characteristics) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          return char;
+        }
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Automatically checks if a Bluetooth printer is already connected/paired in:
+ * 1. Android Phone Bluetooth Settings (via AndroidNative bridge)
+ * 2. Previously authorized Web Bluetooth devices (navigator.bluetooth.getDevices)
+ */
+export async function autoConnectBluetoothPrinter(): Promise<BluetoothPrinterDevice | null> {
+  const existing = getConnectedPrinter();
+  if (existing) return existing;
+
+  // 1. Check Android Native Bluetooth (Phone Settings Paired Printer)
+  if (typeof window !== 'undefined' && (window as any).AndroidNative) {
+    const bridge = (window as any).AndroidNative;
+    try {
+      if (typeof bridge.getPairedPrinterInfo === 'function') {
+        const infoRaw = bridge.getPairedPrinterInfo();
+        if (infoRaw) {
+          const parsed = JSON.parse(infoRaw);
+          if (parsed && parsed.name) {
+            connectedPrinter = {
+              name: parsed.name,
+              address: parsed.address || '',
+              isNativeAndroid: true,
+            };
+            return connectedPrinter;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Android native Bluetooth auto-detect error:', e);
+    }
+  }
+
+  // 2. Check Web Bluetooth previously permitted devices (navigator.bluetooth.getDevices)
+  try {
+    if (
+      typeof navigator !== 'undefined' &&
+      'bluetooth' in navigator &&
+      typeof (navigator.bluetooth as any).getDevices === 'function'
+    ) {
+      const devices: BluetoothDevice[] = await (navigator.bluetooth as any).getDevices();
+      const savedPrinterId = localStorage.getItem(LAST_PRINTER_STORAGE_KEY);
+
+      // Sort so last used printer is tried first
+      const sorted = [...devices].sort((a, b) =>
+        a.id === savedPrinterId ? -1 : b.id === savedPrinterId ? 1 : 0
+      );
+
+      for (const device of sorted) {
+        if (!device.gatt) continue;
+        try {
+          const server = await device.gatt.connect();
+          const writeChar = await findWritableCharacteristic(server);
+          if (writeChar) {
+            connectedPrinter = {
+              device,
+              characteristic: writeChar,
+              name: device.name || 'ব্লুটুথ প্রিন্টার',
+            };
+            device.addEventListener('gattserverdisconnected', () => {
+              connectedPrinter = null;
+            });
+            return connectedPrinter;
+          }
+        } catch {
+          // Device might be out of range or off right now
+        }
+      }
+    }
+  } catch (e) {
+    // getDevices not enabled or no devices
+  }
+
+  return null;
+}
+
+export async function connectBluetoothPrinter(): Promise<BluetoothPrinterDevice> {
+  // 1. First try automatic connection to paired Android printer if inside APK
+  if (typeof window !== 'undefined' && (window as any).AndroidNative) {
+    const bridge = (window as any).AndroidNative;
+    try {
+      if (typeof bridge.connectPairedPrinter === 'function') {
+        const resRaw = bridge.connectPairedPrinter();
+        if (resRaw) {
+          const parsed = JSON.parse(resRaw);
+          if (parsed.success && parsed.name) {
+            connectedPrinter = {
+              name: parsed.name,
+              address: parsed.address || '',
+              isNativeAndroid: true,
+            };
+            return connectedPrinter;
+          } else if (parsed.error && !('bluetooth' in navigator)) {
+            throw new Error(parsed.error);
+          }
+        }
+      }
+    } catch (e: any) {
+      if (!('bluetooth' in navigator)) {
+        throw e;
+      }
+    }
+  }
+
+  if (typeof navigator === 'undefined' || !('bluetooth' in navigator)) {
+    throw new Error(
+      'ব্লুটুথ প্রিন্টার কানেক্ট করতে ফোনের ব্লুটুথ সেটিংস থেকে প্রিন্টারটি পেয়ার (Pair) করুন অথবা Google Chrome ব্যবহার করুন।'
+    );
+  }
+
+  // 2. Request device via Web Bluetooth
   const device = await navigator.bluetooth.requestDevice({
     acceptAllDevices: true,
     optionalServices: COMMON_BLE_PRINT_SERVICES,
@@ -46,46 +197,15 @@ export async function connectBluetoothPrinter(): Promise<BluetoothPrinterDevice>
   }
 
   const server = await device.gatt.connect();
-
-  // Find a writable characteristic across available services
-  let writeCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-
-  for (const serviceUuid of COMMON_BLE_PRINT_SERVICES) {
-    try {
-      const service = await server.getPrimaryService(serviceUuid);
-      const characteristics = await service.getCharacteristics();
-      for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeCharacteristic = char;
-          break;
-        }
-      }
-      if (writeCharacteristic) break;
-    } catch (e) {
-      // Continue to next service
-    }
-  }
-
-  // If none found by predefined UUIDs, try querying all services
-  if (!writeCharacteristic) {
-    try {
-      const services = await server.getPrimaryServices();
-      for (const service of services) {
-        const characteristics = await service.getCharacteristics();
-        for (const char of characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeCharacteristic = char;
-            break;
-          }
-        }
-        if (writeCharacteristic) break;
-      }
-    } catch (e) {}
-  }
+  const writeCharacteristic = await findWritableCharacteristic(server);
 
   if (!writeCharacteristic) {
     throw new Error('প্রিন্টারের রাইট চ্যানেল (Writable Characteristic) পাওয়া যায়নি।');
   }
+
+  try {
+    localStorage.setItem(LAST_PRINTER_STORAGE_KEY, device.id);
+  } catch {}
 
   connectedPrinter = {
     device,
@@ -101,10 +221,29 @@ export async function connectBluetoothPrinter(): Promise<BluetoothPrinterDevice>
 }
 
 export async function disconnectBluetoothPrinter(): Promise<void> {
-  if (connectedPrinter?.device.gatt?.connected) {
+  if (connectedPrinter?.device?.gatt?.connected) {
     connectedPrinter.device.gatt.disconnect();
   }
+  if (
+    connectedPrinter?.isNativeAndroid &&
+    typeof window !== 'undefined' &&
+    (window as any).AndroidNative?.disconnectPrinter
+  ) {
+    try {
+      (window as any).AndroidNative.disconnectPrinter();
+    } catch {}
+  }
   connectedPrinter = null;
+}
+
+// Convert Uint8Array to Base64 string for Android Native Bluetooth SPP transfer
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return typeof btoa === 'function' ? btoa(binary) : '';
 }
 
 // Convert an HTML Canvas to ESC/POS Raster bit image (GS v 0) bytes
@@ -147,12 +286,12 @@ export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
     }
   }
 
-  // Floyd-Steinberg error diffusion dithering for crystal clear thermal photos
+  // Floyd-Steinberg error diffusion dithering for crystal clear thermal photos & Bengali text
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       const oldVal = gray[i];
-      const newVal = oldVal < 140 ? 0 : 255;
+      const newVal = oldVal < 145 ? 0 : 255;
       gray[i] = newVal;
       const err = oldVal - newVal;
 
@@ -181,9 +320,9 @@ export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
     }
   }
 
-  // Footer: Feed 4 lines and partial cut
+  // Footer: Feed 3 lines and partial cut
   const footer = [
-    0x1b, 0x64, 0x04, // ESC d 4 (Feed 4 lines)
+    0x1b, 0x64, 0x03, // ESC d 3 (Feed 3 lines)
     0x1d, 0x56, 0x42, 0x00, // GS V B 0 (Feed and cut)
   ];
 
@@ -195,13 +334,36 @@ export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
   return output;
 }
 
-// Send binary data to Bluetooth printer in safe chunks (preventing buffer overflow)
+// Send binary data to Bluetooth printer (supports both Native Android SPP and Web Bluetooth BLE)
 export async function sendEscPosToPrinter(
-  characteristic: BluetoothRemoteGATTCharacteristic,
+  printer: BluetoothPrinterDevice,
   data: Uint8Array,
   onProgress?: (percent: number) => void
 ): Promise<void> {
-  const chunkSize = 128; // 128-byte chunks for reliable BLE transfer
+  // 1. Native Android Bluetooth SPP Printer
+  if (
+    printer.isNativeAndroid &&
+    typeof window !== 'undefined' &&
+    (window as any).AndroidNative?.printEscPosBase64
+  ) {
+    if (onProgress) onProgress(30);
+    const b64 = uint8ArrayToBase64(data);
+    const resultRaw = (window as any).AndroidNative.printEscPosBase64(b64, printer.address || '');
+    const result = resultRaw ? JSON.parse(resultRaw) : { success: false };
+    if (!result.success) {
+      throw new Error(result.error || 'ব্লুটুথ প্রিন্টারে ডাটা পাঠানো যায়নি। প্রিন্টারটি অন আছে কিনা দেখুন।');
+    }
+    if (onProgress) onProgress(100);
+    return;
+  }
+
+  // 2. Web Bluetooth BLE Characteristic
+  const characteristic = printer.characteristic;
+  if (!characteristic) {
+    throw new Error('ব্লুটুথ প্রিন্টার সংযুক্ত নেই।');
+  }
+
+  const chunkSize = 128;
   const total = data.length;
   let offset = 0;
 
@@ -220,7 +382,6 @@ export async function sendEscPosToPrinter(
       onProgress(Math.round((offset / total) * 100));
     }
 
-    // Small delay between packets to prevent printer buffer overrun
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 22));
   }
 }

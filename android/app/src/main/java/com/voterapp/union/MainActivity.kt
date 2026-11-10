@@ -513,7 +513,7 @@ class MainActivity : AppCompatActivity() {
             if (socket == null || !socket.isConnected || activeBtDevice?.address != device.address) {
                 try {
                     socket?.close()
-                } catch (_: Exception) {}
+                } catch (ignored: Exception) {}
                 socket = device.createRfcommSocketToServiceRecord(sppUuid)
                 adapter.cancelDiscovery()
                 socket.connect()
@@ -537,7 +537,7 @@ class MainActivity : AppCompatActivity() {
             Log.e("VoterApp", "sendEscPosOverBluetooth error", e)
             try {
                 activeBtSocket?.close()
-            } catch (_: Exception) {}
+            } catch (ignored: Exception) {}
             activeBtSocket = null
             false
         }
@@ -623,7 +623,7 @@ class MainActivity : AppCompatActivity() {
                 Log.e("VoterApp", "DownloadManager failed, opening browser fallback", e)
                 try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)))
-                } catch (_: Exception) {}
+                } catch (ignored: Exception) {}
             }
         }
     }
@@ -659,10 +659,10 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         try {
             unregisterReceiver(downloadCompleteReceiver)
-        } catch (_: Exception) {}
+        } catch (ignored: Exception) {}
         try {
             activeBtSocket?.close()
-        } catch (_: Exception) {}
+        } catch (ignored: Exception) {}
         webView.stopLoading()
         webView.destroy()
         super.onDestroy()
@@ -724,7 +724,7 @@ class MainActivity : AppCompatActivity() {
         fun disconnectPrinter() {
             try {
                 activeBtSocket?.close()
-            } catch (_: Exception) {}
+            } catch (ignored: Exception) {}
             activeBtSocket = null
         }
 

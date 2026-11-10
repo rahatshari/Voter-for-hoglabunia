@@ -28,7 +28,17 @@ import android.print.PrintManager
 import android.util.Base64
 import android.util.Log
 import android.view.View
-import android.webkit.*
+import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.Toast
@@ -40,7 +50,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewAssetLoader
-import androidx.webkit.WebViewAssetLoader.AssetsPathHandler
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -89,12 +98,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            val intent = result.data
+            val dataIntent = result.data
+            val singleUri = dataIntent?.data
+            val clipData = dataIntent?.clipData
             val results: Array<Uri>? = when {
-                intent?.data != null -> arrayOf(intent.data!!)
-                intent?.clipData != null -> {
-                    val count = intent.clipData!!.itemCount
-                    Array(count) { i -> intent.clipData!!.getItemAt(i).uri }
+                singleUri != null -> arrayOf(singleUri)
+                clipData != null -> {
+                    val count = clipData.itemCount
+                    Array(count) { i -> clipData.getItemAt(i).uri }
                 }
                 else -> null
             }
@@ -131,7 +142,7 @@ class MainActivity : AppCompatActivity() {
         // Initialize Android Jetpack WebViewAssetLoader for secure HTTPS local asset loading
         assetLoader = WebViewAssetLoader.Builder()
             .setDomain("appassets.androidplatform.net")
-            .addPathHandler("/assets/", AssetsPathHandler(this))
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         // Register download completion receiver for In-App APK updates
@@ -204,7 +215,7 @@ class MainActivity : AppCompatActivity() {
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        val originalUa = settings.userAgentString
+        val originalUa = settings.userAgentString ?: ""
         settings.userAgentString = "$originalUa VoterAppAndroid/${getInstalledVersionName()}"
 
         // Expose Native JavaScript Interface
@@ -226,7 +237,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                if (request != null) {
+                    request.grant(request.resources)
+                }
             }
 
             override fun onShowFileChooser(
@@ -304,7 +317,7 @@ class MainActivity : AppCompatActivity() {
                 if (request?.isForMainFrame == true) {
                     progressBar.visibility = View.GONE
                     swipeRefreshLayout.isRefreshing = false
-                    val failedUrl = request.url.toString()
+                    val failedUrl = request.url?.toString() ?: ""
                     if (failedUrl.contains("appassets.androidplatform.net")) {
                         view?.loadUrl(defaultLiveUrl)
                     } else {
@@ -413,9 +426,10 @@ class MainActivity : AppCompatActivity() {
                             try {
                                 val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
                                 val adapter = pWebView.createPrintDocumentAdapter(jobTitle)
-                                val builder = PrintAttributes.Builder()
+                                val attributes = PrintAttributes.Builder()
                                     .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-                                printManager?.print(jobTitle, adapter, builder.build())
+                                    .build()
+                                printManager?.print(jobTitle, adapter, attributes)
                             } catch (e: Exception) {
                                 Log.e("VoterApp", "PrintManager error", e)
                                 Toast.makeText(this@MainActivity, "প্রিন্ট সার্ভিস চালু করা যায়নি", Toast.LENGTH_SHORT).show()
@@ -450,38 +464,49 @@ class MainActivity : AppCompatActivity() {
                 return ""
             }
 
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return ""
+            @Suppress("DEPRECATION")
+            val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter() ?: return ""
             if (!adapter.isEnabled) return ""
 
-            val bonded = adapter.bondedDevices ?: return ""
-            if (bonded.isEmpty()) return ""
+            val bondedSet = adapter.bondedDevices
+            if (bondedSet == null || bondedSet.isEmpty()) return ""
+            val bondedList: List<BluetoothDevice> = bondedSet.toList()
 
             val printerKeywords = listOf(
                 "mtp", "pt-", "rpp", "pos", "printer", "thermal", "xp-", "zj-", "bt-", "innerprinter", "bluetooth", "58", "80"
             )
 
-            // Prefer devices matching thermal printer keywords, or fallback to first paired device
-            var candidate: BluetoothDevice? = bonded.firstOrNull { dev ->
-                val n = (dev.name ?: "").lowercase()
-                printerKeywords.any { kw -> n.contains(kw) }
+            var candidate: BluetoothDevice? = null
+            for (dev in bondedList) {
+                val devName = (dev.name ?: "").lowercase()
+                for (kw in printerKeywords) {
+                    if (devName.contains(kw)) {
+                        candidate = dev
+                        break
+                    }
+                }
+                if (candidate != null) break
             }
-            if (candidate == null && bonded.size == 1) {
-                candidate = bonded.first()
+            if (candidate == null && bondedList.size == 1) {
+                candidate = bondedList[0]
             }
 
-            val target = candidate ?: return ""
+            val target: BluetoothDevice = candidate ?: return ""
 
             if (autoConnectSocket) {
                 try {
-                    if (activeBtSocket == null || activeBtSocket?.isConnected != true || activeBtDevice?.address != target.address) {
-                        activeBtSocket?.close()
-                        val sock = target.createRfcommSocketToServiceRecord(sppUuid)
-                        sock.connect()
-                        activeBtSocket = sock
+                    val existingSocket = activeBtSocket
+                    val existingDevice = activeBtDevice
+                    if (existingSocket == null || !existingSocket.isConnected || existingDevice?.address != target.address) {
+                        try {
+                            existingSocket?.close()
+                        } catch (ignored: Exception) {}
+                        val newSock: BluetoothSocket? = target.createRfcommSocketToServiceRecord(sppUuid)
+                        newSock?.connect()
+                        activeBtSocket = newSock
                         activeBtDevice = target
                     }
                 } catch (e: Exception) {
-                    // Socket can also connect on-demand during printEscPosBase64
                     activeBtDevice = target
                 }
             }
@@ -500,29 +525,43 @@ class MainActivity : AppCompatActivity() {
     fun sendEscPosOverBluetooth(base64Payload: String, targetAddress: String): Boolean {
         return try {
             val bytes = Base64.decode(base64Payload, Base64.DEFAULT)
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+            @Suppress("DEPRECATION")
+            val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter() ?: return false
             if (!adapter.isEnabled) return false
 
-            val bonded = adapter.bondedDevices ?: emptySet()
-            val device: BluetoothDevice = bonded.firstOrNull { it.address == targetAddress }
-                ?: activeBtDevice
-                ?: bonded.firstOrNull()
-                ?: return false
+            val bondedSet = adapter.bondedDevices
+            val bondedList: List<BluetoothDevice> = bondedSet?.toList() ?: emptyList()
 
-            var socket = activeBtSocket
-            if (socket == null || !socket.isConnected || activeBtDevice?.address != device.address) {
-                try {
-                    socket?.close()
-                } catch (ignored: Exception) {}
-                socket = device.createRfcommSocketToServiceRecord(sppUuid)
-                adapter.cancelDiscovery()
-                socket.connect()
-                activeBtSocket = socket
-                activeBtDevice = device
+            var matchedDevice: BluetoothDevice? = null
+            for (dev in bondedList) {
+                if (dev.address == targetAddress) {
+                    matchedDevice = dev
+                    break
+                }
             }
 
-            val out = socket.outputStream
-            // Write in chunks for stable thermal printer buffer handling
+            val fallbackFirst: BluetoothDevice? = if (bondedList.isNotEmpty()) bondedList[0] else null
+            val device: BluetoothDevice = matchedDevice
+                ?: activeBtDevice
+                ?: fallbackFirst
+                ?: return false
+
+            var currentSocket: BluetoothSocket? = activeBtSocket
+            val currentDevice: BluetoothDevice? = activeBtDevice
+            if (currentSocket == null || !currentSocket.isConnected || currentDevice?.address != device.address) {
+                try {
+                    currentSocket?.close()
+                } catch (ignored: Exception) {}
+                val createdSocket: BluetoothSocket = device.createRfcommSocketToServiceRecord(sppUuid) ?: return false
+                adapter.cancelDiscovery()
+                createdSocket.connect()
+                activeBtSocket = createdSocket
+                activeBtDevice = device
+                currentSocket = createdSocket
+            }
+
+            val finalSocket: BluetoothSocket = currentSocket ?: return false
+            val out = finalSocket.outputStream ?: return false
             val chunkSize = 512
             var offset = 0
             while (offset < bytes.size) {
@@ -552,7 +591,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             val channelId = "voter_app_updates"
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
                     channelId,
@@ -596,7 +635,7 @@ class MainActivity : AppCompatActivity() {
     fun downloadApkAndPromptInstall(apkUrl: String, versionName: String) {
         runOnUiThread {
             try {
-                val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: cacheDir
+                val dir: File = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: cacheDir
                 val targetFile = File(dir, "Union-Voter-App-v$versionName.apk")
                 if (targetFile.exists()) {
                     targetFile.delete()
@@ -611,11 +650,13 @@ class MainActivity : AppCompatActivity() {
                     .setAllowedOverMetered(true)
                     .setAllowedOverRoaming(true)
 
-                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                pendingDownloadId = dm.enqueue(request)
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                if (dm != null) {
+                    pendingDownloadId = dm.enqueue(request)
+                }
 
                 Toast.makeText(
-                    this,
+                    this@MainActivity,
                     "⬇️ নতুন আপডেট ডাউনলোড শুরু হয়েছে! শেষ হলে অটোমেটিক Install অপশন আসবে।",
                     Toast.LENGTH_LONG
                 ).show()
@@ -679,6 +720,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun vibrate(durationMs: Long) {
+            @Suppress("DEPRECATION")
             val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             if (vibrator != null && vibrator.hasVibrator()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

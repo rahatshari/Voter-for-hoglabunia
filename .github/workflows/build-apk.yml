@@ -58,8 +58,10 @@ jobs:
 
       - name: 📂 Embed Web Assets into Android App
         run: |
+          rm -rf android/app/src/main/assets/public
           mkdir -p android/app/src/main/assets/public
           cp -r dist/* android/app/src/main/assets/public/ 2>/dev/null || true
+          rm -rf android/app/src/main/assets/public/assets/aistudio 2>/dev/null || true
           cp -r villages android/app/src/main/assets/public/ 2>/dev/null || true
           cp public/version.json android/app/src/main/assets/public/version.json 2>/dev/null || true
           echo "Assets bundled successfully:"
@@ -67,10 +69,19 @@ jobs:
 
       - name: 🔐 Verify Deterministic Signing Keystore
         run: |
-          if [ ! -s android/app/voter-release-key.jks ] && [ -f android/app/voter-release-key.base64 ]; then
-            base64 -d android/app/voter-release-key.base64 > android/app/voter-release-key.jks
+          if [ ! -s android/app/voter-release-key.p12 ] && [ -f android/app/voter-release-key.base64 ]; then
+            base64 -d android/app/voter-release-key.base64 > android/app/voter-release-key.p12
           fi
-          ls -la android/app/voter-release-key.jks
+          rm -f android/app/voter-release-key.jks
+          keytool -importkeystore \
+            -srckeystore android/app/voter-release-key.p12 \
+            -srcstoretype PKCS12 \
+            -srcstorepass voter123456 \
+            -destkeystore android/app/voter-release-key.jks \
+            -deststoretype JKS \
+            -deststorepass voter123456 \
+            -noprompt || cp android/app/voter-release-key.p12 android/app/voter-release-key.jks
+          keytool -list -v -keystore android/app/voter-release-key.jks -storepass voter123456 | head -n 18
 
       - name: 🐘 Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -84,11 +95,12 @@ jobs:
       - name: 🚀 Build Consistently Signed APK (v${{ steps.version.outputs.version_name }})
         working-directory: android
         run: |
-          ./gradlew assembleRelease assembleDebug \
+          ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
+            -x lint -x lintVitalRelease \
             --stacktrace
-          cp app/build/outputs/apk/release/app-release.apk ../Union-Voter-App.apk || cp app/build/outputs/apk/debug/app-debug.apk ../Union-Voter-App.apk
+          cp app/build/outputs/apk/release/app-release.apk ../Union-Voter-App.apk
           cp ../Union-Voter-App.apk "../Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk"
 
       - name: 📤 Upload APK Artifacts

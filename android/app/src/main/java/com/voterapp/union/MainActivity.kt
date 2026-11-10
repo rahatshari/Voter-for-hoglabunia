@@ -136,11 +136,12 @@ class MainActivity : AppCompatActivity() {
 
         // Register download completion receiver for In-App APK updates
         val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(downloadCompleteReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(downloadCompleteReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            downloadCompleteReceiver,
+            filter,
+            ContextCompat.RECEIVER_EXPORTED
+        )
 
         requestRuntimePermissions()
         setupWebView()

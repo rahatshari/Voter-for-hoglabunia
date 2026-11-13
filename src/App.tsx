@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { Voter, AppSearchFilters, AppSettings, SavedAppState } from './types';
+import { Voter, AppGlobalConfig, AppSearchFilters, AppSettings, SavedAppState } from './types';
 import { prepareVoter } from './lib/bengaliUtils';
 import { LoginScreen } from './components/LoginScreen';
 import { LoadingScreen } from './components/LoadingScreen';
@@ -17,10 +17,12 @@ import { AppUpdateBanner } from './components/AppUpdateBanner';
 import { VoterSlipModal } from './components/VoterSlipModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import {
+  DEFAULT_APP_CONFIG,
   clientRegisterSession,
   clientHeartbeat,
   clientEndSession,
   loadStoredAdminEmails,
+  loadStoredAppConfig,
 } from './lib/clientAdminStore';
 import {
   cloudRegisterSession,
@@ -28,6 +30,7 @@ import {
   cloudEndSession,
   getCloudAdminEmails,
   listenForSessionTermination,
+  subscribeAppGlobalConfig,
 } from './lib/cloudStore';
 import { isEmailAdmin } from './lib/adminUtils';
 
@@ -74,6 +77,7 @@ export const App: React.FC = () => {
   const [slipModalVoter, setSlipModalVoter] = useState<Voter | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [appConfig, setAppConfig] = useState<AppGlobalConfig>(() => loadStoredAppConfig());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginAlert, setLoginAlert] = useState<{ text: string; isError: boolean } | null>(null);
 
@@ -117,19 +121,34 @@ export const App: React.FC = () => {
     }
     const cleanEmail = currentUser.email.trim().toLowerCase();
 
-    // Check Cloud Admin Database
     getCloudAdminEmails()
       .then((admins) => {
         const userIsAdmin = isEmailAdmin(cleanEmail, admins);
         setIsAdmin(userIsAdmin);
       })
       .catch(() => {
-        // Fallback for offline or local store
         const storedAdmins = loadStoredAdminEmails();
         const userIsAdmin = isEmailAdmin(cleanEmail, storedAdmins);
         setIsAdmin(userIsAdmin);
       });
   }, [currentUser]);
+
+  // Real-time Global App Config listener (Announcement Banner, Maintenance Mode, Single-Device Policy)
+  useEffect(() => {
+    const unsubCfg = subscribeAppGlobalConfig((cfg) => {
+      setAppConfig(cfg || DEFAULT_APP_CONFIG);
+    });
+    const onLocalCfgUpdate = () => {
+      setAppConfig(loadStoredAppConfig());
+    };
+    window.addEventListener('voter_app_config_changed', onLocalCfgUpdate);
+    return () => {
+      try {
+        unsubCfg();
+      } catch {}
+      window.removeEventListener('voter_app_config_changed', onLocalCfgUpdate);
+    };
+  }, []);
 
   // Helper to resolve static asset path relative to current app URL
   const getStaticUrl = useCallback((path: string) => {
@@ -306,7 +325,18 @@ export const App: React.FC = () => {
             const res = await cloudRegisterSession(user.email, mySessionId, detectedDevice);
             if (res.isBlocked) {
               await signOut(auth);
-              showToast('🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।');
+              setLoginAlert({
+                text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
+                isError: true,
+              });
+              return;
+            }
+            if (res.maintenanceBlocked) {
+              await signOut(auth);
+              setLoginAlert({
+                text: `🔧 ${res.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে।'}`,
+                isError: true,
+              });
               return;
             }
           } catch (err) {
@@ -328,13 +358,9 @@ export const App: React.FC = () => {
             const currentSid = localStorage.getItem('voter_device_session_id');
             if (!currentSid || !user.email) return;
 
-            // Cloud heartbeat & lifetime duration tracker
             cloudHeartbeat(currentSid, user.email);
-
-            // Client backup heartbeat
             clientHeartbeat(currentSid);
 
-            // Server heartbeat if running
             try {
               const valRes = await fetch(
                 `/api/session/validate?email=${encodeURIComponent(user.email)}&sessionId=${encodeURIComponent(currentSid)}`
@@ -353,24 +379,40 @@ export const App: React.FC = () => {
                   }
                 }
               }
-            } catch (e) {}
+            } catch {}
           }, 8000);
 
-          // 5. Real-time Firebase Cloud listener for remote kicks or another device login
+          // 5. Real-time Firebase Cloud listener for remote kicks, another device login, or live admin block
           try {
-            sessionListenerUnsubRef.current = listenForSessionTermination(mySessionId, () => {
-              // Check if session was terminated in cloud
-              const currentSid = localStorage.getItem('voter_device_session_id');
-              if (currentSid === mySessionId && !isLoggingOut) {
-                // Another device logged in or admin kicked this session
-                if (sessionIntervalRef.current) {
-                  clearInterval(sessionIntervalRef.current);
-                  sessionIntervalRef.current = null;
+            sessionListenerUnsubRef.current = listenForSessionTermination(
+              mySessionId,
+              (reason) => {
+                const currentSid = localStorage.getItem('voter_device_session_id');
+                if (reason === 'user_blocked') {
+                  if (sessionIntervalRef.current) {
+                    clearInterval(sessionIntervalRef.current);
+                    sessionIntervalRef.current = null;
+                  }
+                  localStorage.removeItem('voter_device_session_id');
+                  signOut(auth).catch(() => {});
+                  setCurrentUser(null);
+                  setLoginAlert({
+                    text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
+                    isError: true,
+                  });
+                  return;
                 }
-                setIsAnotherDeviceOpen(true);
-              }
-            });
-          } catch (e) {}
+                if (currentSid === mySessionId && !isLoggingOut) {
+                  if (sessionIntervalRef.current) {
+                    clearInterval(sessionIntervalRef.current);
+                    sessionIntervalRef.current = null;
+                  }
+                  setIsAnotherDeviceOpen(true);
+                }
+              },
+              user.email
+            );
+          } catch {}
         }
 
         const data = await loadVillages();
@@ -619,10 +661,47 @@ export const App: React.FC = () => {
     );
   }
 
+  // Maintenance lock screen for non-admin users when enabled remotely by admin
+  if (appConfig.maintenanceMode && !isAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white max-w-md w-full rounded-3xl shadow-xl border border-amber-200 p-7 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-3xl mx-auto">
+            🔧
+          </div>
+          <h2 className="text-xl font-black text-slate-900">অ্যাপ রক্ষণাবেক্ষণ মোড চালু</h2>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            {appConfig.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'}
+          </p>
+          <div className="text-xs text-slate-400">লগইন: {currentUser.email}</div>
+          <button
+            type="button"
+            onClick={executeLogout}
+            className="w-full py-3 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer transition"
+          >
+            🚪 লগআউট করুন
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#F0F3F8] flex flex-col justify-start text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
       {/* In-App APK Auto Update Notification Banner */}
       <AppUpdateBanner />
+
+      {/* Global Admin Broadcast Announcement Banner */}
+      {appConfig.announcementEnabled && appConfig.announcementText?.trim() && (
+        <div
+          role="region"
+          aria-label="অ্যাডমিন ঘোষণা"
+          className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white px-4 py-2 text-xs font-bold text-center shadow-sm flex items-center justify-center gap-2"
+        >
+          <span>📢</span>
+          <span>{appConfig.announcementText}</span>
+        </div>
+      )}
 
       {/* Responsive Viewport Container: Fits mobile perfectly & expands beautifully on PC */}
       <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 flex flex-col">

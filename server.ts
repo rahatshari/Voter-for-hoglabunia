@@ -45,6 +45,8 @@ interface SessionHistoryItem {
 interface AppUserStoredRecord {
   email: string;
   name?: string;
+  phone?: string;
+  notes?: string;
   role: 'admin' | 'user';
   status: 'active' | 'blocked';
   createdAt: number;
@@ -53,10 +55,29 @@ interface AppUserStoredRecord {
   lastPasswordChangedAt?: number | null;
 }
 
+interface AppGlobalConfigRecord {
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  announcementEnabled: boolean;
+  announcementText: string;
+  enforceSingleDevice: boolean;
+  allowSlipPrint: boolean;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 let activeSessions: Record<string, SessionRecord> = {};
 let sessionHistory: SessionHistoryItem[] = [];
 let adminEmails: string[] = ['rahatsharif10448@gmail.com', 'rahatsharif504@gmail.com'];
 let appUsers: Record<string, AppUserStoredRecord> = {};
+let appConfig: AppGlobalConfigRecord = {
+  maintenanceMode: false,
+  maintenanceMessage: 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
+  announcementEnabled: false,
+  announcementText: '',
+  enforceSingleDevice: true,
+  allowSlipPrint: true,
+};
 
 function loadAdminConfig() {
   try {
@@ -64,6 +85,9 @@ function loadAdminConfig() {
       const data = JSON.parse(fs.readFileSync(ADMIN_CONFIG_FILE, 'utf8'));
       if (Array.isArray(data?.adminEmails) && data.adminEmails.length > 0) {
         adminEmails = data.adminEmails.map((e: string) => String(e).trim().toLowerCase()).filter(Boolean);
+      }
+      if (data?.appConfig && typeof data.appConfig === 'object') {
+        appConfig = { ...appConfig, ...data.appConfig };
       }
     }
   } catch (e: any) {
@@ -73,7 +97,7 @@ function loadAdminConfig() {
 
 function saveAdminConfig() {
   try {
-    fs.writeFileSync(ADMIN_CONFIG_FILE, JSON.stringify({ adminEmails }, null, 2), 'utf8');
+    fs.writeFileSync(ADMIN_CONFIG_FILE, JSON.stringify({ adminEmails, appConfig }, null, 2), 'utf8');
   } catch (e: any) {
     console.error('Error saving admin config:', e.message);
   }
@@ -392,9 +416,9 @@ app.post('/api/session/register', (req: Request, res: Response) => {
       durationMinutes: duration,
       endReason: 'another_device',
     });
-    // Keep max 200 items in history
-    if (sessionHistory.length > 200) {
-      sessionHistory = sessionHistory.slice(0, 200);
+    // Keep up to 5000 historical items instead of truncating at 200
+    if (sessionHistory.length > 5000) {
+      sessionHistory = sessionHistory.slice(0, 5000);
     }
   }
 
@@ -488,8 +512,8 @@ app.post('/api/session/logout', (req: Request, res: Response) => {
         durationMinutes: duration,
         endReason: 'logout',
       });
-      if (sessionHistory.length > 200) {
-        sessionHistory = sessionHistory.slice(0, 200);
+      if (sessionHistory.length > 5000) {
+        sessionHistory = sessionHistory.slice(0, 5000);
       }
       delete activeSessions[cleanEmail];
       saveSessions();
@@ -630,16 +654,25 @@ app.get('/api/admin/data', (req: Request, res: Response) => {
     success: true,
     isAdmin: true,
     adminEmails,
-    users: userList,
+    users: userList.map((u) => ({
+      ...u,
+      phone: appUsers[u.email]?.phone,
+      notes: appUsers[u.email]?.notes,
+    })),
     activeUsers,
-    history: sessionHistory.slice(0, 100),
+    history: sessionHistory,
     summary: {
       totalRegisteredUsers: userList.length,
       onlineCount,
       blockedCount,
+      adminCount: userList.filter((u) => u.role === 'admin').length,
       totalCumulativeMinutes,
       avgMinutesPerUser,
     },
+    appConfig,
+    dataSource: 'server',
+    cloudConnected: false,
+    lastSyncedAt: now,
   });
 });
 
@@ -994,7 +1027,104 @@ app.post('/api/admin/kick', (req: Request, res: Response) => {
   res.json({ success: false, message: 'No active session found' });
 });
 
-// 12. Admin API: Clear session history
+// 12. Admin API: Update User Profile / Role / Minutes
+app.post('/api/admin/users/update', (req: Request, res: Response) => {
+  const requesterEmail = (
+    (req.headers['x-admin-email'] as string) ||
+    req.body?.adminEmail ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!checkIsAdmin(requesterEmail)) {
+    return res.status(403).json({ error: 'অননুমোদিত: আপনি অ্যাডমিন নন।' });
+  }
+
+  const { email, updates } = req.body || {};
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail || !appUsers[cleanEmail]) {
+    return res.status(404).json({ error: 'ব্যবহারকারী পাওয়া যায়নি।' });
+  }
+
+  const target = appUsers[cleanEmail];
+  if (updates?.name !== undefined) target.name = String(updates.name).trim();
+  if (updates?.phone !== undefined) target.phone = String(updates.phone).trim();
+  if (updates?.notes !== undefined) target.notes = String(updates.notes).trim();
+  if (updates?.role === 'admin' || updates?.role === 'user') {
+    target.role = updates.role;
+    if (updates.role === 'admin' && !adminEmails.includes(cleanEmail)) {
+      adminEmails.push(cleanEmail);
+      saveAdminConfig();
+    } else if (updates.role === 'user' && cleanEmail !== 'rahatsharif10448@gmail.com') {
+      adminEmails = adminEmails.filter((e) => e !== cleanEmail);
+      saveAdminConfig();
+    }
+  }
+  if (updates?.totalMinutesSpent !== undefined) {
+    target.totalMinutesSpent = Math.max(0, Number(updates.totalMinutesSpent) || 0);
+  }
+  saveUsers();
+
+  res.json({ success: true, user: target });
+});
+
+// 13. Admin API: Kick ALL active sessions
+app.post('/api/admin/kick-all', (req: Request, res: Response) => {
+  const requesterEmail = (
+    (req.headers['x-admin-email'] as string) ||
+    req.body?.adminEmail ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!checkIsAdmin(requesterEmail)) {
+    return res.status(403).json({ error: 'অননুমোদিত: আপনি অ্যাডমিন নন।' });
+  }
+
+  const { excludeEmail } = req.body || {};
+  const exclude = String(excludeEmail || '').trim().toLowerCase();
+  let kicked = 0;
+
+  Object.entries(activeSessions).forEach(([emailKey, existing]) => {
+    if (exclude && emailKey === exclude) return;
+    kicked++;
+    const duration = Math.max(1, Math.round((Date.now() - existing.registeredAt) / 60000));
+    sessionHistory.unshift({
+      id: 'hist_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      email: emailKey,
+      sessionId: existing.sessionId,
+      deviceName: existing.deviceName || 'Mobile',
+      loginAt: existing.registeredAt,
+      logoutAt: Date.now(),
+      durationMinutes: duration,
+      endReason: 'kicked',
+    });
+    delete activeSessions[emailKey];
+  });
+  saveSessions();
+  res.json({ success: true, kickedCount: kicked });
+});
+
+// 14. Admin API: Delete specific history items
+app.post('/api/admin/delete-history', (req: Request, res: Response) => {
+  const requesterEmail = (
+    (req.headers['x-admin-email'] as string) ||
+    req.body?.adminEmail ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!checkIsAdmin(requesterEmail)) {
+    return res.status(403).json({ error: 'অননুমোদিত: আপনি অ্যাডমিন নন।' });
+  }
+
+  const { ids } = req.body || {};
+  if (Array.isArray(ids) && ids.length > 0) {
+    const idSet = new Set(ids.map(String));
+    sessionHistory = sessionHistory.filter((h) => !idSet.has(h.id));
+    saveSessions();
+  }
+  res.json({ success: true, remaining: sessionHistory.length });
+});
+
+// 15. Admin API: Clear session history
 app.post('/api/admin/clear-history', (req: Request, res: Response) => {
   const requesterEmail = (
     (req.headers['x-admin-email'] as string) ||
@@ -1009,6 +1139,33 @@ app.post('/api/admin/clear-history', (req: Request, res: Response) => {
   sessionHistory = [];
   saveSessions();
   res.json({ success: true });
+});
+
+// 16. Admin API: Global App Control Configuration
+app.get('/api/admin/config/app', (_req: Request, res: Response) => {
+  res.json({ success: true, appConfig });
+});
+
+app.post('/api/admin/config/app', (req: Request, res: Response) => {
+  const requesterEmail = (
+    (req.headers['x-admin-email'] as string) ||
+    req.body?.adminEmail ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!checkIsAdmin(requesterEmail)) {
+    return res.status(403).json({ error: 'অননুমোদিত: আপনি অ্যাডমিন নন।' });
+  }
+
+  const incoming = req.body?.appConfig || {};
+  appConfig = {
+    ...appConfig,
+    ...incoming,
+    updatedAt: Date.now(),
+    updatedBy: requesterEmail,
+  };
+  saveAdminConfig();
+  res.json({ success: true, appConfig });
 });
 
 // Serve static assets from public/ and villages/

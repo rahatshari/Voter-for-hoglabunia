@@ -16,7 +16,9 @@
     "status": "active",
     "createdAt": 1793503771574,
     "lastLoginAt": 1793530491294,
-    "totalMinutesSpent": 341.51,
-    "lastPasswordChangedAt": null
+    "totalMinutesSpent": 342,
+    "lastPasswordChangedAt": null,
+    "phone": "",
+    "notes": ""
   }
 }

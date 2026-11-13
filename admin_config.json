@@ -2,5 +2,15 @@
   "adminEmails": [
     "rahatsharif10448@gmail.com",
     "rahatsharif504@gmail.com"
-  ]
+  ],
+  "appConfig": {
+    "maintenanceMode": false,
+    "maintenanceMessage": "সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।",
+    "announcementEnabled": false,
+    "announcementText": "",
+    "enforceSingleDevice": true,
+    "allowSlipPrint": true,
+    "updatedAt": 1794558731273,
+    "updatedBy": "rahatsharif10448@gmail.com"
+  }
 }

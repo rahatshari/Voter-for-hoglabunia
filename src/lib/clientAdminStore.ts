@@ -1,10 +1,11 @@
 import {
   AdminPanelData,
+  AppGlobalConfig,
   AppUserRecord,
   UserSessionData,
   SessionHistoryItem,
 } from '../types';
-import { calculateAdminSummary, isEmailAdmin } from './adminUtils';
+import { calculateAdminSummary, isEmailAdmin, mergeHistoryRecords } from './adminUtils';
 
 export interface ClientSessionRecord {
   sessionId: string;
@@ -19,11 +20,21 @@ const DEFAULT_ADMIN_EMAILS = [
   'rahatsharif504@gmail.com',
 ];
 
+export const DEFAULT_APP_CONFIG: AppGlobalConfig = {
+  maintenanceMode: false,
+  maintenanceMessage: 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
+  announcementEnabled: false,
+  announcementText: '',
+  enforceSingleDevice: true,
+  allowSlipPrint: true,
+};
+
 const STORAGE_KEYS = {
   ADMIN_EMAILS: 'voter_gh_admin_emails',
   USERS: 'voter_gh_users',
   SESSIONS: 'voter_gh_sessions',
   HISTORY: 'voter_gh_history',
+  APP_CONFIG: 'voter_gh_app_config',
   IS_STATIC_HOST: 'voter_is_static_host',
 };
 
@@ -90,6 +101,25 @@ export function saveStoredAdminEmails(emails: string[]): void {
   } catch {}
 }
 
+export function loadStoredAppConfig(): AppGlobalConfig {
+  try {
+    const raw = getStorageItem(STORAGE_KEYS.APP_CONFIG);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return { ...DEFAULT_APP_CONFIG, ...parsed };
+      }
+    }
+  } catch {}
+  return { ...DEFAULT_APP_CONFIG };
+}
+
+export function saveStoredAppConfig(cfg: AppGlobalConfig): void {
+  try {
+    setStorageItem(STORAGE_KEYS.APP_CONFIG, JSON.stringify({ ...DEFAULT_APP_CONFIG, ...cfg }));
+  } catch {}
+}
+
 export function loadStoredUsers(): Record<string, AppUserRecord> {
   try {
     const raw = getStorageItem(STORAGE_KEYS.USERS);
@@ -139,7 +169,15 @@ export function loadStoredHistory(): SessionHistoryItem[] {
 
 export function saveStoredHistory(history: SessionHistoryItem[]): void {
   try {
-    setStorageItem(STORAGE_KEYS.HISTORY, JSON.stringify(history.slice(0, 50)));
+    // Preserve up to 5000 items so historical records are never truncated arbitrarily
+    const clean = mergeHistoryRecords(history).slice(0, 5000);
+    setStorageItem(STORAGE_KEYS.HISTORY, JSON.stringify(clean));
+  } catch {}
+}
+
+export function replaceStoredHistoryExact(history: SessionHistoryItem[]): void {
+  try {
+    setStorageItem(STORAGE_KEYS.HISTORY, JSON.stringify(history));
   } catch {}
 }
 
@@ -150,6 +188,7 @@ export function buildClientAdminData(currentUserEmail: string): AdminPanelData {
   const usersMap = loadStoredUsers();
   const sessionsMap = loadStoredSessions();
   const history = loadStoredHistory();
+  const appConfig = loadStoredAppConfig();
 
   const now = Date.now();
   const activeSessions = Object.values(sessionsMap);
@@ -157,10 +196,11 @@ export function buildClientAdminData(currentUserEmail: string): AdminPanelData {
 
   // Map users with online status and active duration
   const enrichedUsers: AppUserRecord[] = Object.values(usersMap).map((u) => {
-    const active = activeSessions.find(
+    const userSessions = activeSessions.filter(
       (s) => s.email.toLowerCase() === u.email.toLowerCase()
     );
-    const isOnline = Boolean(active && now - active.lastActive < 45000);
+    const active = userSessions.sort((a, b) => b.lastActive - a.lastActive)[0];
+    const isOnline = userSessions.some((s) => now - s.lastActive < 45000);
     const currentDuration = active
       ? Math.max(1, Math.round((now - active.registeredAt) / 60000))
       : 0;
@@ -168,9 +208,11 @@ export function buildClientAdminData(currentUserEmail: string): AdminPanelData {
     return {
       ...u,
       isOnline,
+      activeSessionId: active?.sessionId,
+      activeSessionCount: userSessions.length,
       currentSessionDuration: currentDuration,
-      deviceName: active?.deviceName || undefined,
-      lastActive: active?.lastActive || u.lastLoginAt,
+      deviceName: active?.deviceName || u.deviceName || undefined,
+      lastActive: active?.lastActive || u.lastLoginAt || undefined,
     };
   });
 
@@ -189,6 +231,10 @@ export function buildClientAdminData(currentUserEmail: string): AdminPanelData {
     })),
     history,
     summary,
+    appConfig,
+    dataSource: 'local',
+    cloudConnected: false,
+    lastSyncedAt: now,
   };
 }
 
@@ -201,6 +247,7 @@ export function clientRegisterSession(
   const users = loadStoredUsers();
   const cleanEmail = email.trim().toLowerCase();
   const user = users[cleanEmail];
+  const cfg = loadStoredAppConfig();
 
   if (user && user.status === 'blocked') {
     return { success: false, isBlocked: true };
@@ -208,39 +255,66 @@ export function clientRegisterSession(
 
   const now = Date.now();
   const sessions = loadStoredSessions();
-
-  // Kick any prior sessions for this user to enforce single-device rule
   const history = loadStoredHistory();
-  Object.entries(sessions).forEach(([oldSessId, s]) => {
-    if (s.email.toLowerCase() === cleanEmail && oldSessId !== sessionId) {
+
+  if (cfg.enforceSingleDevice !== false) {
+    Object.entries(sessions).forEach(([oldSessId, s]) => {
+      if (s.email.toLowerCase() === cleanEmail && oldSessId !== sessionId) {
+        const idx = history.findIndex((h) => h.sessionId === oldSessId && h.endReason === 'active');
+        if (idx >= 0) {
+          history[idx] = {
+            ...history[idx],
+            logoutAt: now,
+            durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
+            endReason: 'another_device',
+          };
+        } else {
+          history.unshift({
+            id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
+            email: s.email,
+            sessionId: oldSessId,
+            deviceName: s.deviceName,
+            loginAt: s.registeredAt,
+            logoutAt: now,
+            durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
+            endReason: 'another_device',
+          });
+        }
+        delete sessions[oldSessId];
+      }
+    });
+  }
+
+  // Record active entry if missing
+  if (!sessions[sessionId]) {
+    const existingActive = history.find((h) => h.sessionId === sessionId);
+    if (!existingActive) {
       history.unshift({
-        id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
-        email: s.email,
-        sessionId: oldSessId,
-        deviceName: s.deviceName,
-        loginAt: s.registeredAt,
-        logoutAt: now,
-        durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
-        endReason: 'another_device',
+        id: `hist_${now}_${sessionId.slice(-6)}`,
+        email: cleanEmail,
+        sessionId,
+        deviceName,
+        loginAt: now,
+        durationMinutes: 1,
+        endReason: 'active',
       });
-      delete sessions[oldSessId];
     }
-  });
+  }
   saveStoredHistory(history);
 
-  // Register new session
   sessions[sessionId] = {
     sessionId,
     email: cleanEmail,
     deviceName,
-    registeredAt: now,
+    registeredAt: sessions[sessionId]?.registeredAt || now,
     lastActive: now,
   };
   saveStoredSessions(sessions);
 
-  // Update or insert user record
   if (user) {
     user.lastLoginAt = now;
+    user.deviceName = deviceName;
+    user.lastActive = now;
     users[cleanEmail] = user;
   } else {
     users[cleanEmail] = {
@@ -252,6 +326,8 @@ export function clientRegisterSession(
       lastLoginAt: now,
       totalMinutesSpent: 0,
       lastPasswordChangedAt: null,
+      deviceName,
+      lastActive: now,
     };
   }
   saveStoredUsers(users);
@@ -273,16 +349,26 @@ export function clientEndSession(
   if (sess) {
     const duration = Math.max(1, Math.round((now - sess.registeredAt) / 60000));
     const history = loadStoredHistory();
-    history.unshift({
-      id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
-      email: cleanEmail,
-      sessionId,
-      deviceName: sess.deviceName,
-      loginAt: sess.registeredAt,
-      logoutAt: now,
-      durationMinutes: duration,
-      endReason: reason,
-    });
+    const idx = history.findIndex((h) => h.sessionId === sessionId);
+    if (idx >= 0) {
+      history[idx] = {
+        ...history[idx],
+        logoutAt: now,
+        durationMinutes: duration,
+        endReason: reason,
+      };
+    } else {
+      history.unshift({
+        id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
+        email: cleanEmail,
+        sessionId,
+        deviceName: sess.deviceName,
+        loginAt: sess.registeredAt,
+        logoutAt: now,
+        durationMinutes: duration,
+        endReason: reason,
+      });
+    }
     saveStoredHistory(history);
     delete sessions[sessionId];
     saveStoredSessions(sessions);
@@ -301,15 +387,14 @@ export function clientHeartbeat(sessionId: string): void {
   sessions[sessionId] = sess;
   saveStoredSessions(sessions);
 
-  // Add delta to user's cumulative minutes
   if (deltaSeconds > 0 && deltaSeconds < 300) {
     const users = loadStoredUsers();
     const cleanEmail = sess.email.toLowerCase();
     if (users[cleanEmail]) {
       const addedMinutes = deltaSeconds / 60;
-      users[cleanEmail].totalMinutesSpent = Math.round(
-        ((users[cleanEmail].totalMinutesSpent || 0) + addedMinutes) * 100
-      ) / 100;
+      users[cleanEmail].totalMinutesSpent =
+        Math.round(((users[cleanEmail].totalMinutesSpent || 0) + addedMinutes) * 100) / 100;
+      users[cleanEmail].lastActive = now;
       saveStoredUsers(users);
     }
   }
@@ -319,6 +404,8 @@ export function clientHeartbeat(sessionId: string): void {
 export function clientAddUser(data: {
   email: string;
   name?: string;
+  phone?: string;
+  notes?: string;
   role?: 'user' | 'admin';
 }): AppUserRecord {
   const users = loadStoredUsers();
@@ -329,8 +416,10 @@ export function clientAddUser(data: {
   const newUser: AppUserRecord = {
     email: cleanEmail,
     name: data.name?.trim() || existing?.name || cleanEmail.split('@')[0],
+    phone: data.phone?.trim() ?? existing?.phone,
+    notes: data.notes?.trim() ?? existing?.notes,
     role: data.role || existing?.role || 'user',
-    status: 'active',
+    status: existing?.status || 'active',
     createdAt: existing?.createdAt || now,
     lastLoginAt: existing?.lastLoginAt,
     totalMinutesSpent: existing?.totalMinutesSpent || 0,
@@ -340,7 +429,6 @@ export function clientAddUser(data: {
   users[cleanEmail] = newUser;
   saveStoredUsers(users);
 
-  // If role is admin, automatically ensure included in admin emails list
   if (data.role === 'admin') {
     const adminEmails = loadStoredAdminEmails();
     if (!adminEmails.includes(cleanEmail)) {
@@ -350,6 +438,58 @@ export function clientAddUser(data: {
   }
 
   return newUser;
+}
+
+// Client Update User profile / role / totalMinutes
+export function clientUpdateUser(
+  email: string,
+  updates: Partial<Pick<AppUserRecord, 'name' | 'phone' | 'notes' | 'role' | 'status' | 'totalMinutesSpent'>>
+): AppUserRecord | null {
+  const users = loadStoredUsers();
+  const cleanEmail = email.trim().toLowerCase();
+  const existing = users[cleanEmail];
+  if (!existing) return null;
+
+  const updated: AppUserRecord = {
+    ...existing,
+    ...updates,
+    email: cleanEmail,
+  };
+  users[cleanEmail] = updated;
+  saveStoredUsers(users);
+
+  if (updates.role === 'admin') {
+    const admins = loadStoredAdminEmails();
+    if (!admins.includes(cleanEmail)) {
+      saveStoredAdminEmails([...admins, cleanEmail]);
+    }
+  } else if (updates.role === 'user') {
+    const admins = loadStoredAdminEmails().filter((a) => a.toLowerCase() !== cleanEmail);
+    if (admins.length > 0) saveStoredAdminEmails(admins);
+  }
+
+  return updated;
+}
+
+// Client Delete User
+export function clientDeleteUser(email: string): void {
+  const cleanEmail = email.trim().toLowerCase();
+  const users = loadStoredUsers();
+  delete users[cleanEmail];
+  saveStoredUsers(users);
+
+  const sessions = loadStoredSessions();
+  Object.entries(sessions).forEach(([sId, s]) => {
+    if (s.email.toLowerCase() === cleanEmail) delete sessions[sId];
+  });
+  saveStoredSessions(sessions);
+}
+
+// Client Delete single history entry or filtered entries
+export function clientDeleteHistoryItems(ids: string[]): void {
+  const idSet = new Set(ids);
+  const history = loadStoredHistory().filter((h) => !idSet.has(h.id));
+  replaceStoredHistoryExact(history);
 }
 
 // Client Toggle Block
@@ -364,30 +504,8 @@ export function clientToggleBlock(
     saveStoredUsers(users);
   }
 
-  // If blocked, terminate active sessions
   if (newStatus === 'blocked') {
-    const sessions = loadStoredSessions();
-    const history = loadStoredHistory();
-    const now = Date.now();
-
-    Object.entries(sessions).forEach(([sId, s]) => {
-      if (s.email.toLowerCase() === cleanEmail) {
-        history.unshift({
-          id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
-          email: s.email,
-          sessionId: sId,
-          deviceName: s.deviceName,
-          loginAt: s.registeredAt,
-          logoutAt: now,
-          durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
-          endReason: 'kicked',
-        });
-        delete sessions[sId];
-      }
-    });
-
-    saveStoredSessions(sessions);
-    saveStoredHistory(history);
+    clientKickSession(cleanEmail);
   }
 }
 
@@ -400,6 +518,53 @@ export function clientKickSession(email: string): void {
 
   Object.entries(sessions).forEach(([sId, s]) => {
     if (s.email.toLowerCase() === cleanEmail) {
+      const idx = history.findIndex((h) => h.sessionId === sId);
+      if (idx >= 0) {
+        history[idx] = {
+          ...history[idx],
+          logoutAt: now,
+          durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
+          endReason: 'kicked',
+        };
+      } else {
+        history.unshift({
+          id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
+          email: s.email,
+          sessionId: sId,
+          deviceName: s.deviceName,
+          loginAt: s.registeredAt,
+          logoutAt: now,
+          durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
+          endReason: 'kicked',
+        });
+      }
+      delete sessions[sId];
+    }
+  });
+
+  saveStoredSessions(sessions);
+  saveStoredHistory(history);
+}
+
+export function clientKickAllSessions(excludeEmail?: string): number {
+  const sessions = loadStoredSessions();
+  const history = loadStoredHistory();
+  const now = Date.now();
+  const exclude = (excludeEmail || '').trim().toLowerCase();
+  let kicked = 0;
+
+  Object.entries(sessions).forEach(([sId, s]) => {
+    if (exclude && s.email.toLowerCase() === exclude) return;
+    kicked++;
+    const idx = history.findIndex((h) => h.sessionId === sId);
+    if (idx >= 0) {
+      history[idx] = {
+        ...history[idx],
+        logoutAt: now,
+        durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
+        endReason: 'kicked',
+      };
+    } else {
       history.unshift({
         id: 'hist_' + now + '_' + Math.random().toString(36).substring(2, 7),
         email: s.email,
@@ -410,10 +575,11 @@ export function clientKickSession(email: string): void {
         durationMinutes: Math.max(1, Math.round((now - s.registeredAt) / 60000)),
         endReason: 'kicked',
       });
-      delete sessions[sId];
     }
+    delete sessions[sId];
   });
 
   saveStoredSessions(sessions);
   saveStoredHistory(history);
+  return kicked;
 }

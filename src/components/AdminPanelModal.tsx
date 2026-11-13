@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   createFirebaseUserDirect,
   sendPasswordResetSafe,
 } from '../lib/firebaseAuthAdmin';
 import {
   AdminPanelData,
+  AppGlobalConfig,
   AppUserRecord,
-  SessionHistoryItem,
 } from '../types';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 import {
@@ -22,28 +22,44 @@ import {
   isEmailAdmin,
 } from '../lib/adminUtils';
 import {
+  DEFAULT_APP_CONFIG,
   buildClientAdminData,
   clientAddUser,
+  clientUpdateUser,
+  clientDeleteUser,
+  clientDeleteHistoryItems,
   clientToggleBlock,
   clientKickSession,
+  clientKickAllSessions,
   saveStoredAdminEmails,
-  saveStoredHistory,
+  saveStoredAppConfig,
+  replaceStoredHistoryExact,
   loadStoredAdminEmails,
 } from '../lib/clientAdminStore';
 import {
   fetchCloudAdminData,
+  subscribeCloudAdminData,
   cloudAddUser,
+  cloudUpdateUser,
+  cloudDeleteUser,
+  cloudDeleteHistoryItems,
+  cloudClearAllHistory,
   cloudToggleBlock,
   cloudKickSession,
+  cloudKickAllSessions,
   saveCloudAdminEmails,
-  getCloudAdminEmails,
+  saveCloudAppConfig,
 } from '../lib/cloudStore';
+import { AdminHistoryTab } from './AdminHistoryTab';
+import { AdminControlsTab } from './AdminControlsTab';
 
 interface AdminPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserEmail: string;
 }
+
+type AdminTabId = 'users' | 'history' | 'add_user' | 'admins' | 'controls';
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   isOpen,
@@ -53,16 +69,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [data, setData] = useState<AdminPanelData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'add_user' | 'admins' | 'history'>('users');
+  const [activeTab, setActiveTab] = useState<AdminTabId>('users');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'active' | 'blocked'>('all');
-  const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'active' | 'blocked' | 'admin'>('all');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [historyInitialEmail, setHistoryInitialEmail] = useState<string>('all');
 
   // Add User Form State
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user');
   const [sendActivationEmail, setSendActivationEmail] = useState<boolean>(false);
   const [showAddUserPassword, setShowAddUserPassword] = useState<boolean>(false);
@@ -75,75 +92,67 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [newAdminError, setNewAdminError] = useState<string | null>(null);
   const [isSavingAdmins, setIsSavingAdmins] = useState(false);
 
+  // Inline Edit User State
+  const [editingEmail, setEditingEmail] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editRole, setEditRole] = useState<'user' | 'admin'>('user');
+  const [editMinutes, setEditMinutes] = useState<string>('0');
+
   // Inline confirmations
   const [confirmBlockEmail, setConfirmBlockEmail] = useState<string | null>(null);
   const [confirmKickEmail, setConfirmKickEmail] = useState<string | null>(null);
-  const [confirmClearHistory, setConfirmClearHistory] = useState<boolean>(false);
+  const [confirmDeleteEmail, setConfirmDeleteEmail] = useState<string | null>(null);
   const [actionLoadingEmail, setActionLoadingEmail] = useState<string | null>(null);
 
-  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const showNotification = (msg: string) => {
+  const showNotification = useCallback((msg: string) => {
     setActionNotice(msg);
-    setTimeout(() => setActionNotice(null), 4000);
-  };
+    setTimeout(() => {
+      setActionNotice((prev) => (prev === msg ? null : prev));
+    }, 4500);
+  }, []);
 
-  const fetchAdminData = useCallback(async (isSilent = false) => {
-    if (!isSilent) setLoading(true);
-
-    // 1. First priority: Central Firebase Cloud Database (Real-time synchronization across all devices and admins)
-    try {
-      const cloudData = await fetchCloudAdminData(currentUserEmail);
-      if (cloudData) {
-        if (cloudData.isAdmin) {
-          setData(cloudData);
-          setAdminEmailsList(cloudData.adminEmails || []);
+  const loadFallbackData = useCallback(
+    async (cloudErrReason?: string | null) => {
+      // Try Express Server first, then Client Local Store
+      try {
+        const res = await fetch(`/api/admin/data?adminEmail=${encodeURIComponent(currentUserEmail)}`, {
+          headers: { 'x-admin-email': currentUserEmail },
+        });
+        const ct = res.headers.get('content-type') || '';
+        if (res.ok && ct.includes('application/json')) {
+          const json: AdminPanelData = await res.json();
+          setData({
+            ...json,
+            dataSource: 'server',
+            cloudConnected: false,
+            cloudError: cloudErrReason || json.cloudError || null,
+          });
+          setAdminEmailsList(json.adminEmails || []);
           setError(null);
-          if (!isSilent) setLoading(false);
-          return;
-        } else {
-          setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
-          if (!isSilent) setLoading(false);
+          setLoading(false);
           return;
         }
+        if (res.status === 403) {
+          setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // Static/APK host (no Express server)
       }
-    } catch (cloudErr) {
-      console.warn('Notice: Firebase Cloud fetch error, attempting server/local fallback:', cloudErr);
-    }
 
-    // 2. Second priority: Backend Express Server if running (Dev mode)
-    let loadedFromServer = false;
-    try {
-      const res = await fetch(`/api/admin/data?adminEmail=${encodeURIComponent(currentUserEmail)}`, {
-        headers: {
-          'x-admin-email': currentUserEmail,
-        },
-      });
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        const json: AdminPanelData = await res.json();
-        setData(json);
-        setAdminEmailsList(json.adminEmails || []);
-        setError(null);
-        loadedFromServer = true;
-      } else if (res.status === 403) {
-        setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
-        if (!isSilent) setLoading(false);
-        return;
-      }
-    } catch {
-      // Backend not running (e.g. GitHub Pages or static host)
-    }
-
-    // 3. Third priority: Client local store fallback (offline resilience)
-    if (!loadedFromServer) {
       try {
         const clientData = buildClientAdminData(currentUserEmail);
         const storedAdmins = loadStoredAdminEmails();
-        const userIsAdmin = isEmailAdmin(currentUserEmail, storedAdmins);
-
-        if (userIsAdmin) {
-          setData(clientData);
+        if (isEmailAdmin(currentUserEmail, storedAdmins)) {
+          setData({
+            ...clientData,
+            dataSource: 'local',
+            cloudConnected: false,
+            cloudError: cloudErrReason || null,
+          });
           setAdminEmailsList(clientData.adminEmails || storedAdmins);
           setError(null);
         } else {
@@ -151,27 +160,164 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         }
       } catch {
         setError('অ্যাডমিন ডাটা লোড করা সম্ভব হয়নি।');
+      } finally {
+        setLoading(false);
       }
-    }
+    },
+    [currentUserEmail]
+  );
 
-    if (!isSilent) setLoading(false);
-  }, [currentUserEmail]);
+  const fetchAdminData = useCallback(
+    async (isSilent = false) => {
+      if (!isSilent) setLoading(true);
+      try {
+        const cloudData = await fetchCloudAdminData(currentUserEmail);
+        if (!cloudData.isAdmin) {
+          setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
+          setLoading(false);
+          return;
+        }
+        setData(cloudData);
+        setAdminEmailsList(cloudData.adminEmails || []);
+        setError(null);
+        setLoading(false);
+      } catch (err: any) {
+        await loadFallbackData(err?.message || 'ফায়ারবেস ক্লাউড সংযোগ বিচ্ছিন্ন');
+      }
+    },
+    [currentUserEmail, loadFallbackData]
+  );
 
-  // Initial fetch and auto-refresh
+  // Real-time Firebase RTDB Subscription while modal is open!
   useEffect(() => {
     if (!isOpen) return;
-    fetchAdminData(false);
+    setLoading(true);
 
-    if (autoRefresh) {
-      refreshTimerRef.current = setInterval(() => {
-        fetchAdminData(true);
-      }, 5000);
-    }
+    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let isUsingCloudStream = true;
+
+    const unsubCloud = subscribeCloudAdminData(
+      currentUserEmail,
+      (cloudData) => {
+        if (!cloudData.isAdmin) {
+          setError('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাডমিন প্যানেলে প্রবেশের অনুমতি নেই।');
+          setLoading(false);
+          return;
+        }
+        setData(cloudData);
+        setAdminEmailsList(cloudData.adminEmails || []);
+        setError(null);
+        setLoading(false);
+      },
+      (fatalCloudErr) => {
+        // Cloud permission denied or unreachable -> use server/local fallback + surface exact Cloud reason
+        if (isUsingCloudStream) {
+          isUsingCloudStream = false;
+          loadFallbackData(fatalCloudErr);
+          if (!fallbackTimer) {
+            fallbackTimer = setInterval(() => {
+              loadFallbackData(fatalCloudErr);
+            }, 6000);
+          }
+        }
+      }
+    );
 
     return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+      try {
+        unsubCloud();
+      } catch {}
+      if (fallbackTimer) clearInterval(fallbackTimer);
     };
-  }, [isOpen, autoRefresh, fetchAdminData]);
+  }, [isOpen, currentUserEmail, loadFallbackData]);
+
+  const syncRefreshIfOffline = async () => {
+    if (!data?.cloudConnected) {
+      await loadFallbackData(data?.cloudError);
+    }
+  };
+
+  const runCloudMutation = async (fn: () => Promise<unknown>) => {
+    if (data?.cloudConnected) {
+      await fn().catch((err) => console.warn('Cloud mutation notice:', err));
+    } else {
+      void fn().catch(() => null);
+    }
+  };
+
+  // Start editing a user
+  const startEditUser = (u: AppUserRecord) => {
+    setEditingEmail(u.email);
+    setEditName(u.name || '');
+    setEditPhone(u.phone || '');
+    setEditNotes(u.notes || '');
+    setEditRole(u.role);
+    setEditMinutes(String(Math.round(u.totalMinutesSpent || 0)));
+  };
+
+  const handleSaveUserEdit = async (email: string) => {
+    setActionLoadingEmail(email);
+    const cleanEmail = email.trim().toLowerCase();
+    const isSuperPrimary = cleanEmail === 'rahatsharif10448@gmail.com';
+    const nextRole: 'admin' | 'user' = isSuperPrimary ? 'admin' : editRole;
+    const parsedMinutes = Math.max(0, Number(editMinutes) || 0);
+
+    const updates = {
+      name: editName.trim() || cleanEmail.split('@')[0],
+      phone: editPhone.trim(),
+      notes: editNotes.trim(),
+      role: nextRole,
+      totalMinutesSpent: parsedMinutes,
+    };
+
+    clientUpdateUser(cleanEmail, updates);
+
+    await Promise.allSettled([
+      runCloudMutation(() => cloudUpdateUser(cleanEmail, updates)),
+      fetch('/api/admin/users/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': currentUserEmail,
+        },
+        body: JSON.stringify({
+          adminEmail: currentUserEmail,
+          email: cleanEmail,
+          updates,
+        }),
+      }),
+    ]);
+
+    setEditingEmail(null);
+    setActionLoadingEmail(null);
+    showNotification(`✅ "${cleanEmail}" ব্যবহারকারীর তথ্য সফলভাবে হালনাগাদ হয়েছে।`);
+    await syncRefreshIfOffline();
+  };
+
+  // Delete User permanently from Cloud + Server + Local
+  const handleDeleteUser = async (email: string) => {
+    setActionLoadingEmail(email);
+    const cleanEmail = email.trim().toLowerCase();
+
+    clientDeleteUser(cleanEmail);
+
+    await Promise.allSettled([
+      runCloudMutation(() => cloudDeleteUser(cleanEmail)),
+      fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': currentUserEmail,
+        },
+        body: JSON.stringify({ adminEmail: currentUserEmail, email: cleanEmail }),
+      }),
+    ]);
+
+    setConfirmDeleteEmail(null);
+    setActionLoadingEmail(null);
+    showNotification(`🗑️ "${cleanEmail}" অ্যাকাউন্টটি তালিকা থেকে মুছে ফেলা হয়েছে।`);
+    await syncRefreshIfOffline();
+  };
 
   // Add User Handler (Direct Firebase Auth + Hybrid Sync)
   const handleAddUser = async (e: React.FormEvent) => {
@@ -180,6 +326,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const cleanMail = newEmail.trim().toLowerCase();
     const cleanPass = newPassword.trim();
     const cleanUserName = newName.trim();
+    const cleanPhone = newPhone.trim();
 
     const validation = validateNewUserForm(cleanMail, cleanPass);
     if (!validation.isValid) {
@@ -190,8 +337,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setIsSubmittingUser(true);
 
     try {
-      // 1. Create user in Firebase Auth directly via Google Identity Toolkit API
-      // Works everywhere (GitHub Pages, Server, Dev) without logging out the current admin
       const fbResult = await createFirebaseUserDirect(cleanMail, cleanPass, cleanUserName);
       if (!fbResult.success) {
         setAddUserError(fbResult.message);
@@ -199,18 +344,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         return;
       }
 
-      // 2. Sync to Central Firebase Cloud Realtime Database (so all admins immediately see them)
       try {
         await cloudAddUser({
           email: cleanMail,
           name: cleanUserName,
+          phone: cleanPhone,
           role: newRole,
         });
       } catch (cloudErr) {
         console.warn('Notice: cloudAddUser error:', cloudErr);
       }
 
-      // 3. Sync to Server if available
       try {
         await fetch('/api/admin/users/add', {
           method: 'POST',
@@ -226,29 +370,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             role: newRole,
           }),
         });
-      } catch {
-        // Backend not running (e.g. GitHub Pages)
-      }
+      } catch {}
 
-      // 4. Sync to Client Store (guarantees local persistence on GitHub Pages)
       clientAddUser({
         email: cleanMail,
         name: cleanUserName,
+        phone: cleanPhone,
         role: newRole,
       });
 
-      // 5. If admin role, sync admin emails to Cloud and Local
       if (newRole === 'admin') {
         const storedAdmins = loadStoredAdminEmails();
         if (!storedAdmins.includes(cleanMail)) {
           const updated = [...storedAdmins, cleanMail];
-          await saveCloudAdminEmails(updated);
+          await saveCloudAdminEmails(updated).catch(() => null);
           saveStoredAdminEmails(updated);
           setAdminEmailsList(updated);
         }
       }
 
-      // 6. Send activation / password reset email if requested
       if (sendActivationEmail) {
         try {
           await sendPasswordResetSafe(cleanMail);
@@ -264,9 +404,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       setNewEmail('');
       setNewPassword('');
       setNewName('');
+      setNewPhone('');
       setNewRole('user');
       setActiveTab('users');
-      await fetchAdminData(true);
+      await syncRefreshIfOffline();
     } catch (err: any) {
       setAddUserError(`ত্রুটি: ${err?.message || 'অ্যাকাউন্ট তৈরি করা সম্ভব হয়নি'}`);
     } finally {
@@ -274,19 +415,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  // Toggle Block / Unblock (Cloud Realtime Sync + Server API + Local Fallback)
+  // Toggle Block / Unblock
   const handleToggleBlock = async (email: string, currentStatus: 'active' | 'blocked') => {
     setActionLoadingEmail(email);
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active';
 
-    try {
-      await cloudToggleBlock(email, newStatus);
-    } catch (err) {
-      console.warn('Notice: cloudToggleBlock error:', err);
-    }
+    clientToggleBlock(email, newStatus);
 
-    try {
-      await fetch('/api/admin/users/toggle-block', {
+    await Promise.allSettled([
+      runCloudMutation(() => cloudToggleBlock(email, newStatus)),
+      fetch('/api/admin/users/toggle-block', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -297,22 +435,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           email,
           status: newStatus,
         }),
-      });
-    } catch {}
-
-    clientToggleBlock(email, newStatus);
+      }),
+    ]);
 
     showNotification(
       newStatus === 'blocked'
         ? `🚫 "${email}" অ্যাকাউন্টটি ব্লক করা হয়েছে এবং সেশন বন্ধ করা হয়েছে।`
         : `✅ "${email}" অ্যাকাউন্টটি পুনরায় সক্রিয় (আনব্লক) করা হয়েছে।`
     );
-    await fetchAdminData(true);
+    await syncRefreshIfOffline();
     setActionLoadingEmail(null);
     setConfirmBlockEmail(null);
   };
 
-  // Send Password Reset (Uses Firebase Auth directly, works 100% on GitHub Pages & Server)
+  // Send Password Reset
   const handleSendPasswordReset = async (email: string) => {
     setActionLoadingEmail(email);
     try {
@@ -323,18 +459,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  // Kick Session (Cloud Realtime Sync + Server API + Local Fallback)
+  // Kick single user's active session
   const handleKickSession = async (email: string) => {
     setActionLoadingEmail(email);
 
-    try {
-      await cloudKickSession(email);
-    } catch (err) {
-      console.warn('Notice: cloudKickSession error:', err);
-    }
+    clientKickSession(email);
 
-    try {
-      await fetch('/api/admin/kick', {
+    await Promise.allSettled([
+      runCloudMutation(() => cloudKickSession(email)),
+      fetch('/api/admin/kick', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -344,18 +477,52 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           adminEmail: currentUserEmail,
           email,
         }),
-      });
-    } catch {}
-
-    clientKickSession(email);
+      }),
+    ]);
 
     showNotification(`🚪 "${email}" অ্যাকাউন্টটি সফলভাবে লগআউট করানো হয়েছে।`);
-    await fetchAdminData(true);
+    await syncRefreshIfOffline();
     setActionLoadingEmail(null);
     setConfirmKickEmail(null);
   };
 
-  // Save Admin Emails (Cloud Realtime Sync + Server API + Local Fallback)
+  // Kick ALL active sessions except current admin
+  const handleKickAllSessions = async () => {
+    let kickedCount = clientKickAllSessions(currentUserEmail);
+
+    const [cloudRes, serverRes] = await Promise.allSettled([
+      data?.cloudConnected ? cloudKickAllSessions(currentUserEmail) : Promise.resolve(0),
+      fetch('/api/admin/kick-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': currentUserEmail,
+        },
+        body: JSON.stringify({
+          adminEmail: currentUserEmail,
+          excludeEmail: currentUserEmail,
+        }),
+      }).then((r) => (r.ok ? r.json() : null)),
+    ]);
+
+    if (cloudRes.status === 'fulfilled') {
+      kickedCount = Math.max(kickedCount, Number(cloudRes.value || 0));
+    } else {
+      void cloudKickAllSessions(currentUserEmail).catch(() => null);
+    }
+    if (serverRes.status === 'fulfilled' && serverRes.value) {
+      kickedCount = Math.max(kickedCount, Number(serverRes.value.kickedCount || 0));
+    }
+
+    showNotification(
+      kickedCount > 0
+        ? `🚪 ${convertToBengaliNumbers(kickedCount)} টি সক্রিয় সেশন সফলভাবে লগআউট করানো হয়েছে।`
+        : 'ℹ️ বর্তমানে অন্য কোনো সক্রিয় সেশন চালু নেই।'
+    );
+    await syncRefreshIfOffline();
+  };
+
+  // Save Admin Emails
   const handleSaveAdmins = async (customList?: string[]) => {
     const listToSave = customList || adminEmailsList;
     if (listToSave.length === 0) {
@@ -364,14 +531,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
     setIsSavingAdmins(true);
 
-    try {
-      await saveCloudAdminEmails(listToSave);
-    } catch (err) {
-      console.warn('Notice: saveCloudAdminEmails error:', err);
-    }
+    saveStoredAdminEmails(listToSave);
+    setAdminEmailsList(listToSave);
 
-    try {
-      await fetch('/api/admin/config/admins', {
+    await Promise.allSettled([
+      runCloudMutation(() => saveCloudAdminEmails(listToSave)),
+      fetch('/api/admin/config/admins', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -381,18 +546,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           adminEmail: currentUserEmail,
           newAdminEmails: listToSave,
         }),
-      });
-    } catch {}
-
-    saveStoredAdminEmails(listToSave);
-    setAdminEmailsList(listToSave);
+      }),
+    ]);
 
     showNotification('✅ অ্যাডমিন পারমিশন তালিকা সফলভাবে সংরক্ষিত হয়েছে!');
-    await fetchAdminData(true);
+    await syncRefreshIfOffline();
     setIsSavingAdmins(false);
   };
 
-  // Add new admin email directly
   const handleAddAdminEmail = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setNewAdminError(null);
@@ -416,72 +577,129 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     await handleSaveAdmins(updated);
   };
 
-  // Clear Session History (Hybrid: Server API with GitHub Pages Fallback)
-  const handleClearHistory = async () => {
-    try {
-      await fetch('/api/admin/clear-history', {
+  // Delete specific history items across Cloud + Server + Local
+  const handleDeleteHistoryItems = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+
+    clientDeleteHistoryItems(ids);
+
+    await Promise.allSettled([
+      runCloudMutation(() => cloudDeleteHistoryItems(ids)),
+      fetch('/api/admin/delete-history', {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': currentUserEmail,
+        },
+        body: JSON.stringify({ adminEmail: currentUserEmail, ids }),
+      }),
+    ]);
+
+    showNotification(`🗑️ ${convertToBengaliNumbers(ids.length)} টি লগইন হিস্ট্রি মুছে ফেলা হয়েছে।`);
+    await syncRefreshIfOffline();
+  };
+
+  // Clear ALL history across Cloud + Server + Local
+  const handleClearAllHistory = async () => {
+    replaceStoredHistoryExact([]);
+
+    await Promise.allSettled([
+      runCloudMutation(() => cloudClearAllHistory()),
+      fetch('/api/admin/clear-history', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
           'x-admin-email': currentUserEmail,
         },
         body: JSON.stringify({ adminEmail: currentUserEmail }),
-      });
-    } catch {}
+      }),
+    ]);
 
-    saveStoredHistory([]);
-    showNotification('✅ পূর্বের সব সেশন হিস্ট্রি মুছে ফেলা হয়েছে।');
-    await fetchAdminData(true);
-    setConfirmClearHistory(false);
+    showNotification('✅ সব লগইন হিস্ট্রি স্থায়ীভাবে মুছে ফেলা হয়েছে।');
+    await syncRefreshIfOffline();
+  };
+
+  // Save Global App Config across Cloud + Server + Local
+  const handleSaveAppConfig = async (cfg: AppGlobalConfig) => {
+    saveStoredAppConfig(cfg);
+    window.dispatchEvent(new Event('voter_app_config_changed'));
+
+    await Promise.allSettled([
+      runCloudMutation(() => saveCloudAppConfig(cfg, currentUserEmail)),
+      fetch('/api/admin/config/app', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-email': currentUserEmail,
+        },
+        body: JSON.stringify({ adminEmail: currentUserEmail, appConfig: cfg }),
+      }),
+    ]);
+
+    showNotification('✅ গ্লোবাল অ্যাপ কন্ট্রোল সেটিংস সফলভাবে কার্যকর করা হয়েছে!');
+    await syncRefreshIfOffline();
   };
 
   if (!isOpen) return null;
 
   const users = data?.users || [];
   const history = data?.history || [];
+  const appConfig = data?.appConfig || DEFAULT_APP_CONFIG;
+  const dataSource = data?.dataSource || 'local';
+  const cloudConnected = Boolean(data?.cloudConnected);
+  const cloudError = data?.cloudError || null;
   const summary = data?.summary || {
     totalRegisteredUsers: 0,
     onlineCount: 0,
     blockedCount: 0,
+    adminCount: 0,
     totalCumulativeMinutes: 0,
     avgMinutesPerUser: 0,
   };
 
   const filteredUsers = filterAppUsers(users, searchQuery, statusFilter);
   const activeCount = users.filter((u) => u.status === 'active').length;
+  const adminRoleCount = users.filter((u) => u.role === 'admin').length;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="admin-panel-title"
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-5 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-5 bg-slate-900/75"
     >
-      <div className="bg-slate-50 w-full max-w-4xl max-h-[92vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200/90 flex flex-col overflow-hidden text-slate-800 animate-in slide-in-from-bottom duration-200">
+      <div className="bg-slate-50 w-full max-w-5xl max-h-[94vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200/90 flex flex-col overflow-hidden text-slate-800 animate-in slide-in-from-bottom duration-200">
         {/* Mobile Drag Indicator */}
         <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2 sm:hidden shrink-0" />
 
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shadow-md shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-600/60 border border-indigo-400/40 flex items-center justify-center text-xl shadow-inner">
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between gap-2 shadow-md shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-600/60 border border-indigo-400/40 flex items-center justify-center text-xl shadow-inner shrink-0">
               ⚙️
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 id="admin-panel-title" className="text-base sm:text-lg font-black tracking-tight">
-                  সুপার অ্যাডমিন ড্যাশবোর্ড
+                  সুপার অ্যাডমিন কন্ট্রোল সেন্টার
                 </h3>
-                <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  সীমাবদ্ধ অ্যাক্সেস
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                    cloudConnected
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-400/30'
+                  }`}
+                >
+                  {cloudConnected ? '🟢 Firebase Live' : '⚠️ ব্যাকআপ মোড'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-300 font-medium">
-                অ্যাডমিন: <span className="font-semibold text-white">{currentUserEmail}</span> • এক নজরে সব ব্যবহারকারীর সময় ও নিয়ন্ত্রণ
+              <p className="text-[11px] text-slate-300 font-medium truncate">
+                অ্যাডমিন: <span className="font-semibold text-white">{currentUserEmail}</span> • রিয়েল-টাইম নিয়ন্ত্রণ ও সম্পূর্ণ হিস্ট্রি
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => fetchAdminData(false)}
@@ -496,6 +714,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             <button
               type="button"
               onClick={onClose}
+              aria-label="অ্যাডমিন প্যানেল বন্ধ করুন"
               className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer text-lg font-bold"
               title="বন্ধ করুন"
             >
@@ -512,53 +731,35 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         )}
 
         {/* Tab Navigation */}
-        <div className="bg-white border-b border-slate-200 px-4 pt-2 flex items-center gap-2 overflow-x-auto shrink-0 scrollbar-none">
+        <div
+          role="tablist"
+          aria-label="অ্যাডমিন সেকশন"
+          className="bg-white border-b border-slate-200 px-3 sm:px-4 pt-2 flex items-center gap-1.5 overflow-x-auto shrink-0 scrollbar-none"
+        >
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'users'}
             onClick={() => setActiveTab('users')}
-            className={`px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'users'
                 ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <span>👥</span>
-            <span>ব্যবহারকারী ও সময় ট্র্যাকিং</span>
-            <span className="ml-1 bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+            <span>ব্যবহারকারী</span>
+            <span className="ml-0.5 bg-slate-100 text-slate-700 text-[10px] px-1.5 rounded-full font-bold">
               {convertToBengaliNumbers(users.length)}
             </span>
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveTab('add_user')}
-            className={`px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'add_user'
-                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span>➕</span>
-            <span>নতুন জিমেইল যুক্ত করুন</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('admins')}
-            className={`px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'admins'
-                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span>🛡️</span>
-            <span>অ্যাডমিন পারমিশন ({convertToBengaliNumbers(adminEmailsList.length)})</span>
-          </button>
-
-          <button
-            type="button"
+            role="tab"
+            aria-selected={activeTab === 'history'}
             onClick={() => setActiveTab('history')}
-            className={`px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'history'
                 ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
@@ -566,9 +767,54 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           >
             <span>📜</span>
             <span>লগইন হিস্ট্রি</span>
-            <span className="ml-1 bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+            <span className="ml-0.5 bg-slate-100 text-slate-700 text-[10px] px-1.5 rounded-full font-bold">
               {convertToBengaliNumbers(history.length)}
             </span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'add_user'}
+            onClick={() => setActiveTab('add_user')}
+            className={`px-3 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'add_user'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>➕</span>
+            <span>নতুন জিমেইল</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'admins'}
+            onClick={() => setActiveTab('admins')}
+            className={`px-3 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'admins'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>🛡️</span>
+            <span>অ্যাডমিন ({convertToBengaliNumbers(adminEmailsList.length)})</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'controls'}
+            onClick={() => setActiveTab('controls')}
+            className={`px-3 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'controls'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>🎛️</span>
+            <span>অ্যাপ কন্ট্রোল ও সিঙ্ক</span>
           </button>
         </div>
 
@@ -584,12 +830,31 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             </div>
           ) : null}
 
-          {/* TAB 1: USERS & TIME TRACKING */}
+          {/* Cloud Warning Strip (shown cleanly on non-controls tabs if Firebase RTDB isn't synced) */}
+          {!error && !loading && cloudError && activeTab !== 'controls' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-amber-900 font-semibold">
+                <span>⚠️</span>
+                <span>
+                  ফায়ারবেস ক্লাউড সিঙ্ক বিচ্ছিন্ন ({cloudError})। তাই পূর্বের ক্লাউড হিস্ট্রি দেখা না গেলে{' '}
+                  <strong>অ্যাপ কন্ট্রোল ও সিঙ্ক</strong> ট্যাব দেখুন।
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('controls')}
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold cursor-pointer"
+              >
+                সমাধান দেখুন →
+              </button>
+            </div>
+          )}
+
+          {/* TAB 1: USERS & FULL CONTROL */}
           {activeTab === 'users' && !error && (
             <div className="space-y-4">
               {/* 4 KPI Summary Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {/* 1. Online */}
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
                     <span>বর্তমানে অনলাইন</span>
@@ -598,34 +863,36 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <div className="text-xl sm:text-2xl font-black text-emerald-600">
                     {convertToBengaliNumbers(summary.onlineCount)} জন
                   </div>
-                  <span className="text-[10px] text-slate-400 font-medium">লাইভ একটিভ সেশন</span>
+                  <span className="text-[10px] text-slate-400 font-medium">লাইভ সক্রিয় সেশন</span>
                 </div>
 
-                {/* 2. Total Users */}
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-                    <span>মোট জিমেইল</span>
+                    <span>মোট ব্যবহারকারী</span>
                     <span className="text-blue-500">👥</span>
                   </div>
                   <div className="text-xl sm:text-2xl font-black text-indigo-900">
                     {convertToBengaliNumbers(summary.totalRegisteredUsers)} টি
                   </div>
-                  <span className="text-[10px] text-slate-400 font-medium">নিবন্ধিত অ্যাকাউন্ট</span>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    সক্রিয় {convertToBengaliNumbers(activeCount)} • অ্যাডমিন {convertToBengaliNumbers(adminRoleCount)}
+                  </span>
                 </div>
 
-                {/* 3. Total Cumulative Minutes */}
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
                     <span>সর্বমোট ব্যবহৃত সময়</span>
                     <span className="text-amber-500">⏳</span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-amber-700 truncate" title={formatCumulativeMinutesBengali(summary.totalCumulativeMinutes)}>
+                  <div
+                    className="text-sm sm:text-base font-black text-amber-700 truncate"
+                    title={formatCumulativeMinutesBengali(summary.totalCumulativeMinutes)}
+                  >
                     {formatCumulativeMinutesBengali(summary.totalCumulativeMinutes)}
                   </div>
                   <span className="text-[10px] text-slate-400 font-medium">সব সেশন মিলিয়ে মোট</span>
                 </div>
 
-                {/* 4. Blocked Accounts */}
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
                     <span>ব্লকড অ্যাকাউন্ট</span>
@@ -634,77 +901,62 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <div className="text-xl sm:text-2xl font-black text-red-600">
                     {convertToBengaliNumbers(summary.blockedCount)} টি
                   </div>
-                  <span className="text-[10px] text-slate-400 font-medium">লগইন বন্ধ রাখা হয়েছে</span>
+                  <span className="text-[10px] text-slate-400 font-medium">প্রবেশ বন্ধ রাখা হয়েছে</span>
                 </div>
               </div>
 
               {/* Search & Filter Bar */}
-              <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+              <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-2.5 shadow-xs">
                 <div className="relative flex-1 min-w-[200px]">
+                  <label htmlFor="admin-user-search" className="sr-only">
+                    ব্যবহারকারী খুঁজুন
+                  </label>
                   <input
+                    id="admin-user-search"
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="জিমেইল, নাম বা ডিভাইস খুঁজুন..."
+                    placeholder="জিমেইল, নাম, ফোন বা ডিভাইস খুঁজুন..."
                     className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-600 focus:bg-white transition"
                   />
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
                 </div>
 
-                {/* Filter Pills */}
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('all')}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      statusFilter === 'all'
-                        ? 'bg-slate-800 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    সব ({convertToBengaliNumbers(users.length)})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('online')}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      statusFilter === 'online'
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                    }`}
-                  >
-                    অনলাইন ({convertToBengaliNumbers(summary.onlineCount)})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('blocked')}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      statusFilter === 'blocked'
-                        ? 'bg-red-600 text-white'
-                        : 'bg-red-50 text-red-700 hover:bg-red-100'
-                    }`}
-                  >
-                    ব্লকড ({convertToBengaliNumbers(summary.blockedCount)})
-                  </button>
+                  {(
+                    [
+                      ['all', `সব (${convertToBengaliNumbers(users.length)})`],
+                      ['online', `অনলাইন (${convertToBengaliNumbers(summary.onlineCount)})`],
+                      ['active', `সক্রিয় (${convertToBengaliNumbers(activeCount)})`],
+                      ['blocked', `ব্লকড (${convertToBengaliNumbers(summary.blockedCount)})`],
+                      ['admin', `অ্যাডমিন (${convertToBengaliNumbers(adminRoleCount)})`],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setStatusFilter(key)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        statusFilter === key
+                          ? key === 'blocked'
+                            ? 'bg-red-600 text-white'
+                            : key === 'online'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-800 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-
-                {/* Auto Refresh toggle */}
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                    className="rounded text-indigo-600"
-                  />
-                  <span>অটো-রিফ্রেশ (৫ সেঃ)</span>
-                </label>
               </div>
 
-              {/* Users Cards / List */}
+              {/* Users List */}
               {loading && users.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="inline-block animate-spin text-2xl mb-2">🔄</div>
-                  <p className="text-xs text-slate-500 font-medium">অ্যাডমিন ডাটা লোড হচ্ছে...</p>
+                  <p className="text-xs text-slate-500 font-medium">রিয়েল-টাইম ডাটা লোড হচ্ছে...</p>
                 </div>
               ) : filteredUsers.length === 0 ? (
                 <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200 p-6">
@@ -717,7 +969,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   {filteredUsers.map((user) => {
                     const dev = getDeviceDetails(user.deviceName);
                     const isCurrentUser = user.email.toLowerCase() === currentUserEmail.toLowerCase();
+                    const isPrimarySuperAdmin = user.email.toLowerCase() === 'rahatsharif10448@gmail.com';
                     const isActionLoading = actionLoadingEmail === user.email;
+                    const isEditing = editingEmail === user.email;
 
                     return (
                       <div
@@ -730,9 +984,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             : 'border-slate-200'
                         }`}
                       >
-                        {/* Top Row: User Email, Role, Status, and Action Buttons */}
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
                             <div
                               className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 ${
                                 user.status === 'blocked'
@@ -745,18 +998,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               {user.email.charAt(0).toUpperCase()}
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-black text-slate-900 text-sm sm:text-base">
+                                <span className="font-black text-slate-900 text-sm sm:text-base break-all">
                                   {user.email}
                                 </span>
-
                                 {user.role === 'admin' && (
                                   <span className="bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] px-2 py-0.5 rounded-md font-bold">
                                     🛡️ অ্যাডমিন
                                   </span>
                                 )}
-
                                 {isCurrentUser && (
                                   <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[10px] px-2 py-0.5 rounded-md font-bold">
                                     আপনার অ্যাকাউন্ট
@@ -765,29 +1016,30 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               </div>
 
                               <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-slate-600">
-                                {user.name && user.name !== user.email.split('@')[0] && (
+                                {user.name && (
                                   <span className="font-semibold text-slate-700 text-xs">
-                                    {user.name} •
+                                    👤 {user.name}
                                   </span>
                                 )}
-
-                                {/* Device badge */}
+                                {user.phone && (
+                                  <span className="text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md font-semibold">
+                                    📞 {user.phone}
+                                  </span>
+                                )}
                                 {user.deviceName && (
                                   <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-md text-[11px] font-semibold text-slate-700">
                                     <span>{dev.icon}</span>
                                     <span>{dev.label}</span>
                                   </span>
                                 )}
-
-                                {/* Online/Offline/Blocked Badge */}
                                 {user.status === 'blocked' ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-800 border border-red-200">
-                                    🚫 অ্যাকাউন্ট ব্লক করা
+                                    🚫 ব্লক করা
                                   </span>
                                 ) : user.isOnline ? (
                                   <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                    অনলাইন (এখন সক্রিয়)
+                                    অনলাইন
                                   </span>
                                 ) : (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">
@@ -795,12 +1047,47 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   </span>
                                 )}
                               </div>
+
+                              {user.notes && (
+                                <p className="text-[11px] text-slate-500 mt-1 italic">
+                                  📝 {user.notes}
+                                </p>
+                              )}
                             </div>
                           </div>
 
-                          {/* Action Toolbar */}
+                          {/* Full Action Toolbar */}
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {/* Password Reset Button */}
+                            {/* Jump to this user's Login History */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHistoryInitialEmail(user.email.toLowerCase());
+                                setActiveTab('history');
+                              }}
+                              className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                              title="এই ব্যবহারকারীর সম্পূর্ণ লগইন হিস্ট্রি দেখুন"
+                            >
+                              <span>📜</span>
+                              <span>হিস্ট্রি</span>
+                            </button>
+
+                            {/* Edit Profile / Role / Minutes */}
+                            <button
+                              type="button"
+                              onClick={() => (isEditing ? setEditingEmail(null) : startEditUser(user))}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 border ${
+                                isEditing
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                              title="ব্যবহারকারীর তথ্য এডিট করুন"
+                            >
+                              <span>✏️</span>
+                              <span>{isEditing ? 'এডিট বন্ধ' : 'এডিট'}</span>
+                            </button>
+
+                            {/* Password Reset */}
                             <button
                               type="button"
                               onClick={() => handleSendPasswordReset(user.email)}
@@ -809,26 +1096,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               title="পাসওয়ার্ড পরিবর্তনের লিংক পাঠান"
                             >
                               <span>🔑</span>
-                              <span>পাসওয়ার্ড লিংক</span>
+                              <span>পাসওয়ার্ড</span>
                             </button>
 
-                            {/* Remote Kick / Logout Button (if active) */}
-                            {user.isOnline && (
-                              confirmKickEmail === user.email ? (
+                            {/* Remote Kick / Force Logout (if online) */}
+                            {user.isOnline &&
+                              (confirmKickEmail === user.email ? (
                                 <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 p-1 rounded-xl">
                                   <span className="text-[11px] font-bold text-amber-900">লগআউট?</span>
                                   <button
                                     type="button"
                                     onClick={() => handleKickSession(user.email)}
                                     disabled={isActionLoading}
-                                    className="bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 rounded text-[11px] font-bold"
+                                    className="bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer"
                                   >
                                     হ্যাঁ
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setConfirmKickEmail(null)}
-                                    className="bg-white text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold"
+                                    className="bg-white text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer"
                                   >
                                     না
                                   </button>
@@ -844,28 +1131,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   <span>🚪</span>
                                   <span>লগআউট</span>
                                 </button>
-                              )
-                            )}
+                              ))}
 
-                            {/* Block / Unblock Button */}
-                            {!isCurrentUser && (
-                              confirmBlockEmail === user.email ? (
+                            {/* Block / Unblock */}
+                            {!isCurrentUser &&
+                              !isPrimarySuperAdmin &&
+                              (confirmBlockEmail === user.email ? (
                                 <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 p-1.5 rounded-xl">
                                   <span className="text-[11px] font-bold text-red-700">
-                                    {user.status === 'blocked' ? 'আনব্লক করবেন?' : 'ব্লক নিশ্চিত?'}
+                                    {user.status === 'blocked' ? 'আনব্লক?' : 'ব্লক?'}
                                   </span>
                                   <button
                                     type="button"
                                     onClick={() => handleToggleBlock(user.email, user.status)}
                                     disabled={isActionLoading}
-                                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-0.5 rounded text-[11px] font-bold"
+                                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer"
                                   >
                                     হ্যাঁ
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setConfirmBlockEmail(null)}
-                                    className="bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold"
+                                    className="bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer"
                                   >
                                     না
                                   </button>
@@ -875,50 +1162,155 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   type="button"
                                   onClick={() => setConfirmBlockEmail(user.email)}
                                   disabled={isActionLoading}
-                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 border ${
                                     user.status === 'blocked'
-                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                      : 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200'
+                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                                      : 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'
                                   }`}
                                 >
                                   <span>{user.status === 'blocked' ? '✅' : '🚫'}</span>
-                                  <span>{user.status === 'blocked' ? 'আনব্লক করুন' : 'ব্লক করুন'}</span>
+                                  <span>{user.status === 'blocked' ? 'আনব্লক' : 'ব্লক'}</span>
                                 </button>
-                              )
-                            )}
+                              ))}
 
-                            {/* Promote / Demote Admin Button */}
-                            {!isCurrentUser && user.email.toLowerCase() !== 'rahatsharif10448@gmail.com' && (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const isCurrentlyAdmin =
-                                    user.role === 'admin' || adminEmailsList.includes(user.email.toLowerCase());
-                                  let updated: string[];
-                                  if (isCurrentlyAdmin) {
-                                    updated = adminEmailsList.filter((e) => e.toLowerCase() !== user.email.toLowerCase());
-                                    clientAddUser({ email: user.email, name: user.name, role: 'user' });
-                                    showNotification(`ℹ️ "${user.email}"-কে সাধারণ ব্যবহারকারী করা হয়েছে।`);
-                                  } else {
-                                    updated = [...adminEmailsList, user.email.toLowerCase()];
-                                    clientAddUser({ email: user.email, name: user.name, role: 'admin' });
-                                    showNotification(`🛡️ "${user.email}"-কে অ্যাডমিন হিসেবে যুক্ত করা হয়েছে!`);
-                                  }
-                                  await handleSaveAdmins(updated);
-                                }}
-                                className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1"
-                                title={user.role === 'admin' ? 'অ্যাডমিন পারমিশন বাতিল করুন' : 'অ্যাডমিন পারমিশন দিন'}
-                              >
-                                <span>🛡️</span>
-                                <span>{user.role === 'admin' ? 'অ্যাডমিন বাতিল' : 'অ্যাডমিন বানান'}</span>
-                              </button>
-                            )}
+                            {/* Delete User */}
+                            {!isCurrentUser &&
+                              !isPrimarySuperAdmin &&
+                              (confirmDeleteEmail === user.email ? (
+                                <div className="flex items-center gap-1 bg-red-100 border border-red-300 p-1 rounded-xl">
+                                  <span className="text-[11px] font-bold text-red-900">মুছবেন?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteUser(user.email)}
+                                    disabled={isActionLoading}
+                                    className="bg-red-700 text-white px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer"
+                                  >
+                                    হ্যাঁ
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteEmail(null)}
+                                    className="bg-white text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer"
+                                  >
+                                    না
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteEmail(user.email)}
+                                  disabled={isActionLoading}
+                                  aria-label={`${user.email} ব্যবহারকারী ডিলিট করুন`}
+                                  title="তালিকা থেকে ব্যবহারকারী ডিলিট করুন"
+                                  className="px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                                >
+                                  🗑️
+                                </button>
+                              ))}
                           </div>
                         </div>
 
-                        {/* Timing and Duration Breakdown Strip */}
+                        {/* Inline Edit User Drawer */}
+                        {isEditing && (
+                          <div className="mt-3 p-3.5 bg-indigo-50/60 border border-indigo-200 rounded-2xl space-y-3">
+                            <div className="text-xs font-black text-indigo-950 flex items-center justify-between">
+                              <span>✏️ ব্যবহারকারীর তথ্য ও অনুমতি এডিট করুন ({user.email})</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                  নাম / পদবী
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editName}
+                                  onChange={(e) => setEditName(e.target.value)}
+                                  placeholder="নাম লিখুন"
+                                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                  মোবাইল নম্বর
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editPhone}
+                                  onChange={(e) => setEditPhone(e.target.value)}
+                                  placeholder="01XXXXXXXXX"
+                                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                  ব্যবহারের ভূমিকা (Role)
+                                </label>
+                                <select
+                                  value={editRole}
+                                  disabled={isPrimarySuperAdmin}
+                                  onChange={(e) => setEditRole(e.target.value as 'user' | 'admin')}
+                                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                                >
+                                  <option value="user">সাধারণ ব্যবহারকারী</option>
+                                  <option value="admin">🛡️ অ্যাডমিন</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                  সর্বমোট ব্যবহৃত মিনিট (রিসেট/এডিট)
+                                </label>
+                                <div className="flex gap-1">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={editMinutes}
+                                    onChange={(e) => setEditMinutes(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditMinutes('0')}
+                                    className="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded-lg text-[10px] font-bold cursor-pointer shrink-0"
+                                  >
+                                    ০ করুন
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                অ্যাডমিন নোট (ওয়ার্ড / এলাকা / মন্তব্য)
+                              </label>
+                              <input
+                                type="text"
+                                value={editNotes}
+                                onChange={(e) => setEditNotes(e.target.value)}
+                                placeholder="যেমন: ৩ নং ওয়ার্ড প্রতিনিধি..."
+                                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs"
+                              />
+                            </div>
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingEmail(null)}
+                                className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                              >
+                                বাতিল
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveUserEdit(user.email)}
+                                disabled={isActionLoading}
+                                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                              >
+                                {isActionLoading ? 'সংরক্ষণ হচ্ছে...' : '💾 পরিবর্তন সংরক্ষণ করুন'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Timing Breakdown Strip */}
                         <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-                          {/* 1. Current Session Time */}
                           <div className="bg-indigo-50/70 p-2.5 rounded-xl flex items-center gap-2">
                             <span className="text-lg">⏱️</span>
                             <div>
@@ -931,7 +1323,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             </div>
                           </div>
 
-                          {/* 2. Cumulative Lifetime Minutes (Crucial User Requirement) */}
                           <div className="bg-amber-50/80 p-2.5 rounded-xl flex items-center gap-2 border border-amber-200/60">
                             <span className="text-lg">⌛</span>
                             <div>
@@ -944,7 +1335,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             </div>
                           </div>
 
-                          {/* 3. Last Active / Registration */}
                           <div className="bg-slate-50 p-2.5 rounded-xl flex items-center gap-2">
                             <span className="text-lg">🕒</span>
                             <div>
@@ -952,7 +1342,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 {user.isOnline ? 'শেষ সক্রিয় রেসপন্স' : 'সর্বশেষ লগইন ছিল'}
                               </span>
                               <span className="font-bold text-slate-700 text-xs">
-                                {user.lastActive ? formatTimeAgo(user.lastActive) : user.lastLoginAt ? formatBengaliDateTime(user.lastLoginAt) : 'নতুন অ্যাকাউন্ট'}
+                                {user.lastActive
+                                  ? formatTimeAgo(user.lastActive)
+                                  : user.lastLoginAt
+                                  ? formatBengaliDateTime(user.lastLoginAt)
+                                  : 'নতুন অ্যাকাউন্ট'}
                               </span>
                             </div>
                           </div>
@@ -965,7 +1359,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: ADD NEW USER */}
+          {/* TAB 2: REAL-TIME LOGIN HISTORY */}
+          {activeTab === 'history' && !error && (
+            <AdminHistoryTab
+              history={history}
+              registeredEmails={users.map((u) => u.email)}
+              dataSource={dataSource}
+              cloudConnected={cloudConnected}
+              initialEmailFilter={historyInitialEmail}
+              onDeleteItems={handleDeleteHistoryItems}
+              onClearAll={handleClearAllHistory}
+            />
+          )}
+
+          {/* TAB 3: ADD NEW USER */}
           {activeTab === 'add_user' && !error && (
             <div className="max-w-xl mx-auto bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-5">
               <div className="border-b border-slate-100 pb-3">
@@ -973,7 +1380,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <span>➕</span> নতুন জিমেইল অ্যাকাউন্ট তৈরি করুন
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  এখানে জিমেইল এবং পাসওয়ার্ড দিয়ে যুক্ত করলে অ্যাকাউন্টটি তাৎক্ষণিকভাবে তৈরি হবে এবং ব্যবহারকারী সরাসরি অ্যাপে লগইন করতে পারবেন।
+                  এখানে জিমেইল এবং পাসওয়ার্ড দিয়ে যুক্ত করলে অ্যাকাউন্টটি তাৎক্ষণিকভাবে ফায়ারবেসে তৈরি হবে এবং ব্যবহারকারী সরাসরি অ্যাপে লগইন করতে পারবেন।
                 </p>
               </div>
 
@@ -986,10 +1393,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
               <form onSubmit={handleAddUser} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label htmlFor="add-user-email" className="block text-xs font-bold text-slate-700 mb-1">
                     ব্যবহারকারীর জিমেইল (Gmail / Email) <span className="text-red-500">*</span>
                   </label>
                   <input
+                    id="add-user-email"
                     type="email"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
@@ -1001,7 +1409,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold text-slate-700">
+                    <label htmlFor="add-user-pass" className="text-xs font-bold text-slate-700">
                       লগইন পাসওয়ার্ড <span className="text-red-500">* (কমপক্ষে ৬ অক্ষর)</span>
                     </label>
                     <button
@@ -1014,6 +1422,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </div>
                   <div className="relative">
                     <input
+                      id="add-user-pass"
                       type={showAddUserPassword ? 'text' : 'password'}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
@@ -1024,36 +1433,56 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     />
                     <button
                       type="button"
+                      aria-label="পাসওয়ার্ড দেখুন বা লুকান"
                       onClick={() => setShowAddUserPassword(!showAddUserPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
                     >
                       {showAddUserPassword ? '🙈' : '👁️'}
                     </button>
                   </div>
-                  <span className="text-[10px] text-slate-400 mt-1 block">
-                    ব্যবহারকারী এই পাসওয়ার্ড দিয়ে অ্যাপে লগইন করতে পারবেন।
-                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="add-user-name" className="block text-xs font-bold text-slate-700 mb-1">
+                      নাম বা পদবী (ঐচ্ছিক)
+                    </label>
+                    <input
+                      id="add-user-name"
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="যেমন: ওয়ার্ড কর্মী ১"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="add-user-phone" className="block text-xs font-bold text-slate-700 mb-1">
+                      মোবাইল নম্বর (ঐচ্ছিক)
+                    </label>
+                    <input
+                      id="add-user-phone"
+                      type="text"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      placeholder="01XXXXXXXXX"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition"
+                    />
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    ব্যবহারকারীর নাম বা পদবী (ঐচ্ছিক)
-                  </label>
-                  <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="যেমন: ওয়ার্ড কর্মী ১"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <span className="block text-xs font-bold text-slate-700 mb-1">
                     অ্যাকাউন্ট রোল / অনুমতি
-                  </label>
+                  </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${newRole === 'user' ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold' : 'border-slate-200 text-slate-600'}`}>
+                    <label
+                      className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${
+                        newRole === 'user'
+                          ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold'
+                          : 'border-slate-200 text-slate-600'
+                      }`}
+                    >
                       <input
                         type="radio"
                         name="role"
@@ -1061,10 +1490,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         checked={newRole === 'user'}
                         onChange={() => setNewRole('user')}
                       />
-                      <span className="text-xs">সাধারণ ব্যবহারকারী (ভোটার সার্চ ও স্লিপ)</span>
+                      <span className="text-xs">সাধারণ ব্যবহারকারী</span>
                     </label>
 
-                    <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${newRole === 'admin' ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold' : 'border-slate-200 text-slate-600'}`}>
+                    <label
+                      className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition ${
+                        newRole === 'admin'
+                          ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900 font-bold'
+                          : 'border-slate-200 text-slate-600'
+                      }`}
+                    >
                       <input
                         type="radio"
                         name="role"
@@ -1072,47 +1507,43 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         checked={newRole === 'admin'}
                         onChange={() => setNewRole('admin')}
                       />
-                      <span className="text-xs">অ্যাডমিন (ড্যাশবোর্ড অ্যাক্সেস ও নিয়ন্ত্রণ)</span>
+                      <span className="text-xs">অ্যাডমিন (পূর্ণ কন্ট্রোল)</span>
                     </label>
                   </div>
                 </div>
 
-                <div className="pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
-                    <input
-                      type="checkbox"
-                      checked={sendActivationEmail}
-                      onChange={(e) => setSendActivationEmail(e.target.checked)}
-                      className="w-4 h-4 text-indigo-600 rounded"
-                    />
-                    <span>জিমেইলে পাসওয়ার্ড রিসেট বা অ্যাক্টিভেশন ইমেইল লিংকও পাঠান</span>
-                  </label>
-                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
+                  <input
+                    type="checkbox"
+                    checked={sendActivationEmail}
+                    onChange={(e) => setSendActivationEmail(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 rounded"
+                  />
+                  <span>জিমেইলে পাসওয়ার্ড রিসেট বা অ্যাক্টিভেশন ইমেইল লিংকও পাঠান</span>
+                </label>
 
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    disabled={isSubmittingUser}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2"
-                  >
-                    {isSubmittingUser ? (
-                      <>
-                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span>অ্যাকাউন্ট তৈরি হচ্ছে...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>➕</span>
-                        <span>যুক্ত করুন ও তাৎক্ষণিক সক্রিয় করুন</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+                <button
+                  type="submit"
+                  disabled={isSubmittingUser}
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2"
+                >
+                  {isSubmittingUser ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>অ্যাকাউন্ট তৈরি হচ্ছে...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>➕</span>
+                      <span>যুক্ত করুন ও তাৎক্ষণিক সক্রিয় করুন</span>
+                    </>
+                  )}
+                </button>
               </form>
             </div>
           )}
 
-          {/* TAB 3: ADMIN PERMISSION SETTINGS */}
+          {/* TAB 4: ADMIN PERMISSION SETTINGS */}
           {activeTab === 'admins' && !error && (
             <div className="max-w-xl mx-auto bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-5">
               <div className="border-b border-slate-100 pb-3">
@@ -1131,13 +1562,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
               )}
 
-              {/* Add New Admin Form */}
               <form onSubmit={handleAddAdminEmail} className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700">
+                <label htmlFor="add-admin-email" className="block text-xs font-bold text-slate-700">
                   নতুন অ্যাডমিন জিমেইল যুক্ত করুন:
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="add-admin-email"
                     type="email"
                     value={newAdminInput}
                     onChange={(e) => {
@@ -1157,16 +1588,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     <span>অ্যাডমিন যোগ করুন</span>
                   </button>
                 </div>
-                <span className="text-[10px] text-slate-400 block">
-                  জিমেইল আইডি লিখে 'অ্যাডমিন যোগ করুন' চাপলে সাথে সাথে সংরক্ষিত হয়ে যাবে।
-                </span>
               </form>
 
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700">
-                    বর্তমান অনুমোদিত অ্যাডমিন তালিকা:
-                  </label>
+                  <span className="text-xs font-bold text-slate-700">বর্তমান অনুমোদিত অ্যাডমিন তালিকা:</span>
                   <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
                     মোট: {convertToBengaliNumbers(adminEmailsList.length)} জন
                   </span>
@@ -1209,109 +1635,41 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     );
                   })}
                 </div>
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSaveAdmins()}
-                    disabled={isSavingAdmins}
-                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold cursor-pointer transition"
-                  >
-                    {isSavingAdmins ? 'সংরক্ষণ হচ্ছে...' : '💾 অ্যাডমিন তালিকা পুনরায় সংরক্ষণ করুন'}
-                  </button>
-                </div>
               </div>
             </div>
           )}
 
-          {/* TAB 4: LOGIN HISTORY */}
-          {activeTab === 'history' && !error && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-600">
-                  সর্বশেষ সেশন রেকর্ড ({convertToBengaliNumbers(history.length)} টি)
-                </span>
-                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] px-2.5 py-1 rounded-xl font-bold">
-                  <span>🔒</span>
-                  <span>স্থায়ী অডিট ট্রেইল (রেকর্ড সর্বদা সংরক্ষিত)</span>
-                </div>
-              </div>
-
-              {history.length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200 p-6">
-                  <div className="text-3xl mb-2">📜</div>
-                  <h4 className="font-bold text-slate-700 text-sm">কোনো পূর্বের লগইন হিস্ট্রি নেই</h4>
-                  <p className="text-xs text-slate-500 mt-1">ব্যবহারকারীরা লগআউট বা বন্ধ করলে রেকর্ড এখানে সংরক্ষিত হবে</p>
-                </div>
-              ) : (
-                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 text-slate-600 font-extrabold border-b border-slate-200">
-                        <tr>
-                          <th className="py-2.5 px-3">ব্যবহারকারী (জিমেইল)</th>
-                          <th className="py-2.5 px-3">ডিভাইস</th>
-                          <th className="py-2.5 px-3">লগইন সময়</th>
-                          <th className="py-2.5 px-3">লগআউট সময়</th>
-                          <th className="py-2.5 px-3">সেশনে ছিল</th>
-                          <th className="py-2.5 px-3">সমাপ্তির কারণ</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {history.map((item) => {
-                          const dev = getDeviceDetails(item.deviceName);
-                          let endLabel = 'স্বাভাবিক লগআউট';
-                          let endColor = 'bg-slate-100 text-slate-700';
-                          if (item.endReason === 'another_device') {
-                            endLabel = 'অন্য মোবাইলে লগইন';
-                            endColor = 'bg-amber-100 text-amber-800';
-                          } else if (item.endReason === 'kicked') {
-                            endLabel = 'অ্যাডমিন কর্তৃক বন্ধ';
-                            endColor = 'bg-red-100 text-red-800';
-                          }
-
-                          return (
-                            <tr key={item.id} className="hover:bg-slate-50/80 transition">
-                              <td className="py-2.5 px-3 font-bold text-slate-800">
-                                {item.email}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-600">
-                                <span className="flex items-center gap-1">
-                                  <span>{dev.icon}</span>
-                                  <span>{dev.label}</span>
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-600 font-medium">
-                                {formatBengaliDateTime(item.loginAt)}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-600 font-medium">
-                                {item.logoutAt ? formatBengaliDateTime(item.logoutAt) : 'চলমান'}
-                              </td>
-                              <td className="py-2.5 px-3 font-extrabold text-indigo-900">
-                                {formatDurationBengali(item.durationMinutes)}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${endColor}`}>
-                                  {endLabel}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* TAB 5: GLOBAL APP CONTROLS & FIREBASE SYNC */}
+          {activeTab === 'controls' && !error && (
+            <AdminControlsTab
+              appConfig={appConfig}
+              onlineCount={summary.onlineCount}
+              historyCount={history.length}
+              dataSource={dataSource}
+              cloudConnected={cloudConnected}
+              cloudError={cloudError}
+              onSaveConfig={handleSaveAppConfig}
+              onKickAllSessions={handleKickAllSessions}
+              onForceRefresh={() => fetchAdminData(false)}
+            />
           )}
         </div>
 
         {/* Footer */}
         <div className="bg-white border-t border-slate-200 px-5 py-3 flex items-center justify-between text-xs text-slate-500 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>সিস্টেম লাইভ সিঙ্ক সক্রিয়</span>
+            <span
+              className={`w-2 h-2 rounded-full ${
+                cloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              }`}
+            />
+            <span>
+              {cloudConnected
+                ? 'ফায়ারবেস ক্লাউড রিয়েল-টাইম লাইভ'
+                : dataSource === 'server'
+                ? 'সার্ভার মোড চালু'
+                : 'লোকাল ক্যাশ মোড'}
+            </span>
           </div>
 
           <button

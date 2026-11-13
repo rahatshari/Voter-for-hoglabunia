@@ -99,23 +99,39 @@ export interface AdminSessionsResponse {
 export interface AppUserRecord {
   email: string;
   name?: string;
+  phone?: string;
+  notes?: string;
   role: 'admin' | 'user';
   status: 'active' | 'blocked';
   createdAt: number;
-  lastLoginAt?: number;
+  lastLoginAt?: number | null;
   totalMinutesSpent: number;
   currentSessionDuration?: number;
   isOnline?: boolean;
   activeSessionId?: string;
+  activeSessionCount?: number;
   deviceName?: string;
   lastActive?: number;
   lastPasswordChangedAt?: number | null;
+  loginCount?: number;
+}
+
+export interface AppGlobalConfig {
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  announcementEnabled: boolean;
+  announcementText: string;
+  enforceSingleDevice: boolean;
+  allowSlipPrint: boolean;
+  updatedAt?: number;
+  updatedBy?: string;
 }
 
 export interface AdminPanelSummary {
   totalRegisteredUsers: number;
   onlineCount: number;
   blockedCount: number;
+  adminCount?: number;
   totalCumulativeMinutes: number;
   avgMinutesPerUser: number;
 }
@@ -128,6 +144,11 @@ export interface AdminPanelData {
   activeUsers: UserSessionData[];
   history: SessionHistoryItem[];
   summary: AdminPanelSummary;
+  appConfig?: AppGlobalConfig;
+  dataSource?: 'firebase' | 'server' | 'local';
+  cloudConnected?: boolean;
+  cloudError?: string | null;
+  lastSyncedAt?: number;
 }
 
 export type SlipDesignStyle =

@@ -69,6 +69,34 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       }
 
       const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+      const loggedEmail = userCredential.user.email || cleanEmail;
+
+      // Check real-time Firebase Cloud block & maintenance lock immediately after auth token is ready
+      try {
+        const { checkCloudAccessForUser } = await import('../lib/cloudStore');
+        const cloudCheck = await checkCloudAccessForUser(loggedEmail);
+        if (cloudCheck.isBlocked) {
+          await signOut(auth);
+          setLoading(false);
+          setStatusMessage({
+            text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+            isError: true,
+          });
+          return;
+        }
+        if (cloudCheck.maintenanceBlocked) {
+          await signOut(auth);
+          setLoading(false);
+          setStatusMessage({
+            text: `🔧 ${cloudCheck.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'}`,
+            isError: true,
+          });
+          return;
+        }
+      } catch (cloudCheckErr) {
+        console.warn('Cloud access check notice:', cloudCheckErr);
+      }
+
       const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
       localStorage.setItem('voter_device_session_id', newSessionId);
 
@@ -84,7 +112,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            email: userCredential.user.email,
+            email: loggedEmail,
             sessionId: newSessionId,
             deviceName: detectedDevice,
           }),
@@ -103,7 +131,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         console.warn('Session registration sync:', err);
       }
 
-      onLoginSuccess(userCredential.user.email || cleanEmail);
+      onLoginSuccess(loggedEmail);
     } catch (error: any) {
       console.warn('Login error code:', error?.code);
       setLoading(false);

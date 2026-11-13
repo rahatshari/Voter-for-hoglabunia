@@ -512,6 +512,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val json = JSONObject()
+            json.put("success", true)
             json.put("name", target.name ?: "Bluetooth Printer")
             json.put("address", target.address ?: "")
             return json.toString()

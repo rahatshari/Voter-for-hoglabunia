@@ -177,6 +177,8 @@ export const SLIP_DESIGN_STYLES: SlipDesignStyleMeta[] = [
   },
 ];
 
+export const DEFAULT_SLIP_FOOTER_TEXT = 'ভোটকেন্দ্র আসার সময় স্লিপটি সঙ্গে আনবেন।';
+
 export const DEFAULT_CANDIDATES: CandidateProfile[] = [
   {
     id: 'cand_ataur_horse_card',
@@ -202,7 +204,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: মিরসরাই উপজেলার জনসাধারণ',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় দয়া করে কার্ডটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'মুদ্রণে: তিলোত্তমা মুদ্রণালয়, চট্টগ্রাম। ০১৯৭৯২৪২২৭৪',
     isCustom: false,
   },
@@ -230,7 +232,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: ০৭ নং ওয়ার্ডের সর্বস্তরের জনসাধারণ',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় দয়া করে কার্ডটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'সৌজন্যে: নির্বাচনী প্রচারণা কমিটি',
     isCustom: false,
   },
@@ -245,7 +247,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     postTitle: 'মেম্বার পদপ্রার্থী',
     candidateBadge: 'মেম্বার প্রার্থী',
     religiousHeader: 'বিসমিল্লাহির রাহমানির রাহিম',
-    cardBadgeText: 'ভোটার স্লিপ',
+    cardBadgeText: '',
     electionTitle: 'আসন্ন ইউনিয়ন পরিষদ নির্বাচনে',
     constituencyText: '০৭ নং ওয়ার্ড আসন হতে',
     electionSubtitle: 'সততা ও নিষ্ঠার সাথে গণমানুষের প্রিয় মেম্বার প্রার্থী',
@@ -258,7 +260,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: এলাকাবাসী',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় স্লিপটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'ওয়ার্ড নং: ০৭',
     isCustom: false,
   },
@@ -273,7 +275,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     postTitle: 'চেয়ারম্যান পদপ্রার্থী',
     candidateBadge: 'চেয়ারম্যান পদপ্রার্থী',
     religiousHeader: 'বিসমিল্লাহির রাহমানির রাহিম',
-    cardBadgeText: 'ভোটার কার্ড',
+    cardBadgeText: '',
     electionTitle: 'আসন্ন ইউনিয়ন পরিষদ সাধারণ নির্বাচনে',
     constituencyText: 'আদর্শ ইউনিয়ন পরিষদ আসন হতে',
     electionSubtitle: 'গরীব-দুঃখী মানুষের অকৃত্রিম বন্ধু ও সমাজসেবক',
@@ -286,7 +288,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: ইউনিয়নের সর্বস্তরের জনসাধারণ',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় কার্ডটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'নির্বাচনী প্রচার সেল',
     isCustom: false,
   },
@@ -301,7 +303,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     postTitle: 'ভাইস চেয়ারম্যান পদপ্রার্থী',
     candidateBadge: 'ভাইস চেয়ারম্যান প্রার্থী',
     religiousHeader: 'আল্লাহ্ সর্বশক্তিমান',
-    cardBadgeText: 'ভোটার স্লিপ',
+    cardBadgeText: '',
     electionTitle: 'আসন্ন উপজেলা পরিষদ নির্বাচনে',
     constituencyText: 'উপজেলা ভাইস চেয়ারম্যান আসন হতে',
     electionSubtitle: 'তরুণ প্রজন্মের অহংকার ও শিক্ষানুরাগী ব্যক্তিত্ব',
@@ -314,7 +316,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: সর্বস্তরের জনসাধারণ',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় স্লিপটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'ওয়ার্ড নং: ০৭',
     isCustom: false,
   },
@@ -329,7 +331,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     postTitle: 'মেম্বার পদপ্রার্থী',
     candidateBadge: 'মেম্বার পদপ্রার্থী',
     religiousHeader: 'বিসমিল্লাহির রাহমানির রাহিম',
-    cardBadgeText: 'ভোটার কার্ড',
+    cardBadgeText: '',
     electionTitle: 'আসন্ন ইউনিয়ন পরিষদ নির্বাচনে',
     constituencyText: '০৭ নং ওয়ার্ড আসন হতে',
     electionSubtitle: 'ন্যায়পরায়ণ ও জনদরদী সমাজসেবক',
@@ -342,7 +344,7 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
     voterArea: 'পাঠামারা',
     wardNo: '০৭',
     footerLeftText: 'প্রচারে: ওয়ার্ডের সর্বস্তরের জনগণ',
-    footerCenterText: 'ভোট কেন্দ্রে আসার সময় কার্ডটি সঙ্গে আনবেন',
+    footerCenterText: DEFAULT_SLIP_FOOTER_TEXT,
     footerRightText: 'নির্বাচনী পরিচালনা কমিটি',
     isCustom: false,
   },
@@ -350,8 +352,10 @@ export const DEFAULT_CANDIDATES: CandidateProfile[] = [
 
 export const DEFAULT_SLIP_CONFIG = DEFAULT_CANDIDATES[0];
 
-const CANDIDATES_STORAGE_KEY = 'union_candidates_list_v4';
-const ACTIVE_CANDIDATE_ID_KEY = 'union_active_candidate_id_v4';
+const CANDIDATES_STORAGE_KEY = 'union_candidates_list_v5';
+const ACTIVE_CANDIDATE_ID_KEY = 'union_active_candidate_id_v5';
+const LEGACY_CANDIDATES_STORAGE_KEY = 'union_candidates_list_v4';
+const LEGACY_ACTIVE_CANDIDATE_ID_KEY = 'union_active_candidate_id_v4';
 const SLIP_QUEUE_STORAGE_KEY = 'union_multi_voter_slip_queue_v1';
 
 // Helper for safe localStorage in both browser and Node unit tests
@@ -373,13 +377,48 @@ function safeSetItem(key: string, val: string): void {
   memoryFallback[key] = val;
 }
 
+const OLD_DEFAULT_FOOTERS = new Set([
+  'ভোট কেন্দ্রে আসার সময় দয়া করে কার্ডটি সঙ্গে আনবেন',
+  'ভোট কেন্দ্রে আসার সময় কার্ডটি সঙ্গে আনবেন',
+  'ভোট কেন্দ্রে আসার সময় স্লিপটি সঙ্গে আনবেন',
+  'ভোট কেন্দ্রে কার্ডটি সঙ্গে আনবেন',
+]);
+
+function normalizeCandidateDefaults(c: CandidateProfile): CandidateProfile {
+  const cleanFooter =
+    !c.footerCenterText || OLD_DEFAULT_FOOTERS.has(c.footerCenterText.trim())
+      ? DEFAULT_SLIP_FOOTER_TEXT
+      : c.footerCenterText;
+  const cleanBadge = c.cardBadgeText === 'ভোটার স্লিপ' ? '' : c.cardBadgeText;
+  return {
+    ...c,
+    cardBadgeText: cleanBadge,
+    footerCenterText: cleanFooter,
+  };
+}
+
 export function getAllCandidates(): CandidateProfile[] {
   try {
     const raw = safeGetItem(CANDIDATES_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return parsed.map(normalizeCandidateDefaults);
+      }
+    }
+
+    // Migrate from v4 seamlessly while applying updated footer & removing 'ভোটার স্লিপ' top labels
+    const legacyRaw = safeGetItem(LEGACY_CANDIDATES_STORAGE_KEY);
+    if (legacyRaw) {
+      const legacyParsed = JSON.parse(legacyRaw);
+      if (Array.isArray(legacyParsed) && legacyParsed.length > 0) {
+        const migrated = legacyParsed.map(normalizeCandidateDefaults);
+        const legacyActive = safeGetItem(LEGACY_ACTIVE_CANDIDATE_ID_KEY);
+        safeSetItem(CANDIDATES_STORAGE_KEY, JSON.stringify(migrated));
+        if (legacyActive) {
+          safeSetItem(ACTIVE_CANDIDATE_ID_KEY, legacyActive);
+        }
+        return migrated;
       }
     }
   } catch (e) {
@@ -457,6 +496,35 @@ export function resetDefaultCandidates(): CandidateProfile[] {
   saveAllCandidates(DEFAULT_CANDIDATES);
   setActiveCandidateId(DEFAULT_CANDIDATES[0].id);
   return DEFAULT_CANDIDATES;
+}
+
+export interface DefaultPrintPreferences {
+  pageLayoutMode: PrintLayoutMode;
+  colorMode: 'bw' | 'color';
+}
+
+const DEFAULT_PRINT_PREFS_KEY = 'union_default_print_prefs_v1';
+
+export function getDefaultPrintPrefs(): DefaultPrintPreferences {
+  try {
+    const raw = safeGetItem(DEFAULT_PRINT_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.pageLayoutMode && parsed.colorMode) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return {
+    pageLayoutMode: 'sheet4',
+    colorMode: 'bw',
+  };
+}
+
+export function saveDefaultPrintPrefs(prefs: DefaultPrintPreferences): void {
+  try {
+    safeSetItem(DEFAULT_PRINT_PREFS_KEY, JSON.stringify(prefs));
+  } catch {}
 }
 
 // ============================================================================
@@ -719,7 +787,7 @@ export function renderSlipCardByStyleHTML(
           <div class="classic-right-col">
             <div class="classic-top-bar">
               <div class="classic-bismillah">${config.religiousHeader || 'আল্লাহ্ সর্বশক্তিমান'}</div>
-              <div class="classic-vertical-ribbon">${config.cardBadgeText || 'ভোটার কার্ড'}</div>
+              ${config.cardBadgeText ? `<div class="classic-vertical-ribbon">${config.cardBadgeText}</div>` : ''}
             </div>
 
             <div class="classic-election-block">
@@ -753,7 +821,7 @@ export function renderSlipCardByStyleHTML(
         <!-- Bottom 3-Column Solid Black Footer Bar -->
         <div class="classic-bottom-footer">
           <div class="classic-foot-col">${config.footerLeftText || `প্রচারে: ${config.voterArea || 'এলাকাবাসী'}`}</div>
-          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || 'ভোট কেন্দ্রে আসার সময় দয়া করে কার্ডটি সঙ্গে আনবেন'}</div>
+          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
           <div class="classic-foot-col classic-foot-right">${config.footerRightText || `ওয়ার্ড নং: ${config.wardNo || '-'}`}</div>
         </div>
       </div>
@@ -789,7 +857,7 @@ export function renderSlipCardByStyleHTML(
         </div>
         <div class="classic-bottom-footer">
           <div class="classic-foot-col">${config.footerLeftText || 'প্রচারে: সর্বস্তরের জনগণ'}</div>
-          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || 'ভোট কেন্দ্রে আসার সময় কার্ডটি সঙ্গে আনবেন'}</div>
+          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
           <div class="classic-foot-col classic-foot-right">${config.footerRightText || `ওয়ার্ড: ${config.wardNo}`}</div>
         </div>
       </div>
@@ -821,7 +889,7 @@ export function renderSlipCardByStyleHTML(
         </div>
         <div class="classic-bottom-footer">
           <div class="classic-foot-col">${config.footerLeftText || 'প্রচারে: এলাকাবাসী'}</div>
-          <div class="classic-foot-col classic-foot-center">${config.sloganText || config.footerCenterText || 'ভোট কেন্দ্রে কার্ডটি সঙ্গে আনবেন'}</div>
+          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
           <div class="classic-foot-col classic-foot-right">${config.footerRightText || `ওয়ার্ড: ${config.wardNo}`}</div>
         </div>
       </div>
@@ -835,7 +903,7 @@ export function renderSlipCardByStyleHTML(
         <div class="rf-inner">
           <div class="rf-top-strip">
             <span>${config.religiousHeader || 'বিসমিল্লাহির রাহমানির রাহিম'}</span>
-            <span class="rf-tag">${config.cardBadgeText || 'ভোটার কার্ড'}</span>
+            ${config.cardBadgeText ? `<span class="rf-tag">${config.cardBadgeText}</span>` : ''}
           </div>
           <div class="rf-hero">
             <img src="${candidateImg}" alt="প্রার্থী" class="rf-cand-img" />
@@ -853,7 +921,7 @@ export function renderSlipCardByStyleHTML(
           <div class="rf-footer">
             <span>${config.footerLeftText || 'প্রচারে: সর্বস্তরের জনগণ'}</span>
             <span>•</span>
-            <span>${config.footerCenterText || 'ভোট কেন্দ্রে কার্ডটি সঙ্গে আনবেন'}</span>
+            <span>${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</span>
           </div>
         </div>
       </div>
@@ -908,7 +976,7 @@ export function renderSlipCardByStyleHTML(
         </table>
         <div class="classic-bottom-footer">
           <div class="classic-foot-col">${config.footerLeftText || 'প্রচারে: এলাকাবাসী'}</div>
-          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || 'ভোট কেন্দ্রে কার্ডটি সঙ্গে আনবেন'}</div>
+          <div class="classic-foot-col classic-foot-center">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
           <div class="classic-foot-col classic-foot-right">${config.footerRightText || ''}</div>
         </div>
       </div>
@@ -931,6 +999,11 @@ export function renderSlipCardByStyleHTML(
       </div>
       <div class="cp-voter">
         ${voterDetailsHTML}
+      </div>
+      <div class="classic-bottom-footer" style="margin-top:4px;">
+        <div class="classic-foot-col">${config.footerLeftText || 'প্রচারে: এলাকাবাসী'}</div>
+        <div class="classic-foot-col classic-foot-center">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
+        <div class="classic-foot-col classic-foot-right">${config.footerRightText || ''}</div>
       </div>
     </div>
   `;
@@ -958,9 +1031,9 @@ export async function printVoterSlips(
         return `
         <div class="thermal-ticket">
           <div class="th-religious">${config.religiousHeader || 'বিসমিল্লাহির রাহমানির রাহিম'}</div>
-          <div class="th-election">${config.electionTitle}</div>
+          <div class="th-election">${config.electionTitle || ''}</div>
           ${config.constituencyText ? `<div class="th-subtitle">${config.constituencyText}</div>` : ''}
-          <div class="th-subtitle">${config.electionSubtitle}</div>
+          <div class="th-subtitle">${config.electionSubtitle || ''}</div>
           <div class="th-dashed">--------------------------------</div>
 
           <div class="th-candidate-box">
@@ -1009,7 +1082,7 @@ export async function printVoterSlips(
           </div>
 
           <div class="th-dashed">================================</div>
-          <div class="th-footer">${config.footerCenterText || 'ভোট কেন্দ্রে আসার সময় কার্ডটি সঙ্গে আনবেন'}</div>
+          <div class="th-footer">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
           <div class="th-cut-space">.</div>
         </div>
       `;

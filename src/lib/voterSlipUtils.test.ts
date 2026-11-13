@@ -15,8 +15,11 @@ import {
   renderSlipCardByStyleHTML,
   ELECTION_SYMBOLS_GALLERY,
   SLIP_DESIGN_STYLES,
+  getDefaultPrintPrefs,
+  saveDefaultPrintPrefs,
+  DEFAULT_SLIP_FOOTER_TEXT,
 } from './voterSlipUtils';
-import { Voter } from '../types';
+import { Voter, SlipDesignStyle } from '../types';
 
 const sampleFamilyVoters: Voter[] = [
   {
@@ -116,14 +119,27 @@ test('Voter Card Studio provides 6 ready-made templates including Mirsharai Upaz
   assert.ok((horseCard.symbolName || '').includes('ঘোড়া'));
   assert.strictEqual(horseCard.designStyle, 'classic_voter_card');
 
+  for (const cand of defaults) {
+    assert.strictEqual(cand.footerCenterText, DEFAULT_SLIP_FOOTER_TEXT);
+    assert.notStrictEqual(cand.cardBadgeText, 'ভোটার স্লিপ');
+  }
+
   const created = createNewCandidateTemplate(horseCard);
   assert.ok(created.id.startsWith('custom_slip_'));
   assert.ok(getAllCandidates().length >= 6);
 });
 
-test('renderSlipCardByStyleHTML renders all 6 design styles and supports auto, lined, and blank voter info modes', () => {
+test('renderSlipCardByStyleHTML renders all 6 design styles with required footer text and no forced slip top badge', () => {
   const defaults = resetDefaultCandidates();
   const voter = sampleFamilyVoters[0];
+  const allStyles: SlipDesignStyle[] = [
+    'classic_voter_card',
+    'upazila_horizontal',
+    'poster_banner_card',
+    'royal_framed_slip',
+    'official_table_grid',
+    'compact_thermal_slip',
+  ];
 
   for (const cand of defaults) {
     const cName = cand.candidateName || cand.name || '';
@@ -131,8 +147,35 @@ test('renderSlipCardByStyleHTML renders all 6 design styles and supports auto, l
     const htmlAuto = renderSlipCardByStyleHTML(voter, { ...cand, voterInfoMode: 'auto' }, 'bw');
     assert.ok(htmlAuto.includes(vName));
     assert.ok(htmlAuto.includes(cName));
+    assert.ok(htmlAuto.includes(DEFAULT_SLIP_FOOTER_TEXT));
 
     const htmlBlank = renderSlipCardByStyleHTML(voter, { ...cand, voterInfoMode: 'blank' }, 'bw');
     assert.ok(htmlBlank.includes(cName));
+    assert.ok(htmlBlank.includes(DEFAULT_SLIP_FOOTER_TEXT));
   }
+
+  for (const style of allStyles) {
+    const html = renderSlipCardByStyleHTML(
+      voter,
+      { ...defaults[0], designStyle: style, cardBadgeText: '', footerCenterText: '' },
+      'bw'
+    );
+    assert.ok(
+      html.includes('ভোটকেন্দ্র আসার সময় স্লিপটি সঙ্গে আনবেন।'),
+      `Style ${style} must include footer instruction`
+    );
+    assert.ok(!html.includes('classic-vertical-ribbon'), `Style ${style} must omit ribbon when empty`);
+    assert.ok(!html.includes('rf-tag'), `Style ${style} must omit rf-tag when empty`);
+  }
+});
+
+test('getDefaultPrintPrefs and saveDefaultPrintPrefs persist default print page preferences', () => {
+  const initial = getDefaultPrintPrefs();
+  assert.strictEqual(initial.pageLayoutMode, 'sheet4');
+  assert.strictEqual(initial.colorMode, 'bw');
+
+  saveDefaultPrintPrefs({ pageLayoutMode: 'sheet6', colorMode: 'color' });
+  const updated = getDefaultPrintPrefs();
+  assert.strictEqual(updated.pageLayoutMode, 'sheet6');
+  assert.strictEqual(updated.colorMode, 'color');
 });

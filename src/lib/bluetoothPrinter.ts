@@ -161,7 +161,7 @@ export async function connectBluetoothPrinter(): Promise<BluetoothPrinterDevice>
         const resRaw = bridge.connectPairedPrinter();
         if (resRaw) {
           const parsed = JSON.parse(resRaw);
-          if (parsed.success && parsed.name) {
+          if ((parsed.success || parsed.name) && parsed.name) {
             connectedPrinter = {
               name: parsed.name,
               address: parsed.address || '',
@@ -349,7 +349,17 @@ export async function sendEscPosToPrinter(
     if (onProgress) onProgress(30);
     const b64 = uint8ArrayToBase64(data);
     const resultRaw = (window as any).AndroidNative.printEscPosBase64(b64, printer.address || '');
-    const result = resultRaw ? JSON.parse(resultRaw) : { success: false };
+    if (typeof resultRaw === 'boolean') {
+      if (!resultRaw) {
+        throw new Error('ব্লুটুথ প্রিন্টারে ডাটা পাঠানো যায়নি। প্রিন্টারটি অন আছে কিনা দেখুন।');
+      }
+      if (onProgress) onProgress(100);
+      return;
+    }
+    const result =
+      typeof resultRaw === 'string' && resultRaw.trim().startsWith('{')
+        ? JSON.parse(resultRaw)
+        : { success: Boolean(resultRaw) };
     if (!result.success) {
       throw new Error(result.error || 'ব্লুটুথ প্রিন্টারে ডাটা পাঠানো যায়নি। প্রিন্টারটি অন আছে কিনা দেখুন।');
     }

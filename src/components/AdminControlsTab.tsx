@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppGlobalConfig } from '../types';
 import { auth } from '../lib/firebase';
 import { SECURE_RTDB_RULES_JSON } from '../lib/cloudStore';
@@ -16,6 +16,17 @@ interface AdminControlsTabProps {
   onForceRefresh: () => void;
 }
 
+function serializeAppConfig(cfg: AppGlobalConfig): string {
+  return JSON.stringify([
+    Boolean(cfg.enforceSingleDevice),
+    cfg.autoUpdateEnabled !== false,
+    Boolean(cfg.announcementEnabled),
+    cfg.announcementText || '',
+    Boolean(cfg.maintenanceMode),
+    cfg.maintenanceMessage || '',
+  ]);
+}
+
 export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
   appConfig,
   onlineCount,
@@ -28,6 +39,8 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
   onForceRefresh,
 }) => {
   const [draft, setDraft] = useState<AppGlobalConfig>(appConfig);
+  const [isDirty, setIsDirty] = useState(false);
+  const lastSyncedKeyRef = useRef<string>(serializeAppConfig(appConfig));
   const [isSaving, setIsSaving] = useState(false);
   const [isKickingAll, setIsKickingAll] = useState(false);
   const [confirmKickAll, setConfirmKickAll] = useState(false);
@@ -35,14 +48,31 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
   const [showRulesBox, setShowRulesBox] = useState(false);
 
   useEffect(() => {
+    const incomingKey = serializeAppConfig(appConfig);
+    if (!isDirty && incomingKey !== lastSyncedKeyRef.current) {
+      lastSyncedKeyRef.current = incomingKey;
+      setDraft(appConfig);
+    }
+  }, [appConfig, isDirty]);
+
+  const updateDraft = (patch: Partial<AppGlobalConfig>) => {
+    setIsDirty(true);
+    setDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleDiscardDraft = () => {
+    lastSyncedKeyRef.current = serializeAppConfig(appConfig);
     setDraft(appConfig);
-  }, [appConfig]);
+    setIsDirty(false);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     try {
       await onSaveConfig(draft);
+      lastSyncedKeyRef.current = serializeAppConfig(draft);
+      setIsDirty(false);
     } finally {
       setIsSaving(false);
     }
@@ -207,7 +237,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
             id="cfg-single-device"
             type="checkbox"
             checked={draft.enforceSingleDevice}
-            onChange={(e) => setDraft({ ...draft, enforceSingleDevice: e.target.checked })}
+            onChange={(e) => updateDraft({ enforceSingleDevice: e.target.checked })}
             className="w-5 h-5 accent-indigo-600 cursor-pointer shrink-0 mt-0.5"
           />
         </div>
@@ -226,7 +256,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
             id="cfg-auto-update"
             type="checkbox"
             checked={draft.autoUpdateEnabled !== false}
-            onChange={(e) => setDraft({ ...draft, autoUpdateEnabled: e.target.checked })}
+            onChange={(e) => updateDraft({ autoUpdateEnabled: e.target.checked })}
             className="w-5 h-5 accent-emerald-600 cursor-pointer shrink-0 mt-0.5"
           />
         </div>
@@ -246,7 +276,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
               id="cfg-announce-toggle"
               type="checkbox"
               checked={draft.announcementEnabled}
-              onChange={(e) => setDraft({ ...draft, announcementEnabled: e.target.checked })}
+              onChange={(e) => updateDraft({ announcementEnabled: e.target.checked })}
               className="w-5 h-5 accent-amber-600 cursor-pointer shrink-0 mt-0.5"
             />
           </div>
@@ -259,7 +289,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
               id="cfg-announce-text"
               type="text"
               value={draft.announcementText}
-              onChange={(e) => setDraft({ ...draft, announcementText: e.target.value })}
+              onChange={(e) => updateDraft({ announcementText: e.target.value })}
               placeholder="যেমন: আজ সন্ধ্যা ৬টায় নতুন ভোটার তালিকা আপডেট হবে..."
               className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl text-xs focus:outline-none focus:border-amber-600"
             />
@@ -281,7 +311,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
               id="cfg-maint-toggle"
               type="checkbox"
               checked={draft.maintenanceMode}
-              onChange={(e) => setDraft({ ...draft, maintenanceMode: e.target.checked })}
+              onChange={(e) => updateDraft({ maintenanceMode: e.target.checked })}
               className="w-5 h-5 accent-red-600 cursor-pointer shrink-0 mt-0.5"
             />
           </div>
@@ -294,12 +324,25 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
               id="cfg-maint-msg"
               type="text"
               value={draft.maintenanceMessage}
-              onChange={(e) => setDraft({ ...draft, maintenanceMessage: e.target.value })}
+              onChange={(e) => updateDraft({ maintenanceMessage: e.target.value })}
               placeholder="রক্ষণাবেক্ষণ বার্তা লিখুন..."
               className="w-full px-3.5 py-2.5 bg-white border border-red-200 rounded-xl text-xs focus:outline-none focus:border-red-500"
             />
           </div>
         </div>
+
+        {isDirty && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-bold">
+            <span>✏️ আপনি সেটিংসে পরিবর্তন করেছেন — কার্যকর করতে নিচের বাটনে সংরক্ষণ করুন।</span>
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-300 rounded-lg text-[10px] font-bold text-amber-900 cursor-pointer"
+            >
+              বাতিল করুন
+            </button>
+          </div>
+        )}
 
         <button
           type="submit"

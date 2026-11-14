@@ -56,9 +56,49 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
+function drawImageContain(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  const scale = Math.min(w / img.width, h / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  const dx = x + (w - dw) / 2;
+  const dy = y + (h - dh) / 2;
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+function drawImageCoverTop(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  const imgRatio = img.width / img.height;
+  const boxRatio = w / h;
+  let sx = 0;
+  let sy = 0;
+  let sw = img.width;
+  let sh = img.height;
+  if (imgRatio > boxRatio) {
+    sw = img.height * boxRatio;
+    sx = (img.width - sw) / 2;
+  } else {
+    sh = img.width / boxRatio;
+    sy = 0; // Keep top aligned so candidate head/face is never cropped
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
 /**
  * Draw Voter Slip onto a 384px wide canvas (Standard 58mm POS thermal printer width)
- * NO QR CODE — clean, high-contrast thermal layout
+ * NO QR CODE — clean, high-contrast thermal layout with prominent Candidate Photo & Symbol
  */
 async function drawThermalSlipToCanvas(
   canvas: HTMLCanvasElement,
@@ -66,7 +106,7 @@ async function drawThermalSlipToCanvas(
   config: CandidateProfile
 ): Promise<void> {
   const width = 384;
-  const height = 470;
+  const height = 510;
   canvas.width = width;
   canvas.height = height;
 
@@ -102,63 +142,70 @@ async function drawThermalSlipToCanvas(
   ctx.font = 'bold 12px monospace';
   ctx.fillText('------------------------------------------------', width / 2, 66);
 
+  // Left: Symbol (large & clear, 84x80)
   if (symImg) {
-    ctx.drawImage(symImg, 12, 82, 72, 68);
+    drawImageContain(ctx, symImg, 8, 78, 84, 80);
   }
-  ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`মার্কা: ${config.symbolName || 'ঘোড়া'}`, 48, 153);
-  ctx.strokeRect(8, 170, 82, 18);
+  ctx.font = 'bold 11.5px "Noto Sans Bengali", sans-serif';
+  ctx.fillText(`মার্কা: ${config.symbolName || 'ঘোড়া'}`, 50, 162, 92);
+  ctx.strokeRect(6, 179, 88, 19);
   ctx.font = 'bold 10px "Noto Sans Bengali", sans-serif';
-  ctx.fillText((config.symbolCallout || 'ভোট দিন').slice(0, 16), 49, 173);
+  ctx.fillText((config.symbolCallout || 'ভোট দিন').slice(0, 16), 50, 183, 84);
 
+  // Right: Candidate Photo (maximally sized 116x138 — noticeably larger than symbol!)
   if (candImg) {
-    ctx.drawImage(candImg, width - 84, 82, 70, 84);
-    ctx.strokeRect(width - 84, 82, 70, 84);
+    drawImageCoverTop(ctx, candImg, width - 124, 76, 116, 138);
   }
-  ctx.font = 'bold 10px "Noto Sans Bengali", sans-serif';
-  ctx.fillText('প্রার্থী', width - 49, 170);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(width - 124, 76, 116, 138);
+  ctx.lineWidth = 1;
+  ctx.font = 'bold 10.5px "Noto Sans Bengali", sans-serif';
+  ctx.fillText('প্রার্থী', width - 66, 217);
 
+  // Center text column (x: 98..254, center 176)
+  const centerX = 176;
   ctx.fillStyle = '#000000';
-  ctx.fillRect(102, 84, 180, 20);
+  ctx.fillRect(102, 86, 148, 22);
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(config.candidateBadge || config.postTitle || 'পদপ্রার্থী', width / 2, 87);
+  ctx.font = 'bold 11.5px "Noto Sans Bengali", sans-serif';
+  ctx.fillText(config.candidateBadge || config.postTitle || 'পদপ্রার্থী', centerX, 91, 140);
 
   ctx.fillStyle = '#000000';
-  ctx.font = '900 17px "Noto Sans Bengali", sans-serif';
+  ctx.font = '900 16px "Noto Sans Bengali", sans-serif';
   ctx.fillText(
     `${config.candidateName || config.name} ${config.candidateSuffix || 'কে'}`.slice(0, 22),
-    width / 2,
-    114
+    centerX,
+    118,
+    152
   );
 
-  ctx.font = 'bold 11px "Noto Sans Bengali", sans-serif';
-  ctx.fillText((config.electionSubtitle || '').slice(0, 28), width / 2, 140);
+  ctx.font = 'bold 10.5px "Noto Sans Bengali", sans-serif';
+  ctx.fillText((config.electionSubtitle || '').slice(0, 26), centerX, 145, 152);
 
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('================================================', width / 2, 194);
+  ctx.fillText('================================================', width / 2, 232);
 
   ctx.textAlign = 'left';
   ctx.font = 'bold 13px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ভোট কেন্দ্র: ${config.pollingCenter || '-'}`, 12, 212);
-  ctx.fillText(`এলাকা: ${voter.villageName || config.voterArea || '-'}`, 12, 232);
+  ctx.fillText(`ভোট কেন্দ্র: ${config.pollingCenter || '-'}`, 12, 250);
+  ctx.fillText(`এলাকা: ${voter.villageName || config.voterArea || '-'}`, 12, 270);
   ctx.textAlign = 'right';
-  ctx.fillText(`ওয়ার্ড নং: ${config.wardNo || '-'}`, width - 12, 232);
+  ctx.fillText(`ওয়ার্ড নং: ${config.wardNo || '-'}`, width - 12, 270);
 
   ctx.textAlign = 'center';
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('------------------------------------------------', width / 2, 250);
+  ctx.fillText('------------------------------------------------', width / 2, 288);
 
   ctx.textAlign = 'left';
   ctx.font = '900 16px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ক্রমিক: ${voter.serialNo || '-'} | ${voter.name || '-'}`, 14, 270);
+  ctx.fillText(`ক্রমিক: ${voter.serialNo || '-'} | ${voter.name || '-'}`, 14, 308);
 
   ctx.font = 'bold 14px monospace';
-  ctx.fillText(`ভোটার আইডি: ${voter.voterId || '-'}`, 14, 296);
+  ctx.fillText(`ভোটার আইডি: ${voter.voterId || '-'}`, 14, 334);
 
   ctx.font = 'bold 13px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`পিতা/স্বামী: ${voter.fatherName || '-'}`, 14, 319);
-  ctx.fillText(`মাতা: ${voter.motherName || '-'}`, 14, 342);
+  ctx.fillText(`পিতা/স্বামী: ${voter.fatherName || '-'}`, 14, 357);
+  ctx.fillText(`মাতা: ${voter.motherName || '-'}`, 14, 380);
 
   const extraLine = [
     voter.dob ? `জন্ম: ${voter.dob}` : '',
@@ -168,23 +215,23 @@ async function drawThermalSlipToCanvas(
     .join('  |  ');
   if (extraLine) {
     ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-    ctx.fillText(extraLine, 14, 365);
+    ctx.fillText(extraLine, 14, 403);
   }
 
   ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ঠিকানা: ${voter.address || voter.villageName || '-'}`, 14, 386);
+  ctx.fillText(`ঠিকানা: ${voter.address || voter.villageName || '-'}`, 14, 424);
 
   ctx.textAlign = 'center';
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('------------------------------------------------', width / 2, 406);
+  ctx.fillText('------------------------------------------------', width / 2, 445);
   ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
   ctx.fillText(
     (config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT).slice(0, 44),
     width / 2,
-    424
+    463
   );
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('================================================', width / 2, 444);
+  ctx.fillText('================================================', width / 2, 484);
 }
 
 export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
@@ -649,12 +696,12 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         >
           <div className="flex items-stretch">
             {/* Left Column: Candidate Photo + Symbol + Callout + Slogan */}
-            <div className="w-[32%] sm:w-[30%] border-r-2 border-dashed border-slate-800 p-2.5 flex flex-col items-center justify-between text-center bg-white shrink-0">
+            <div className="w-[38%] sm:w-[37%] border-r-2 border-dashed border-slate-800 p-2 sm:p-2.5 flex flex-col items-center justify-between text-center bg-white shrink-0">
               <div className="w-full flex justify-center">
                 <img
                   src={candidate.candidatePhotoUrl || './candidate-ataur.jpg'}
                   alt={candidate.name}
-                  className="w-full max-w-[140px] h-32 sm:h-36 object-cover object-top border-b-2 border-slate-950"
+                  className="w-full max-w-[196px] h-44 sm:h-52 object-cover object-top border-b-2 border-slate-950"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = './candidate-default.jpg';
                   }}
@@ -665,7 +712,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 <img
                   src={candidate.symbolPhotoUrl || './symbol-horse.png'}
                   alt={candidate.symbolName}
-                  className="w-full max-w-[125px] h-24 sm:h-28 object-contain"
+                  className="w-full max-w-[132px] h-24 sm:h-28 object-contain"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = './symbol-default.png';
                   }}
@@ -773,12 +820,12 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           <div className="text-center text-lg font-black border-y-2 border-slate-950 bg-slate-50 py-1">
             {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
           </div>
-          <div className="flex items-stretch p-3 gap-3">
-            <div className="w-24 border-r border-dashed border-slate-400 pr-2 flex flex-col items-center justify-center text-center shrink-0">
+          <div className="flex items-stretch p-3 gap-2.5">
+            <div className="w-24 sm:w-28 border-r border-dashed border-slate-400 pr-2 flex flex-col items-center justify-center text-center shrink-0">
               <img
                 src={candidate.symbolPhotoUrl || './symbol-default.png'}
                 alt="মার্কা"
-                className="w-16 h-16 object-contain"
+                className="w-20 h-20 object-contain"
               />
               <div className="text-xs font-black mt-1">মার্কা: {candidate.symbolName}</div>
               <div className="text-[10px] font-bold border border-slate-900 px-1.5 py-0.5 mt-1">
@@ -786,11 +833,11 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
               </div>
             </div>
             <div className="flex-1 min-w-0">{renderLiveVoterBlock()}</div>
-            <div className="w-24 border border-slate-900 flex flex-col justify-between shrink-0">
+            <div className="w-32 sm:w-36 border border-slate-900 flex flex-col justify-between shrink-0">
               <img
                 src={candidate.candidatePhotoUrl || './candidate-default.jpg'}
                 alt="প্রার্থী"
-                className="w-full h-28 object-cover"
+                className="w-full h-36 sm:h-40 object-cover object-top"
               />
               <div className="bg-slate-950 text-white text-[10px] font-bold text-center py-0.5">
                 {candidate.postTitle || 'প্রার্থী'}
@@ -814,11 +861,11 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           colorMode === 'bw' ? 'grayscale contrast-125' : ''
         }`}
       >
-        <div className="flex items-center justify-between gap-3 p-3 border-b-2 border-slate-950 bg-slate-50">
+        <div className="flex items-center justify-between gap-2.5 p-3 border-b-2 border-slate-950 bg-slate-50">
           <img
             src={candidate.candidatePhotoUrl || './candidate-default.jpg'}
             alt="প্রার্থী"
-            className="w-20 h-24 object-cover border-2 border-slate-900 shrink-0"
+            className="w-28 sm:w-32 h-36 sm:h-40 object-cover object-top border-2 border-slate-900 shrink-0"
           />
           <div className="flex-1 text-center min-w-0">
             <div className="text-[11px] font-bold">{candidate.religiousHeader}</div>
@@ -833,11 +880,11 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
               {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
             </div>
           </div>
-          <div className="w-20 text-center shrink-0">
+          <div className="w-24 sm:w-28 text-center shrink-0">
             <img
               src={candidate.symbolPhotoUrl || './symbol-horse.png'}
               alt="মার্কা"
-              className="w-16 h-16 object-contain mx-auto"
+              className="w-20 h-20 object-contain mx-auto"
             />
             <div className="text-[10px] font-black border border-slate-900 px-1 py-0.5 mt-1">
               {candidate.symbolCallout}
@@ -875,36 +922,36 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         </div>
 
         {/* Candidate Photo + Symbol + Name block */}
-        <div className="grid grid-cols-12 items-center gap-2 py-2.5 border-b-2 border-double border-slate-950">
-          <div className="col-span-3 flex flex-col items-center text-center">
+        <div className="flex items-center justify-between gap-2 py-2.5 border-b-2 border-double border-slate-950">
+          <div className="w-[84px] shrink-0 flex flex-col items-center text-center">
             <img
               src={candidate.symbolPhotoUrl || './symbol-horse.png'}
               alt={candidate.symbolName}
-              className="w-14 h-14 object-contain"
+              className="w-[74px] h-[70px] object-contain"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = './symbol-default.png';
               }}
             />
-            <span className="text-[11px] font-black mt-0.5">মার্কা: {candidate.symbolName}</span>
+            <span className="text-[10.5px] font-black mt-0.5 leading-tight">মার্কা: {candidate.symbolName}</span>
           </div>
 
-          <div className="col-span-6 text-center space-y-1">
-            <span className="inline-block bg-slate-950 text-white text-[11px] font-black px-2 py-0.5">
+          <div className="flex-1 min-w-0 text-center space-y-1">
+            <span className="inline-block bg-slate-950 text-white text-[10.5px] font-black px-2 py-0.5">
               {candidate.candidateBadge || candidate.postTitle || 'পদপ্রার্থী'}
             </span>
-            <div className="text-base font-black leading-tight">
+            <div className="text-[15px] font-black leading-tight break-words">
               {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
             </div>
-            <div className="inline-block border border-slate-950 text-[10px] font-black px-1.5 py-0.5">
+            <div className="inline-block border border-slate-950 text-[9.5px] font-black px-1.5 py-0.5 leading-tight">
               {candidate.symbolCallout || `${candidate.symbolName} মার্কায় ভোট দিন`}
             </div>
           </div>
 
-          <div className="col-span-3 flex flex-col items-center text-center">
+          <div className="w-[114px] shrink-0 flex flex-col items-center text-center">
             <img
               src={candidate.candidatePhotoUrl || './candidate-ataur.jpg'}
               alt={candidate.name}
-              className="w-14 h-16 object-cover object-top border border-slate-950"
+              className="w-[110px] h-[130px] object-cover object-top border-[1.5px] border-slate-950"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = './candidate-default.jpg';
               }}

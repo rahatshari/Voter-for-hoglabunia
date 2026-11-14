@@ -1112,17 +1112,17 @@ export async function printVoterSlips(
           .th-subtitle { font-size: 9.5px; font-weight: 700; line-height: 1.15; margin-top: 1px; }
           .th-dashed { font-family: monospace; font-size: 10px; font-weight: bold; overflow: hidden; white-space: nowrap; margin: 2px 0; }
           .th-candidate-box { padding: 3px 0; }
-          .th-cand-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 2px 0; }
-          .th-symbol-col { width: 58px; display: flex; flex-direction: column; align-items: center; text-align: center; flex-shrink: 0; }
-          .th-symbol-img { width: 48px; height: 48px; object-fit: contain; filter: contrast(140%) grayscale(100%); }
+          .th-cand-row { display: flex; align-items: center; justify-content: space-between; gap: 3px; padding: 2px 0; }
+          .th-symbol-col { width: ${mode === 'thermal80' ? '82px' : '64px'}; display: flex; flex-direction: column; align-items: center; text-align: center; flex-shrink: 0; }
+          .th-symbol-img { width: ${mode === 'thermal80' ? '74px' : '58px'}; height: ${mode === 'thermal80' ? '70px' : '54px'}; object-fit: contain; filter: contrast(140%) grayscale(100%); }
           .th-symbol-name { font-size: 10px; font-weight: 900; line-height: 1.1; margin-top: 1px; }
           .th-symbol-btn { border: 1px solid #000; font-size: 8px; font-weight: 800; padding: 1px 3px; margin-top: 1px; line-height: 1; }
           .th-cand-center { flex: 1; text-align: center; min-width: 0; padding: 0 2px; }
           .th-badge { display: inline-block; border: 1px solid #000; padding: 0 6px; font-size: 8.5px; font-weight: 800; background: #000; color: #fff; }
-          .th-candidate-name { font-size: 14px; font-weight: 900; margin: 2px 0; line-height: 1.15; }
-          .th-post-title { font-size: 9.5px; font-weight: 700; color: #111; }
-          .th-photo-col { width: 54px; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-          .th-cand-img { width: 50px; height: 60px; object-fit: cover; border: 1.2px solid #000; filter: contrast(130%) grayscale(100%); }
+          .th-candidate-name { font-size: ${mode === 'thermal80' ? '15px' : '13px'}; font-weight: 900; margin: 2px 0; line-height: 1.15; }
+          .th-post-title { font-size: 9px; font-weight: 700; color: #111; }
+          .th-photo-col { width: ${mode === 'thermal80' ? '106px' : '82px'}; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+          .th-cand-img { width: ${mode === 'thermal80' ? '102px' : '80px'}; height: ${mode === 'thermal80' ? '122px' : '98px'}; object-fit: cover; object-position: top center; border: 1.4px solid #000; filter: contrast(130%) grayscale(100%); }
           .th-photo-label { font-size: 8px; font-weight: 700; margin-top: 1px; }
           .th-center-box { text-align: left; font-size: 10px; line-height: 1.3; }
           .th-flex { display: flex; justify-content: space-between; margin-top: 1px; }
@@ -1218,9 +1218,9 @@ export async function printVoterSlips(
           flex: 1;
         }
         .classic-left-col {
-          width: 31%;
+          width: 36%;
           border-right: 1.5px dashed #222;
-          padding: ${isCompactGrid ? '4px' : '6px'};
+          padding: ${isCompactGrid ? '4px' : '5px'};
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -1236,8 +1236,8 @@ export async function printVoterSlips(
         }
         .classic-cand-img {
           width: 100%;
-          max-width: ${isCompactGrid ? '82px' : '108px'};
-          height: ${isCompactGrid ? '78px' : '102px'};
+          max-width: ${isCompactGrid ? '110px' : '150px'};
+          height: ${isCompactGrid ? '104px' : '142px'};
           object-fit: cover;
           object-position: top center;
           border-bottom: 1.5px solid #000;
@@ -1250,8 +1250,8 @@ export async function printVoterSlips(
         }
         .classic-sym-img {
           width: 100%;
-          max-width: ${isCompactGrid ? '76px' : '96px'};
-          height: ${isCompactGrid ? '56px' : '74px'};
+          max-width: ${isCompactGrid ? '80px' : '106px'};
+          height: ${isCompactGrid ? '58px' : '80px'};
           object-fit: contain;
         }
         .classic-vote-callout {
@@ -1486,29 +1486,29 @@ export async function printVoterSlips(
         .ms-post-badge { background: #000; color: #fff; padding: 1.5px 7px; font-size: 9.5px; font-weight: 900; }
         .ms-cand-banner { text-align: center; font-size: 15px; font-weight: 900; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 2px; background: #f8fafc; }
         .ms-body-row { display: flex; align-items: stretch; padding: 5px 7px; gap: 6px; flex: 1; }
-        .ms-sym-col { width: 72px; border-right: 1px dashed #444; padding-right: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; flex-shrink: 0; }
-        .ms-sym-img { width: 58px; height: 54px; object-fit: contain; }
+        .ms-sym-col { width: 84px; border-right: 1px dashed #444; padding-right: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; flex-shrink: 0; }
+        .ms-sym-img { width: 70px; height: 66px; object-fit: contain; }
         .ms-sym-label { font-size: 9.5px; font-weight: 900; margin-top: 2px; }
         .ms-sym-callout { border: 1px solid #000; font-size: 8px; font-weight: 800; padding: 1px 3px; margin-top: 2px; }
         .ms-voter-col { flex: 1; min-width: 0; }
-        .ms-photo-col { width: 74px; border: 1.2px solid #000; display: flex; flex-direction: column; align-items: center; justify-content: space-between; flex-shrink: 0; }
-        .ms-cand-img { width: 100%; height: 92px; object-fit: cover; }
+        .ms-photo-col { width: 102px; border: 1.2px solid #000; display: flex; flex-direction: column; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .ms-cand-img { width: 100%; height: 124px; object-fit: cover; object-position: top center; }
         .ms-photo-cap { background: #000; color: #fff; width: 100%; text-align: center; font-size: 8px; font-weight: 800; padding: 1px 0; }
 
         /* ==============================================================
            STYLE 3: POSTER BANNER CARD
            ============================================================== */
         .pb-header { display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-bottom: 2px solid #000; background: #f8fafc; }
-        .pb-photo-box { width: 72px; height: 86px; border: 1.5px solid #000; flex-shrink: 0; overflow: hidden; }
-        .pb-img { width: 100%; height: 100%; object-fit: cover; }
+        .pb-photo-box { width: 98px; height: 118px; border: 1.5px solid #000; flex-shrink: 0; overflow: hidden; }
+        .pb-img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
         .pb-center-head { flex: 1; text-align: center; min-width: 0; }
         .pb-rel { font-size: 8.5px; font-weight: 700; }
         .pb-el { font-size: 10.5px; font-weight: 800; }
         .pb-const { font-size: 9.5px; font-weight: 700; }
         .pb-post-pill { display: inline-block; border: 1.2px solid #000; padding: 0 6px; font-size: 9px; font-weight: 900; margin: 1px 0; }
         .pb-black-name { background: #000; color: #fff; font-size: 13.5px; font-weight: 900; padding: 2px 6px; margin-top: 2px; }
-        .pb-sym-box { width: 72px; text-align: center; flex-shrink: 0; }
-        .pb-sym-img { width: 58px; height: 56px; object-fit: contain; margin: 0 auto; display: block; }
+        .pb-sym-box { width: 82px; text-align: center; flex-shrink: 0; }
+        .pb-sym-img { width: 68px; height: 66px; object-fit: contain; margin: 0 auto; display: block; }
         .pb-sym-call { font-size: 8.5px; font-weight: 900; margin-top: 2px; border: 1px solid #000; padding: 1px; }
         .pb-voter-section { padding: 6px 8px; flex: 1; }
 
@@ -1520,13 +1520,13 @@ export async function printVoterSlips(
         .rf-top-strip { display: flex; justify-content: space-between; font-size: 8.5px; font-weight: 700; border-bottom: 1px dashed #444; padding-bottom: 2px; }
         .rf-tag { background: #000; color: #fff; padding: 0 5px; font-weight: 800; }
         .rf-hero { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1.5px solid #000; }
-        .rf-cand-img { width: 64px; height: 76px; object-fit: cover; border: 1.2px solid #000; flex-shrink: 0; }
+        .rf-cand-img { width: 90px; height: 110px; object-fit: cover; object-position: top center; border: 1.2px solid #000; flex-shrink: 0; }
         .rf-hero-text { flex: 1; text-align: center; }
         .rf-el { font-size: 10px; font-weight: 800; }
         .rf-sub { font-size: 8.5px; }
         .rf-name { font-size: 14px; font-weight: 900; margin: 1px 0; }
         .rf-call { background: #000; color: #fff; font-size: 9.5px; font-weight: 800; padding: 1px 6px; display: inline-block; }
-        .rf-sym-img { width: 62px; height: 62px; object-fit: contain; flex-shrink: 0; }
+        .rf-sym-img { width: 70px; height: 70px; object-fit: contain; flex-shrink: 0; }
         .rf-voter-wrap { padding: 4px 0; flex: 1; }
         .rf-footer { border-top: 1px solid #000; padding-top: 2px; font-size: 8px; font-weight: 800; display: flex; justify-content: space-between; }
 
@@ -1534,13 +1534,13 @@ export async function printVoterSlips(
            STYLE 5: OFFICIAL TABLE GRID
            ============================================================== */
         .tg-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1.5px solid #000; }
-        .tg-thumb { width: 54px; height: 62px; object-fit: cover; border: 1px solid #000; flex-shrink: 0; }
+        .tg-thumb { width: 76px; height: 92px; object-fit: cover; object-position: top center; border: 1px solid #000; flex-shrink: 0; }
         .tg-head-mid { flex: 1; text-align: center; }
         .tg-rel { font-size: 8px; font-weight: 700; }
         .tg-title { font-size: 10px; font-weight: 800; }
         .tg-cand { font-size: 11px; margin-top: 2px; }
         .tg-call { background: #000; color: #fff; padding: 0 4px; font-weight: 800; }
-        .tg-sym { width: 54px; height: 54px; object-fit: contain; flex-shrink: 0; }
+        .tg-sym { width: 62px; height: 62px; object-fit: contain; flex-shrink: 0; }
         .tg-table { width: 100%; border-collapse: collapse; font-size: 9.5px; flex: 1; }
         .tg-table td { border: 1px solid #000; padding: 2.5px 5px; }
         .tg-lbl { font-weight: 800; background: #f1f5f9; width: 22%; }
@@ -1555,12 +1555,12 @@ export async function printVoterSlips(
         .cp-top { text-align: center; font-size: 8.5px; font-weight: 700; }
         .cp-el { text-align: center; font-size: 10.5px; font-weight: 800; border-bottom: 1px dashed #000; padding-bottom: 2px; }
         .cp-cand-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 4px 0; border-bottom: 1.5px solid #000; }
-        .cp-img { width: 52px; height: 62px; object-fit: cover; border: 1px solid #000; }
+        .cp-img { width: 74px; height: 90px; object-fit: cover; object-position: top center; border: 1px solid #000; }
         .cp-cand-mid { flex: 1; text-align: center; }
         .cp-badge { background: #000; color: #fff; font-size: 8.5px; font-weight: 800; padding: 0 5px; display: inline-block; }
         .cp-name { font-size: 13px; font-weight: 900; }
         .cp-call { font-size: 9.5px; font-weight: 800; }
-        .cp-sym { width: 52px; height: 52px; object-fit: contain; }
+        .cp-sym { width: 58px; height: 58px; object-fit: contain; }
         .cp-voter { padding-top: 4px; }
       </style>
     </head>

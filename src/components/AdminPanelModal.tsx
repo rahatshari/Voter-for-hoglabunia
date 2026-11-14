@@ -622,6 +622,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   // Save Global App Config across Cloud + Server + Local
   const handleSaveAppConfig = async (cfg: AppGlobalConfig) => {
     saveStoredAppConfig(cfg);
+    setData((prev) => (prev ? { ...prev, appConfig: cfg } : prev));
     window.dispatchEvent(new Event('voter_app_config_changed'));
 
     await Promise.allSettled([

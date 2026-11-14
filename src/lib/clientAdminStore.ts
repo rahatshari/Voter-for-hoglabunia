@@ -27,6 +27,7 @@ export const DEFAULT_APP_CONFIG: AppGlobalConfig = {
   announcementText: '',
   enforceSingleDevice: true,
   allowSlipPrint: true,
+  autoUpdateEnabled: true,
 };
 
 const STORAGE_KEYS = {

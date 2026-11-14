@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Voter } from '../types';
 import { convertToBengaliNumbers, isMigrated } from '../lib/bengaliUtils';
 
@@ -12,6 +12,7 @@ interface HomeScreenProps {
   onOpenUserMonitoring?: () => void;
   isAdmin?: boolean;
   onOpenAdminPanel?: () => void;
+  onOpenUpdateModal?: () => void;
   onLogoutClick: () => void;
 }
 
@@ -24,8 +25,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenSlipModal,
   isAdmin,
   onOpenAdminPanel,
+  onOpenUpdateModal,
   onLogoutClick,
 }) => {
+  const [hasNewUpdate, setHasNewUpdate] = useState(false);
+
+  useEffect(() => {
+    const onAvail = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      setHasNewUpdate(Boolean(detail?.hasUpdate));
+    };
+    window.addEventListener('voter_update_availability', onAvail);
+    return () => window.removeEventListener('voter_update_availability', onAvail);
+  }, []);
   const villageNames = Object.keys(villagesData);
 
   // Total voters across all villages
@@ -117,6 +129,25 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             >
               <span>🗳️</span>
               <span>ভোটার স্লিপ</span>
+            </button>
+          )}
+
+          {/* App Update & Auto-Update Settings Button */}
+          {onOpenUpdateModal && (
+            <button
+              type="button"
+              onClick={onOpenUpdateModal}
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 relative"
+              title="অ্যাপ আপডেট চেক ও অটো-আপডেট সেটিংস"
+            >
+              <span>🔄</span>
+              <span>আপডেট</span>
+              {hasNewUpdate && (
+                <span
+                  aria-label="নতুন আপডেট পাওয়া গেছে"
+                  className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"
+                />
+              )}
             </button>
           )}
 

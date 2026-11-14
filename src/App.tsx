@@ -646,7 +646,7 @@ export const App: React.FC = () => {
   if (!currentUser) {
     return (
       <>
-        <AppUpdateBanner />
+        <AppUpdateBanner globalAutoUpdateEnabled={appConfig.autoUpdateEnabled !== false} />
         <LoginScreen
           initialMessage={loginAlert}
           onLoginSuccess={async (email) => {
@@ -689,7 +689,7 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen w-full bg-[#F0F3F8] flex flex-col justify-start text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
       {/* In-App APK Auto Update Notification Banner */}
-      <AppUpdateBanner />
+      <AppUpdateBanner globalAutoUpdateEnabled={appConfig.autoUpdateEnabled !== false} />
 
       {/* Global Admin Broadcast Announcement Banner */}
       {appConfig.announcementEnabled && appConfig.announcementText?.trim() && (
@@ -717,6 +717,7 @@ export const App: React.FC = () => {
               onOpenSlipModal={handleOpenSlipModal}
               isAdmin={isAdmin}
               onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
+              onOpenUpdateModal={() => window.dispatchEvent(new Event('voter_open_update_modal'))}
               onLogoutClick={() => setIsLogoutOpen(true)}
             />
           )}

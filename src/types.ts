@@ -123,8 +123,24 @@ export interface AppGlobalConfig {
   announcementText: string;
   enforceSingleDevice: boolean;
   allowSlipPrint: boolean;
+  autoUpdateEnabled?: boolean;
   updatedAt?: number;
   updatedBy?: string;
+}
+
+export interface RemoteReleaseInfo {
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+  releaseNotes: string;
+  publishedAt?: string;
+}
+
+export interface AppUpdatePreferences {
+  autoCheckEnabled: boolean;
+  autoNotifyEnabled: boolean;
+  skippedVersion: string | null;
+  lastCheckedAt: number | null;
 }
 
 export interface AdminPanelSummary {

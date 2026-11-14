@@ -316,6 +316,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             {loading ? 'লগইন করা হচ্ছে...' : 'লগইন করুন'}
           </button>
         </form>
+
+        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event('voter_open_update_modal'))}
+            className="text-xs text-slate-500 hover:text-indigo-700 font-semibold flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <span>🔄</span>
+            <span>অ্যাপ আপডেট ও অটো-আপডেট সেটিংস</span>
+          </button>
+        </div>
       </div>
     </div>
   );

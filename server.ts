@@ -62,6 +62,7 @@ interface AppGlobalConfigRecord {
   announcementText: string;
   enforceSingleDevice: boolean;
   allowSlipPrint: boolean;
+  autoUpdateEnabled?: boolean;
   updatedAt?: number;
   updatedBy?: string;
 }
@@ -77,6 +78,7 @@ let appConfig: AppGlobalConfigRecord = {
   announcementText: '',
   enforceSingleDevice: true,
   allowSlipPrint: true,
+  autoUpdateEnabled: true,
 };
 
 function loadAdminConfig() {

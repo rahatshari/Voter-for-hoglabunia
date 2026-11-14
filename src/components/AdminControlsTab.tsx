@@ -1,14 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppGlobalConfig } from '../types';
 import { auth } from '../lib/firebase';
+import { SECURE_RTDB_RULES_JSON } from '../lib/cloudStore';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
-
-const RECOMMENDED_RTDB_RULES = `{
-  "rules": {
-    ".read": "auth != null",
-    ".write": "auth != null"
-  }
-}`;
 
 interface AdminControlsTabProps {
   appConfig: AppGlobalConfig;
@@ -38,6 +32,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
   const [isKickingAll, setIsKickingAll] = useState(false);
   const [confirmKickAll, setConfirmKickAll] = useState(false);
   const [copiedRules, setCopiedRules] = useState(false);
+  const [showRulesBox, setShowRulesBox] = useState(false);
 
   useEffect(() => {
     setDraft(appConfig);
@@ -126,41 +121,59 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
           </div>
         </div>
 
-        {cloudError && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          {!cloudError ? (
+            <button
+              type="button"
+              onClick={() => setShowRulesBox((v) => !v)}
+              className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+            >
+              {showRulesBox
+                ? '🔽 নিরাপদ Firebase Rules লুকান'
+                : '🛡️ নিরাপদ Firebase Database Rules দেখুন ও কপি করুন'}
+            </button>
+          ) : (
+            <span className="text-[11px] font-bold text-amber-800">
+              🛡️ নিরাপদ Firebase Database Rules নির্দেশিকা:
+            </span>
+          )}
+          <a
+            href="https://console.firebase.google.com/project/voter-apps-14962/database/voter-apps-14962-default-rtdb/rules"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-indigo-700 font-bold hover:underline text-[11px]"
+          >
+            <span>Firebase Console Rules খুলুন</span>
+            <span>↗</span>
+          </a>
+        </div>
+
+        {(cloudError || showRulesBox) && (
           <div className="bg-white p-3.5 rounded-2xl border border-amber-300 space-y-2.5 text-xs">
-            <div className="font-bold text-red-700">
-              কারণ: {cloudError}
-            </div>
+            {cloudError && (
+              <div className="font-bold text-red-700">
+                কারণ: {cloudError}
+              </div>
+            )}
             <p className="text-[11px] text-slate-700 leading-relaxed">
-              যদি আসল ফায়ারবেস অ্যাকাউন্ট দিয়ে লগইন করার পরেও <strong>Permission denied</strong> দেখায়, তবে Firebase Console &gt; Realtime Database &gt; Rules-এ গিয়ে নিচের রুলসটি পাবলিশ করুন:
+              Firebase থেকে <strong>&quot;insecure rules&quot;</strong> সতর্কতা ইমেইল বন্ধ করতে এবং শুধু অ্যাডমিন ও নিজ নিজ ব্যবহারকারীর জন্য ডাটা সুরক্ষিত রাখতে Firebase Console &gt; Realtime Database &gt; Rules-এ গিয়ে নিচের নিরাপদ রুলসটি পাবলিশ করুন:
             </p>
             <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-800/80 border-b border-slate-700/70">
-                <span className="text-[10px] font-bold text-slate-300 font-sans">database.rules.json</span>
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-800/80 border-b border-slate-700/70">
+                <span className="text-[10px] font-bold text-slate-300 font-sans truncate">database.rules.json (Secure)</span>
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard.writeText(RECOMMENDED_RTDB_RULES);
+                    navigator.clipboard.writeText(SECURE_RTDB_RULES_JSON);
                     setCopiedRules(true);
                     setTimeout(() => setCopiedRules(false), 2500);
                   }}
-                  className="px-2.5 py-1 bg-white/15 hover:bg-white/25 text-white rounded-lg font-sans text-[10px] font-bold cursor-pointer transition"
+                  className="px-2.5 py-1 bg-white/15 hover:bg-white/25 text-white rounded-lg font-sans text-[10px] font-bold cursor-pointer transition whitespace-nowrap shrink-0"
                 >
                   {copiedRules ? '✓ কপি হয়েছে' : '📋 রুলস কপি করুন'}
                 </button>
               </div>
-              <pre className="text-emerald-300 p-3 font-mono text-[11px] overflow-x-auto">{RECOMMENDED_RTDB_RULES}</pre>
-            </div>
-            <div>
-              <a
-                href="https://console.firebase.google.com/project/voter-apps-14962/database/voter-apps-14962-default-rtdb/rules"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-indigo-700 font-bold hover:underline text-[11px]"
-              >
-                <span>Firebase Realtime Database Rules খুলুন</span>
-                <span>↗</span>
-              </a>
+              <pre className="text-emerald-300 p-3 font-mono text-[10px] leading-relaxed overflow-x-auto max-h-60">{SECURE_RTDB_RULES_JSON}</pre>
             </div>
           </div>
         )}
@@ -196,6 +209,25 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
             checked={draft.enforceSingleDevice}
             onChange={(e) => setDraft({ ...draft, enforceSingleDevice: e.target.checked })}
             className="w-5 h-5 accent-indigo-600 cursor-pointer shrink-0 mt-0.5"
+          />
+        </div>
+
+        {/* 1b. Global Auto Update Policy */}
+        <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 flex items-start justify-between gap-3">
+          <div>
+            <label htmlFor="cfg-auto-update" className="text-xs sm:text-sm font-extrabold text-emerald-950 cursor-pointer block">
+              🚀 সবার জন্য অটো আপডেট চেক ও নোটিফিকেশন
+            </label>
+            <p className="text-[11px] text-slate-600 mt-0.5">
+              বন্ধ করলে ব্যবহারকারীদের অ্যাপে স্বয়ংক্রিয় আপডেট পপআপ নোটিফিকেশন যাবে না (তবে ম্যানুয়ালি চেক করা যাবে)।
+            </p>
+          </div>
+          <input
+            id="cfg-auto-update"
+            type="checkbox"
+            checked={draft.autoUpdateEnabled !== false}
+            onChange={(e) => setDraft({ ...draft, autoUpdateEnabled: e.target.checked })}
+            className="w-5 h-5 accent-emerald-600 cursor-pointer shrink-0 mt-0.5"
           />
         </div>
 

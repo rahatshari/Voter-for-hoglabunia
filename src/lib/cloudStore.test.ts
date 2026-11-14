@@ -4,6 +4,7 @@ import {
   encodeEmailKey,
   decodeEmailKey,
   DEFAULT_ADMIN_EMAILS,
+  SECURE_RTDB_RULES_JSON,
   parseCloudHistorySnapshot,
   buildAdminDataFromSnapshots,
 } from './cloudStore';
@@ -21,6 +22,17 @@ test('decodeEmailKey accurately reverses encoded email keys', () => {
 test('DEFAULT_ADMIN_EMAILS contains primary admin emails', () => {
   assert.ok(DEFAULT_ADMIN_EMAILS.includes('rahatsharif10448@gmail.com'));
   assert.ok(DEFAULT_ADMIN_EMAILS.includes('rahatsharif504@gmail.com'));
+});
+
+test('SECURE_RTDB_RULES_JSON is valid JSON with no root read/write and scoped email indexes', () => {
+  const parsed = JSON.parse(SECURE_RTDB_RULES_JSON);
+  assert.ok(parsed && parsed.rules);
+  assert.strictEqual(parsed.rules['.read'], undefined);
+  assert.strictEqual(parsed.rules['.write'], undefined);
+  assert.deepStrictEqual(parsed.rules.sessions['.indexOn'], ['email']);
+  assert.deepStrictEqual(parsed.rules.history['.indexOn'], ['email']);
+  assert.ok(parsed.rules.users.$emailKey['.write'].includes("status').val() !== 'blocked'"));
+  assert.ok(parsed.rules.history.$histId['.write'].includes('newData.exists()'));
 });
 
 test('parseCloudHistorySnapshot parses all historical Firebase RTDB records without truncation', () => {

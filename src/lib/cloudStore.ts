@@ -5,6 +5,9 @@ import {
   update,
   remove,
   onValue,
+  query,
+  orderByChild,
+  equalTo,
   Unsubscribe,
 } from 'firebase/database';
 import { database, auth } from './firebase';
@@ -37,6 +40,50 @@ export const DEFAULT_ADMIN_EMAILS = [
   'rahatsharif10448@gmail.com',
   'rahatsharif504@gmail.com',
 ];
+
+const RTDB_IS_ADMIN_EXPR =
+  "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)";
+
+export const SECURE_RTDB_RULES_JSON = JSON.stringify(
+  {
+    rules: {
+      admin_emails: {
+        '.read': 'auth != null && auth.token.email != null',
+        '.write': RTDB_IS_ADMIN_EXPR,
+      },
+      app_config: {
+        '.read': 'auth != null && auth.token.email != null',
+        '.write': RTDB_IS_ADMIN_EXPR,
+      },
+      users: {
+        '.read': RTDB_IS_ADMIN_EXPR,
+        $emailKey: {
+          '.read': `auth != null && auth.token.email != null && (auth.token.email.toLowerCase().replace('.', ',') === $emailKey || (${RTDB_IS_ADMIN_EXPR}))`,
+          '.write': `auth != null && auth.token.email != null && ((auth.token.email.toLowerCase().replace('.', ',') === $emailKey && newData.exists() && (data.child('status').val() !== 'blocked' || newData.child('status').val() === 'blocked') && (newData.child('role').val() !== 'admin' || data.child('role').val() === 'admin')) || (${RTDB_IS_ADMIN_EXPR}))`,
+        },
+      },
+      sessions: {
+        '.indexOn': ['email'],
+        '.read': `auth != null && auth.token.email != null && ((query.orderByChild === 'email' && query.equalTo === auth.token.email.toLowerCase()) || (${RTDB_IS_ADMIN_EXPR}))`,
+        $sessionId: {
+          '.read': `auth != null && auth.token.email != null && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (${RTDB_IS_ADMIN_EXPR}))`,
+          '.write': `auth != null && auth.token.email != null && (((!data.exists() && newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (data.exists() && data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase() && (!newData.exists() || (newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase())))) || (${RTDB_IS_ADMIN_EXPR}))`,
+        },
+      },
+      history: {
+        '.indexOn': ['email'],
+        '.read': `auth != null && auth.token.email != null && ((query.orderByChild === 'email' && query.equalTo === auth.token.email.toLowerCase()) || (${RTDB_IS_ADMIN_EXPR}))`,
+        '.write': RTDB_IS_ADMIN_EXPR,
+        $histId: {
+          '.read': `auth != null && auth.token.email != null && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (${RTDB_IS_ADMIN_EXPR}))`,
+          '.write': `auth != null && auth.token.email != null && ((newData.exists() && newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase() && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()))) || (${RTDB_IS_ADMIN_EXPR}))`,
+        },
+      },
+    },
+  },
+  null,
+  2
+);
 
 /**
  * RTDB path keys cannot contain '.', '#', '$', '[', or ']'
@@ -264,10 +311,17 @@ export async function cloudRegisterSession(
       };
     }
 
-    const sessionsSnap = await get(ref(database, 'sessions'));
+    let sessionsSnap: any = null;
+    try {
+      sessionsSnap = await get(
+        query(ref(database, 'sessions'), orderByChild('email'), equalTo(cleanEmail))
+      );
+    } catch {
+      sessionsSnap = await get(ref(database, 'sessions')).catch(() => null);
+    }
     let existingSameSessionRegAt = 0;
 
-    if (sessionsSnap.exists()) {
+    if (sessionsSnap && sessionsSnap.exists()) {
       const allSessions = sessionsSnap.val() as Record<string, CloudSessionDoc>;
       for (const [oldSid, s] of Object.entries(allSessions)) {
         if (!s || !s.email) continue;
@@ -296,8 +350,15 @@ export async function cloudRegisterSession(
 
     if (cfg.enforceSingleDevice !== false) {
       try {
-        const histSnap = await get(ref(database, 'history'));
-        if (histSnap.exists()) {
+        let histSnap: any = null;
+        try {
+          histSnap = await get(
+            query(ref(database, 'history'), orderByChild('email'), equalTo(cleanEmail))
+          );
+        } catch {
+          histSnap = await get(ref(database, 'history')).catch(() => null);
+        }
+        if (histSnap && histSnap.exists()) {
           const allHist = histSnap.val() as Record<string, any>;
           for (const [hKey, hVal] of Object.entries(allHist)) {
             if (

@@ -25,6 +25,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.View
@@ -85,9 +86,33 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
             if (id != -1L && id == pendingDownloadId) {
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                var isSuccess = true
+                if (dm != null) {
+                    try {
+                        val cursor = dm.query(DownloadManager.Query().setFilterById(id))
+                        if (cursor != null) {
+                            if (cursor.moveToFirst()) {
+                                val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                                if (statusIdx >= 0) {
+                                    val status = cursor.getInt(statusIdx)
+                                    isSuccess = (status == DownloadManager.STATUS_SUCCESSFUL)
+                                }
+                            }
+                            cursor.close()
+                        }
+                    } catch (ignored: Exception) {}
+                }
+
                 val apkFile = pendingApkFile
-                if (apkFile != null && apkFile.exists()) {
+                if (isSuccess && apkFile != null && apkFile.exists() && apkFile.length() > 0) {
                     installDownloadedApk(apkFile)
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "⚠️ APK ডাউনলোড সম্পূর্ণ হয়নি। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         }
@@ -165,6 +190,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadTargetUrl()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.hasExtra("update_apk_url")) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new Event('voter_open_update_modal'));",
+                    null
+                )
+            }, 350)
+        }
     }
 
     private fun requestRuntimePermissions() {
@@ -670,8 +708,42 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun canInstallUnknownApps(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    private fun openUnknownAppInstallSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                Toast.makeText(
+                    this,
+                    "এই অ্যাপ থেকে সরাসরি আপডেট করতে 'Allow from this source' চালু করুন।",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Log.w("VoterApp", "Could not open unknown app sources settings", e)
+            }
+        }
+    }
+
     private fun installDownloadedApk(apkFile: File) {
         try {
+            if (!canInstallUnknownApps()) {
+                openUnknownAppInstallSettings()
+                return
+            }
+
             val apkUri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 FileProvider.getUriForFile(
                     this,
@@ -784,6 +856,18 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun downloadAndInstallApk(apkUrl: String, versionName: String) {
             downloadApkAndPromptInstall(apkUrl, versionName)
+        }
+
+        @JavascriptInterface
+        fun canInstallPackages(): Boolean {
+            return canInstallUnknownApps()
+        }
+
+        @JavascriptInterface
+        fun openInstallPermissionSettings() {
+            runOnUiThread {
+                openUnknownAppInstallSettings()
+            }
         }
     }
 }

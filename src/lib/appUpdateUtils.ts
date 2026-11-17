@@ -1,9 +1,18 @@
-import { AppUpdatePreferences, RemoteReleaseInfo } from '../types';
+import {
+  ApkDownloadState,
+  AppUpdatePreferences,
+  RemoteReleaseInfo,
+  UpdateGraceRecord,
+} from '../types';
+import { convertToBengaliNumbers } from './bengaliUtils';
 
 export const DEFAULT_REPO = 'rahatsharif10448/voter-apps';
 export const DEFAULT_LIVE_VERSION_URL = 'https://rahatsharif10448.github.io/voter-apps/version.json';
 export const UPDATE_PREFS_STORAGE_KEY = 'voter_app_update_prefs_v1';
 export const UPDATE_DISMISSED_SESSION_KEY = 'dismissed_apk_update_version';
+export const UPDATE_FIRST_SEEN_STORAGE_KEY = 'voter_update_first_seen_v1';
+export const PENDING_UPDATE_CACHE_KEY = 'voter_pending_update_cache_v1';
+export const MANDATORY_UPDATE_GRACE_MS = 3 * 60 * 60 * 1000; // 3 hours grace period
 
 export const DEFAULT_UPDATE_PREFS: AppUpdatePreferences = {
   autoCheckEnabled: true,
@@ -381,3 +390,171 @@ export async function refreshWebAppCachesAndReload(): Promise<void> {
   }
   window.location.reload();
 }
+
+export function loadUpdateFirstSeen(): UpdateGraceRecord | null {
+  try {
+    const raw = readStorage(UPDATE_FIRST_SEEN_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.versionName === 'string' &&
+      typeof parsed.firstDetectedAt === 'number' &&
+      !Number.isNaN(parsed.firstDetectedAt) &&
+      parsed.firstDetectedAt > 0
+    ) {
+      return {
+        versionName: parsed.versionName,
+        firstDetectedAt: parsed.firstDetectedAt,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function recordOrGetUpdateFirstSeen(
+  versionName: string,
+  now = Date.now()
+): UpdateGraceRecord {
+  const cleanVer = String(versionName || '').replace(/^v/i, '').trim();
+  const existing = loadUpdateFirstSeen();
+  if (existing && existing.versionName === cleanVer) {
+    return existing;
+  }
+  const next: UpdateGraceRecord = {
+    versionName: cleanVer,
+    firstDetectedAt: now,
+  };
+  writeStorage(UPDATE_FIRST_SEEN_STORAGE_KEY, JSON.stringify(next));
+  return next;
+}
+
+export function clearUpdateGraceRecord(): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(UPDATE_FIRST_SEEN_STORAGE_KEY);
+      window.localStorage.removeItem(PENDING_UPDATE_CACHE_KEY);
+    }
+  } catch {}
+  delete memoryPrefsFallback[UPDATE_FIRST_SEEN_STORAGE_KEY];
+  delete memoryPrefsFallback[PENDING_UPDATE_CACHE_KEY];
+}
+
+export function savePendingUpdateCache(remote: RemoteReleaseInfo | null): void {
+  if (!remote) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(PENDING_UPDATE_CACHE_KEY);
+      }
+    } catch {}
+    delete memoryPrefsFallback[PENDING_UPDATE_CACHE_KEY];
+    return;
+  }
+  writeStorage(PENDING_UPDATE_CACHE_KEY, JSON.stringify(remote));
+}
+
+export function loadPendingUpdateCache(): RemoteReleaseInfo | null {
+  try {
+    const raw = readStorage(PENDING_UPDATE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.versionName === 'string' && typeof parsed.apkUrl === 'string') {
+      return {
+        versionCode: Number(parsed.versionCode || parseVersionCodeFromTag(parsed.versionName)),
+        versionName: parsed.versionName,
+        apkUrl: parsed.apkUrl,
+        releaseNotes: String(parsed.releaseNotes || ''),
+        publishedAt: parsed.publishedAt ? String(parsed.publishedAt) : undefined,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export interface UpdateGraceStatus {
+  hasUpdate: boolean;
+  isMandatory: boolean;
+  remainingMs: number;
+  elapsedMs: number;
+  firstDetectedAt: number | null;
+}
+
+export function getUpdateGraceStatus(params: {
+  remote: RemoteReleaseInfo | null;
+  installedCode: number;
+  installedName: string;
+  now?: number;
+}): UpdateGraceStatus {
+  const { remote, installedCode, installedName, now = Date.now() } = params;
+  if (
+    !remote ||
+    !isRemoteVersionNewer(remote.versionCode, remote.versionName, installedCode, installedName)
+  ) {
+    return {
+      hasUpdate: false,
+      isMandatory: false,
+      remainingMs: 0,
+      elapsedMs: 0,
+      firstDetectedAt: null,
+    };
+  }
+
+  const grace = recordOrGetUpdateFirstSeen(remote.versionName, now);
+  savePendingUpdateCache(remote);
+  const elapsedMs = Math.max(0, now - grace.firstDetectedAt);
+  const remainingMs = Math.max(0, MANDATORY_UPDATE_GRACE_MS - elapsedMs);
+  return {
+    hasUpdate: true,
+    isMandatory: remainingMs === 0,
+    remainingMs,
+    elapsedMs,
+    firstDetectedAt: grace.firstDetectedAt,
+  };
+}
+
+export function formatRemainingGraceBengali(remainingMs: number): string {
+  if (remainingMs <= 0) return 'সময় শেষ (বাধ্যতামূলক)';
+  const totalMinutes = Math.ceil(remainingMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  if (hours > 0 && mins > 0) {
+    return `${convertToBengaliNumbers(hours)} ঘণ্টা ${convertToBengaliNumbers(mins)} মিনিট বাকি`;
+  }
+  if (hours > 0) {
+    return `${convertToBengaliNumbers(hours)} ঘণ্টা বাকি`;
+  }
+  return `${convertToBengaliNumbers(Math.max(1, mins))} মিনিট বাকি`;
+}
+
+export function formatBytesBengali(bytes: number): string {
+  if (!bytes || bytes <= 0) return '০ KB';
+  if (bytes < 1024 * 1024) {
+    const kb = Math.max(1, Math.round(bytes / 1024));
+    return `${convertToBengaliNumbers(kb)} KB`;
+  }
+  const mb = (bytes / (1024 * 1024)).toFixed(1);
+  return `${convertToBengaliNumbers(mb)} MB`;
+}
+
+export function createInitialDownloadState(
+  versionName = '',
+  apkUrl = ''
+): ApkDownloadState {
+  return {
+    status: 'idle',
+    versionName,
+    apkUrl,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    percent: 0,
+    speedBps: 0,
+    errorMessage: null,
+    fileName: versionName ? `Union-Voter-App-v${versionName}.apk` : 'Union-Voter-App.apk',
+    blobUrl: null,
+  };
+}
+

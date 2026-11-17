@@ -2,17 +2,14 @@ package com.voterapp.union
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.DownloadManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -53,7 +50,12 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
 
@@ -68,9 +70,21 @@ class MainActivity : AppCompatActivity() {
 
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var doubleBackToExitPressedOnce = false
-    private var pendingDownloadId: Long = -1L
     private var pendingApkFile: File? = null
     private var notifiedUpdateVersion: String? = null
+
+    // Built-In In-App APK Download Manager state
+    private val activeDownloadCancelled = AtomicBoolean(false)
+    private var activeDownloadThread: Thread? = null
+    @Volatile private var dlStatus: String = "idle"
+    @Volatile private var dlVersion: String = ""
+    @Volatile private var dlUrl: String = ""
+    @Volatile private var dlBytes: Long = 0L
+    @Volatile private var dlTotal: Long = 0L
+    @Volatile private var dlPercent: Int = 0
+    @Volatile private var dlSpeedBps: Long = 0L
+    @Volatile private var dlError: String = ""
+    @Volatile private var dlFileName: String = ""
 
     // Standard SPP UUID for Bluetooth Thermal Printers
     private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -80,43 +94,6 @@ class MainActivity : AppCompatActivity() {
     // WebViewAssetLoader serves assets from secure HTTPS origin to enable ES Modules & CORS without blank screen
     private val localAppUrl = "https://appassets.androidplatform.net/assets/public/index.html"
     private val defaultLiveUrl = "https://rahatsharif10448.github.io/voter-apps/"
-
-    // Receiver for completed APK download -> automatic installation prompt
-    private val downloadCompleteReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
-            if (id != -1L && id == pendingDownloadId) {
-                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
-                var isSuccess = true
-                if (dm != null) {
-                    try {
-                        val cursor = dm.query(DownloadManager.Query().setFilterById(id))
-                        if (cursor != null) {
-                            if (cursor.moveToFirst()) {
-                                val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                                if (statusIdx >= 0) {
-                                    val status = cursor.getInt(statusIdx)
-                                    isSuccess = (status == DownloadManager.STATUS_SUCCESSFUL)
-                                }
-                            }
-                            cursor.close()
-                        }
-                    } catch (ignored: Exception) {}
-                }
-
-                val apkFile = pendingApkFile
-                if (isSuccess && apkFile != null && apkFile.exists() && apkFile.length() > 0) {
-                    installDownloadedApk(apkFile)
-                } else {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "⚠️ APK ডাউনলোড সম্পূর্ণ হয়নি। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-    }
 
     // File Chooser Launcher for uploads
     private val filePickerLauncher = registerForActivityResult(
@@ -169,15 +146,6 @@ class MainActivity : AppCompatActivity() {
             .setDomain("appassets.androidplatform.net")
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
-
-        // Register download completion receiver for In-App APK updates
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        ContextCompat.registerReceiver(
-            this,
-            downloadCompleteReceiver,
-            filter,
-            ContextCompat.RECEIVER_EXPORTED
-        )
 
         requestRuntimePermissions()
         setupWebView()
@@ -668,44 +636,219 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Download APK via DownloadManager and automatically launch Package Installer
-     */
-    fun downloadApkAndPromptInstall(apkUrl: String, versionName: String) {
+    private fun buildDownloadStateJson(): String {
+        val json = JSONObject()
+        json.put("status", dlStatus)
+        json.put("versionName", dlVersion)
+        json.put("apkUrl", dlUrl)
+        json.put("downloadedBytes", dlBytes)
+        json.put("totalBytes", dlTotal)
+        json.put("percent", dlPercent)
+        json.put("speedBps", dlSpeedBps)
+        json.put("errorMessage", dlError)
+        json.put("fileName", dlFileName)
+        return json.toString()
+    }
+
+    private fun emitDownloadProgressToWeb() {
+        val payload = buildDownloadStateJson()
+        val quoted = JSONObject.quote(payload)
         runOnUiThread {
             try {
-                val dir: File = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: cacheDir
-                val targetFile = File(dir, "Union-Voter-App-v$versionName.apk")
-                if (targetFile.exists()) {
-                    targetFile.delete()
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('voter_apk_download_progress', { detail: JSON.parse($quoted) }));",
+                    null
+                )
+            } catch (ignored: Exception) {}
+        }
+    }
+
+    private fun resolveApkFileForVersion(versionName: String): File {
+        val safeVer = versionName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "latest" }
+        val dir: File = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, "Union-Voter-App-v$safeVer.apk")
+    }
+
+    private fun hasExistingApkForVersion(versionName: String): Boolean {
+        return try {
+            val file = resolveApkFileForVersion(versionName)
+            file.exists() && file.length() > 100_000L
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun cancelInAppApkDownload() {
+        activeDownloadCancelled.set(true)
+        if (dlStatus == "downloading") {
+            dlStatus = "cancelled"
+            dlSpeedBps = 0L
+            emitDownloadProgressToWeb()
+        }
+    }
+
+    /**
+     * Built-in In-App APK Download Manager using HttpURLConnection (follows GitHub CDN redirects cleanly)
+     */
+    fun downloadApkAndPromptInstall(apkUrl: String, versionName: String) {
+        if (dlStatus == "downloading" && activeDownloadThread?.isAlive == true) {
+            emitDownloadProgressToWeb()
+            return
+        }
+
+        val targetFile = resolveApkFileForVersion(versionName)
+        val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
+        pendingApkFile = targetFile
+
+        activeDownloadCancelled.set(false)
+        dlStatus = "downloading"
+        dlVersion = versionName
+        dlUrl = apkUrl
+        dlBytes = 0L
+        dlTotal = 0L
+        dlPercent = 0
+        dlSpeedBps = 0L
+        dlError = ""
+        dlFileName = targetFile.name
+        emitDownloadProgressToWeb()
+
+        val worker = Thread {
+            var connection: HttpURLConnection? = null
+            var input: InputStream? = null
+            var output: FileOutputStream? = null
+            try {
+                if (tempFile.exists()) tempFile.delete()
+
+                var currentUrl = URL(apkUrl)
+                var redirects = 0
+                var conn: HttpURLConnection
+                while (true) {
+                    conn = (currentUrl.openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 20000
+                        readTimeout = 30000
+                        setRequestProperty("User-Agent", "VoterAppAndroid/${getInstalledVersionName()}")
+                        setRequestProperty("Accept", "application/vnd.android.package-archive, application/octet-stream, */*")
+                    }
+                    conn.connect()
+                    val code = conn.responseCode
+                    if (code == HttpURLConnection.HTTP_MOVED_PERM ||
+                        code == HttpURLConnection.HTTP_MOVED_TEMP ||
+                        code == HttpURLConnection.HTTP_SEE_OTHER ||
+                        code == 307 ||
+                        code == 308
+                    ) {
+                        val location = conn.getHeaderField("Location")
+                        conn.disconnect()
+                        if (location.isNullOrBlank() || redirects >= 8) {
+                            throw Exception("রিডাইরেক্ট লিঙ্ক পাওয়া যায়নি ($code)")
+                        }
+                        currentUrl = URL(currentUrl, location)
+                        redirects++
+                        continue
+                    }
+                    break
                 }
+
+                connection = conn
+                if (conn.responseCode !in 200..299) {
+                    throw Exception("সার্ভার ত্রুটি (HTTP ${conn.responseCode})")
+                }
+
+                val contentLenHeader = conn.getHeaderField("Content-Length")?.toLongOrNull()
+                val total = contentLenHeader ?: conn.contentLength.toLong().coerceAtLeast(0L)
+                dlTotal = total
+
+                input = conn.inputStream
+                output = FileOutputStream(tempFile)
+                val buffer = ByteArray(8192)
+                var downloaded = 0L
+                var lastEmitTime = System.currentTimeMillis()
+                var lastSpeedCheckTime = lastEmitTime
+                var bytesSinceLastSpeed = 0L
+
+                while (true) {
+                    if (activeDownloadCancelled.get()) {
+                        throw InterruptedException("cancelled")
+                    }
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    output.write(buffer, 0, read)
+                    downloaded += read
+                    bytesSinceLastSpeed += read
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmitTime >= 250L) {
+                        val elapsedSec = ((now - lastSpeedCheckTime).coerceAtLeast(1L)) / 1000.0
+                        dlSpeedBps = (bytesSinceLastSpeed / elapsedSec).toLong()
+                        lastSpeedCheckTime = now
+                        bytesSinceLastSpeed = 0L
+
+                        dlBytes = downloaded
+                        dlPercent = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 99) else 0
+                        emitDownloadProgressToWeb()
+                        lastEmitTime = now
+                    }
+                }
+
+                output.flush()
+                output.close()
+                output = null
+                input.close()
+                input = null
+                conn.disconnect()
+                connection = null
+
+                if (activeDownloadCancelled.get() || downloaded <= 0L) {
+                    if (tempFile.exists()) tempFile.delete()
+                    dlStatus = "cancelled"
+                    dlSpeedBps = 0L
+                    emitDownloadProgressToWeb()
+                    return@Thread
+                }
+
+                if (targetFile.exists()) targetFile.delete()
+                val renamed = tempFile.renameTo(targetFile)
+                if (!renamed) {
+                    tempFile.copyTo(targetFile, overwrite = true)
+                    tempFile.delete()
+                }
+
                 pendingApkFile = targetFile
+                dlBytes = targetFile.length()
+                if (dlTotal <= 0L) dlTotal = dlBytes
+                dlPercent = 100
+                dlSpeedBps = 0L
+                dlStatus = "completed"
+                dlError = ""
+                emitDownloadProgressToWeb()
 
-                val request = DownloadManager.Request(Uri.parse(apkUrl))
-                    .setTitle("ইউনিয়ন ভোটার তালিকা v$versionName")
-                    .setDescription("নতুন ভার্সন ডাউনলোড হচ্ছে...")
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationUri(Uri.fromFile(targetFile))
-                    .setAllowedOverMetered(true)
-                    .setAllowedOverRoaming(true)
-
-                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
-                if (dm != null) {
-                    pendingDownloadId = dm.enqueue(request)
+                runOnUiThread {
+                    installDownloadedApk(targetFile)
                 }
-
-                Toast.makeText(
-                    this@MainActivity,
-                    "⬇️ নতুন আপডেট ডাউনলোড শুরু হয়েছে! শেষ হলে অটোমেটিক Install অপশন আসবে।",
-                    Toast.LENGTH_LONG
-                ).show()
+            } catch (e: InterruptedException) {
+                try { tempFile.delete() } catch (ignored: Exception) {}
+                dlStatus = "cancelled"
+                dlSpeedBps = 0L
+                dlError = ""
+                emitDownloadProgressToWeb()
             } catch (e: Exception) {
-                Log.e("VoterApp", "DownloadManager failed, opening browser fallback", e)
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)))
-                } catch (ignored: Exception) {}
+                Log.e("VoterApp", "In-app APK download failed", e)
+                try { tempFile.delete() } catch (ignored: Exception) {}
+                dlStatus = "error"
+                dlSpeedBps = 0L
+                dlError = e.message ?: "ডাউনলোড ব্যর্থ হয়েছে। ইন্টারনেট পরীক্ষা করে পুনরায় চেষ্টা করুন।"
+                emitDownloadProgressToWeb()
+            } finally {
+                try { output?.close() } catch (ignored: Exception) {}
+                try { input?.close() } catch (ignored: Exception) {}
+                try { connection?.disconnect() } catch (ignored: Exception) {}
             }
         }
+
+        activeDownloadThread = worker
+        worker.start()
     }
 
     private fun canInstallUnknownApps(): Boolean {
@@ -771,9 +914,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        try {
-            unregisterReceiver(downloadCompleteReceiver)
-        } catch (ignored: Exception) {}
+        activeDownloadCancelled.set(true)
         try {
             activeBtSocket?.close()
         } catch (ignored: Exception) {}
@@ -856,6 +997,37 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun downloadAndInstallApk(apkUrl: String, versionName: String) {
             downloadApkAndPromptInstall(apkUrl, versionName)
+        }
+
+        @JavascriptInterface
+        fun cancelApkDownload() {
+            cancelInAppApkDownload()
+        }
+
+        @JavascriptInterface
+        fun getApkDownloadState(): String {
+            return buildDownloadStateJson()
+        }
+
+        @JavascriptInterface
+        fun hasDownloadedApk(versionName: String): Boolean {
+            return hasExistingApkForVersion(versionName)
+        }
+
+        @JavascriptInterface
+        fun installDownloadedApk(versionName: String): Boolean {
+            val target = resolveApkFileForVersion(versionName)
+            val fallback = pendingApkFile
+            val fileToInstall = when {
+                target.exists() && target.length() > 100_000L -> target
+                fallback != null && fallback.exists() && fallback.length() > 100_000L -> fallback
+                else -> null
+            } ?: return false
+
+            runOnUiThread {
+                this@MainActivity.installDownloadedApk(fileToInstall)
+            }
+            return true
         }
 
         @JavascriptInterface

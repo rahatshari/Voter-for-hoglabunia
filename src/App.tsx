@@ -39,6 +39,11 @@ import {
   loadVillagesFromOfflineCache,
   saveVillagesToOfflineCache,
 } from './lib/offlineVoterCache';
+import {
+  clearLoginTimestamp,
+  getLoginExpiryStatus,
+  recordSuccessfulLoginTimestamp,
+} from './lib/sessionExpiryUtils';
 
 export const App: React.FC = () => {
   const initialDevEmail =
@@ -102,6 +107,43 @@ export const App: React.FC = () => {
     toastTimeoutRef.current = setTimeout(() => {
       setToastMessage(null);
     }, 3000);
+  }, []);
+
+  const perform24HourAutoLogout = useCallback(async (email?: string | null) => {
+    if (sessionListenerUnsubRef.current) {
+      sessionListenerUnsubRef.current();
+      sessionListenerUnsubRef.current = null;
+    }
+    if (sessionIntervalRef.current) {
+      clearInterval(sessionIntervalRef.current);
+      sessionIntervalRef.current = null;
+    }
+
+    const sessionId = localStorage.getItem('voter_device_session_id');
+    clearLoginTimestamp();
+    localStorage.removeItem('voter_device_session_id');
+    localStorage.removeItem('voterAppSavedState');
+    localStorage.removeItem('voter_dev_test_email');
+    isDevUserActiveRef.current = false;
+
+    if (email && sessionId) {
+      try {
+        clientEndSession(sessionId, email, 'logout');
+      } catch {}
+      if (!isDeviceOffline()) {
+        cloudEndSession(sessionId, email, 'logout').catch(() => {});
+      }
+    }
+
+    await signOut(auth).catch(() => {});
+    setIsLogoutOpen(false);
+    setIsAnotherDeviceOpen(false);
+    setCurrentUser(null);
+    setActiveScreen('home');
+    setLoginAlert({
+      text: '⏰ ২৪ ঘণ্টা পূর্ণ হয়েছে! নিরাপত্তার স্বার্থে আপনার অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। অনুগ্রহ করে পুনরায় লগইন করুন।',
+      isError: true,
+    });
   }, []);
 
   // Check URL params for logged_out
@@ -322,6 +364,20 @@ export const App: React.FC = () => {
         return;
       }
       if (user) {
+        const fallbackSignInMs = user.metadata?.lastSignInTime
+          ? Date.parse(user.metadata.lastSignInTime)
+          : null;
+        const expiry = getLoginExpiryStatus({
+          email: user.email,
+          fallbackSignInTimeMs: Number.isNaN(fallbackSignInMs as number) ? null : fallbackSignInMs,
+        });
+
+        if (expiry.isExpired) {
+          await perform24HourAutoLogout(user.email);
+          setIsAuthChecking(false);
+          return;
+        }
+
         setCurrentUser(user);
         setAuthStatusText('ভোটার ডাটা লোড হচ্ছে...');
 
@@ -491,7 +547,41 @@ export const App: React.FC = () => {
       unsubscribe();
       if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
     };
-  }, [loadVillages]);
+  }, [loadVillages, perform24HourAutoLogout]);
+
+  // Continuous 24-hour login enforcement while app is open or resumed from background
+  useEffect(() => {
+    if (!currentUser?.email) return;
+
+    const verify24HourWindow = () => {
+      const rawLastSignIn = (currentUser as any)?.metadata?.lastSignInTime;
+      const fallbackSignInMs = rawLastSignIn ? Date.parse(rawLastSignIn) : null;
+      const status = getLoginExpiryStatus({
+        email: currentUser.email,
+        fallbackSignInTimeMs: Number.isNaN(fallbackSignInMs as number) ? null : fallbackSignInMs,
+      });
+      if (status.isExpired) {
+        perform24HourAutoLogout(currentUser.email);
+      }
+    };
+
+    verify24HourWindow();
+    const expiryTicker = setInterval(verify24HourWindow, 30 * 1000);
+    const onVisibilityOrFocus = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        verify24HourWindow();
+      }
+    };
+
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+
+    return () => {
+      clearInterval(expiryTicker);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
+  }, [currentUser, perform24HourAutoLogout]);
 
   // Handle browser popstate for back button
   useEffect(() => {
@@ -617,6 +707,7 @@ export const App: React.FC = () => {
     const email = currentUser?.email;
     const sessionId = localStorage.getItem('voter_device_session_id');
 
+    clearLoginTimestamp();
     localStorage.removeItem('voter_device_session_id');
     localStorage.removeItem('voterAppSavedState');
 
@@ -662,6 +753,7 @@ export const App: React.FC = () => {
       sessionIntervalRef.current = null;
     }
     setIsAnotherDeviceOpen(false);
+    clearLoginTimestamp();
     localStorage.removeItem('voter_device_session_id');
     localStorage.removeItem('voterAppSavedState');
     signOut(auth).catch(() => {});
@@ -687,6 +779,7 @@ export const App: React.FC = () => {
           initialMessage={loginAlert}
           onLoginSuccess={async (email) => {
             setLoginAlert(null);
+            recordSuccessfulLoginTimestamp(email);
             if (Object.keys(villagesData).length === 0) {
               await loadVillages();
             }

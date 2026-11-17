@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { AppUpdatePreferences, RemoteReleaseInfo } from '../types';
+import { ApkDownloadState, AppUpdatePreferences, RemoteReleaseInfo } from '../types';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 import {
+  UpdateGraceStatus,
+  formatRemainingGraceBengali,
   getAndroidNativeBridge,
   refreshWebAppCachesAndReload,
 } from '../lib/appUpdateUtils';
+import { InAppDownloadManagerPanel } from './InAppDownloadManagerPanel';
 
 interface AppUpdateSettingsModalProps {
   isOpen: boolean;
@@ -13,6 +16,8 @@ interface AppUpdateSettingsModalProps {
   currentVersionCode: number;
   isAndroidNative: boolean;
   updateInfo: RemoteReleaseInfo | null;
+  graceStatus: UpdateGraceStatus;
+  downloadState: ApkDownloadState;
   isChecking: boolean;
   isUpdating: boolean;
   updateStatusText: string | null;
@@ -22,6 +27,8 @@ interface AppUpdateSettingsModalProps {
   onUpdatePrefs: (patch: Partial<AppUpdatePreferences>) => void;
   onManualCheck: () => void;
   onInstallUpdate: () => void;
+  onCancelDownload: () => void;
+  onInstallDownloadedApk: () => void;
 }
 
 export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
@@ -31,8 +38,9 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
   currentVersionCode,
   isAndroidNative,
   updateInfo,
+  graceStatus,
+  downloadState,
   isChecking,
-  isUpdating,
   updateStatusText,
   lastCheckError,
   prefs,
@@ -40,6 +48,8 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
   onUpdatePrefs,
   onManualCheck,
   onInstallUpdate,
+  onCancelDownload,
+  onInstallDownloadedApk,
 }) => {
   const [canInstallPkgs, setCanInstallPkgs] = useState<boolean>(true);
   const [webNotifPermission, setWebNotifPermission] = useState<string>('default');
@@ -155,9 +165,22 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
             <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-2xl p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="inline-block text-[10px] font-black uppercase bg-emerald-600 text-white px-2 py-0.5 rounded-md">
-                    নতুন ভার্সন পাওয়া গেছে!
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-block text-[10px] font-black uppercase bg-emerald-600 text-white px-2 py-0.5 rounded-md">
+                      নতুন ভার্সন পাওয়া গেছে!
+                    </span>
+                    {graceStatus.hasUpdate && (
+                      <span
+                        className={`inline-block text-[10px] font-black px-2 py-0.5 rounded-md ${
+                          graceStatus.isMandatory
+                            ? 'bg-red-600 text-white'
+                            : 'bg-amber-200 text-amber-950'
+                        }`}
+                      >
+                        ⏳ {formatRemainingGraceBengali(graceStatus.remainingMs)}
+                      </span>
+                    )}
+                  </div>
                   <h4 className="text-sm sm:text-base font-black text-emerald-950 mt-1">
                     ভার্সন v{convertToBengaliNumbers(updateInfo.versionName)} প্রস্তুত
                   </h4>
@@ -175,34 +198,27 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-2">
+              <InAppDownloadManagerPanel
+                downloadState={downloadState}
+                versionName={updateInfo.versionName}
+                isAndroidNative={isAndroidNative}
+                canInstallPkgs={canInstallPkgs}
+                onStartDownload={onInstallUpdate}
+                onCancelDownload={onCancelDownload}
+                onInstallDownloaded={onInstallDownloadedApk}
+                onOpenInstallPermission={handleOpenInstallPermission}
+              />
+
+              {!isAndroidNative && (
                 <button
                   type="button"
-                  disabled={isUpdating}
-                  onClick={onInstallUpdate}
-                  className="flex-1 min-w-[180px] py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl text-xs sm:text-sm font-black shadow-md shadow-emerald-600/20 cursor-pointer transition flex items-center justify-center gap-1.5"
+                  disabled={isRefreshingWeb}
+                  onClick={handleWebCacheRefresh}
+                  className="w-full py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer transition"
                 >
-                  <span>⬇️</span>
-                  <span>
-                    {isUpdating
-                      ? 'ডাউনলোড শুরু হচ্ছে...'
-                      : isAndroidNative
-                      ? 'অ্যাপের ভেতর থেকেই আপডেট করুন'
-                      : 'নতুন APK ডাউনলোড ও আপডেট'}
-                  </span>
+                  {isRefreshingWeb ? 'রিলোড হচ্ছে...' : '🔄 ওয়েব ভার্সন রিলোড করুন'}
                 </button>
-
-                {!isAndroidNative && (
-                  <button
-                    type="button"
-                    disabled={isRefreshingWeb}
-                    onClick={handleWebCacheRefresh}
-                    className="py-2.5 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer transition"
-                  >
-                    {isRefreshingWeb ? 'রিলোড হচ্ছে...' : '🔄 ওয়েব ভার্সন রিলোড'}
-                  </button>
-                )}
-              </div>
+              )}
             </div>
           ) : (
             <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">

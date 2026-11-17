@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
+import { recordSuccessfulLoginTimestamp } from '../lib/sessionExpiryUtils';
 
 interface LoginScreenProps {
   onLoginSuccess: (email: string) => void;
@@ -18,6 +19,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(
     initialMessage || null
   );
+
+  useEffect(() => {
+    if (initialMessage) {
+      setStatusMessage(initialMessage);
+    }
+  }, [initialMessage]);
 
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [copiedDomain, setCopiedDomain] = useState(false);
@@ -131,6 +138,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         console.warn('Session registration sync:', err);
       }
 
+      recordSuccessfulLoginTimestamp(loggedEmail);
       onLoginSuccess(loggedEmail);
     } catch (error: any) {
       console.warn('Login error code:', error?.code);

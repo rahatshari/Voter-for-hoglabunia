@@ -143,6 +143,26 @@ export interface AppUpdatePreferences {
   lastCheckedAt: number | null;
 }
 
+export type ApkDownloadStatus = 'idle' | 'downloading' | 'completed' | 'error' | 'cancelled';
+
+export interface ApkDownloadState {
+  status: ApkDownloadStatus;
+  versionName: string;
+  apkUrl: string;
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
+  speedBps: number;
+  errorMessage?: string | null;
+  fileName?: string;
+  blobUrl?: string | null;
+}
+
+export interface UpdateGraceRecord {
+  versionName: string;
+  firstDetectedAt: number;
+}
+
 export interface AdminPanelSummary {
   totalRegisteredUsers: number;
   onlineCount: number;

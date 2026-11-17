@@ -2,12 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_UPDATE_PREFS,
+  MANDATORY_UPDATE_GRACE_MS,
+  clearUpdateGraceRecord,
   compareVersionStrings,
+  formatBytesBengali,
+  formatRemainingGraceBengali,
+  getUpdateGraceStatus,
   isRemoteVersionNewer,
+  loadPendingUpdateCache,
+  loadUpdateFirstSeen,
   loadUpdatePrefs,
   normalizeGitHubRelease,
   normalizeVersionJson,
   parseVersionCodeFromTag,
+  savePendingUpdateCache,
   saveUpdatePrefs,
   shouldShowAutoUpdatePopup,
 } from './appUpdateUtils';
@@ -127,3 +135,61 @@ test('normalizeGitHubRelease and normalizeVersionJson handle release payloads cl
   assert.equal(jsonVer.versionCode, 114);
   assert.equal(jsonVer.versionName, '1.0.14');
 });
+
+test('getUpdateGraceStatus allows 3 hours grace then enforces mandatory update', () => {
+  clearUpdateGraceRecord();
+  const remote = {
+    versionCode: 120,
+    versionName: '1.0.20',
+    apkUrl: 'https://gh.test/v1.0.20.apk',
+    releaseNotes: 'Mandatory update after 3h',
+  };
+
+  const t0 = 1_700_000_000_000;
+  const firstCheck = getUpdateGraceStatus({
+    remote,
+    installedCode: 100,
+    installedName: '1.0.0',
+    now: t0,
+  });
+  assert.equal(firstCheck.hasUpdate, true);
+  assert.equal(firstCheck.isMandatory, false);
+  assert.equal(firstCheck.remainingMs, MANDATORY_UPDATE_GRACE_MS);
+
+  // Check at +2h 30m: still allowed
+  const after2h30 = getUpdateGraceStatus({
+    remote,
+    installedCode: 100,
+    installedName: '1.0.0',
+    now: t0 + (2 * 60 + 30) * 60 * 1000,
+  });
+  assert.equal(after2h30.isMandatory, false);
+  assert.equal(after2h30.remainingMs, 30 * 60 * 1000);
+
+  // Check at +3h 1m: mandatory update triggered
+  const after3h1m = getUpdateGraceStatus({
+    remote,
+    installedCode: 100,
+    installedName: '1.0.0',
+    now: t0 + MANDATORY_UPDATE_GRACE_MS + 60 * 1000,
+  });
+  assert.equal(after3h1m.hasUpdate, true);
+  assert.equal(after3h1m.isMandatory, true);
+  assert.equal(after3h1m.remainingMs, 0);
+
+  // Verify pending update cache is persisted and clears cleanly
+  assert.equal(loadPendingUpdateCache()?.versionName, '1.0.20');
+  assert.equal(loadUpdateFirstSeen()?.firstDetectedAt, t0);
+  clearUpdateGraceRecord();
+  savePendingUpdateCache(null);
+  assert.equal(loadPendingUpdateCache(), null);
+  assert.equal(loadUpdateFirstSeen(), null);
+});
+
+test('formatRemainingGraceBengali and formatBytesBengali render clear Bengali labels', () => {
+  assert.equal(formatRemainingGraceBengali(0), 'সময় শেষ (বাধ্যতামূলক)');
+  assert.equal(formatRemainingGraceBengali(2 * 60 * 60 * 1000 + 45 * 60 * 1000), '২ ঘণ্টা ৪৫ মিনিট বাকি');
+  assert.equal(formatBytesBengali(0), '০ KB');
+  assert.equal(formatBytesBengali(5 * 1024 * 1024), '৫.০ MB');
+});
+

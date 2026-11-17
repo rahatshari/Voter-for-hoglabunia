@@ -35,6 +35,7 @@ import {
   saveStoredSessions,
   saveStoredUsers,
 } from './clientAdminStore';
+import { isDeviceOffline, withTimeout } from './offlineVoterCache';
 
 export const DEFAULT_ADMIN_EMAILS = [
   'rahatsharif10448@gmail.com',
@@ -137,12 +138,15 @@ export function parseCloudHistorySnapshot(rawHistory: unknown): SessionHistoryIt
  * Always merges with hardcoded default super-admin emails.
  */
 export async function getCloudAdminEmails(): Promise<string[]> {
+  if (isDeviceOffline()) {
+    return loadStoredAdminEmails();
+  }
   try {
     const adminRef = ref(database, 'admin_emails');
-    const snapshot = await get(adminRef);
+    const snapshot = await withTimeout(get(adminRef), 3500, null as any);
     const setAdmins = new Set<string>(DEFAULT_ADMIN_EMAILS.map((e) => e.toLowerCase()));
 
-    if (snapshot.exists()) {
+    if (snapshot && snapshot.exists()) {
       const val = snapshot.val();
       if (typeof val === 'object' && val !== null) {
         Object.keys(val).forEach((k) => {
@@ -151,10 +155,11 @@ export async function getCloudAdminEmails(): Promise<string[]> {
           }
         });
       }
+      const result = Array.from(setAdmins);
+      saveStoredAdminEmails(result);
+      return result;
     }
-    const result = Array.from(setAdmins);
-    saveStoredAdminEmails(result);
-    return result;
+    return loadStoredAdminEmails();
   } catch (err) {
     console.warn('Could not fetch cloud admin emails, using local fallback:', err);
     return loadStoredAdminEmails();
@@ -181,9 +186,12 @@ export async function saveCloudAdminEmails(emails: string[]): Promise<void> {
  * Fetch App Global Control configuration from Firebase RTDB
  */
 export async function getCloudAppConfig(): Promise<AppGlobalConfig> {
+  if (isDeviceOffline()) {
+    return loadStoredAppConfig();
+  }
   try {
-    const snap = await get(ref(database, 'app_config'));
-    if (snap.exists() && typeof snap.val() === 'object') {
+    const snap = await withTimeout(get(ref(database, 'app_config')), 3500, null as any);
+    if (snap && snap.exists() && typeof snap.val() === 'object') {
       const merged = { ...DEFAULT_APP_CONFIG, ...snap.val() };
       saveStoredAppConfig(merged);
       return merged;
@@ -289,12 +297,44 @@ export async function cloudRegisterSession(
   const emailKey = encodeEmailKey(cleanEmail);
   const now = Date.now();
 
+  const buildLocalFallback = () => {
+    const localUsers = loadStoredUsers();
+    const localUser = localUsers[cleanEmail];
+    if (localUser && localUser.status === 'blocked') {
+      return { success: false, isBlocked: true };
+    }
+    const localSessions = loadStoredSessions();
+    localSessions[sessionId] = {
+      sessionId,
+      email: cleanEmail,
+      deviceName,
+      registeredAt: now,
+      lastActive: now,
+    };
+    saveStoredSessions(localSessions);
+    return { success: true, isBlocked: false };
+  };
+
+  if (isDeviceOffline()) {
+    return buildLocalFallback();
+  }
+
   try {
-    const [userSnap, admins, cfg] = await Promise.all([
-      get(ref(database, `users/${emailKey}`)),
-      getCloudAdminEmails(),
-      getCloudAppConfig(),
-    ]);
+    const initialReads = await withTimeout(
+      Promise.all([
+        get(ref(database, `users/${emailKey}`)),
+        getCloudAdminEmails(),
+        getCloudAppConfig(),
+      ]),
+      4000,
+      null as any
+    );
+
+    if (!initialReads) {
+      return buildLocalFallback();
+    }
+
+    const [userSnap, admins, cfg] = initialReads;
 
     const existingUserData: any = userSnap.exists() ? userSnap.val() : null;
     if (existingUserData && existingUserData.status === 'blocked') {
@@ -433,21 +473,7 @@ export async function cloudRegisterSession(
     return { success: true, isBlocked: false };
   } catch (err) {
     console.warn('Cloud session register error, falling back to local:', err);
-    const localUsers = loadStoredUsers();
-    const localUser = localUsers[cleanEmail];
-    if (localUser && localUser.status === 'blocked') {
-      return { success: false, isBlocked: true };
-    }
-    const localSessions = loadStoredSessions();
-    localSessions[sessionId] = {
-      sessionId,
-      email: cleanEmail,
-      deviceName,
-      registeredAt: now,
-      lastActive: now,
-    };
-    saveStoredSessions(localSessions);
-    return { success: true, isBlocked: false };
+    return buildLocalFallback();
   }
 }
 

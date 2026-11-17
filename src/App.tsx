@@ -33,6 +33,12 @@ import {
   subscribeAppGlobalConfig,
 } from './lib/cloudStore';
 import { isEmailAdmin } from './lib/adminUtils';
+import {
+  hasValidVillagesData,
+  isDeviceOffline,
+  loadVillagesFromOfflineCache,
+  saveVillagesToOfflineCache,
+} from './lib/offlineVoterCache';
 
 export const App: React.FC = () => {
   const initialDevEmail =
@@ -160,27 +166,36 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Fetch village data
+  // Fetch village data (online API/static, APK bundled static assets, or offline IndexedDB cache)
   const loadVillages = useCallback(async () => {
-    try {
-      const res = await fetch('/api/villages-data');
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const rawData = await res.json();
-        if (rawData && Object.keys(rawData).length > 0) {
-          const prepared: Record<string, Voter[]> = {};
-          for (const [village, voters] of Object.entries(rawData)) {
-            prepared[village] = (voters as Voter[]).map((v) => prepareVoter(v, village));
+    const isAndroidLocalAssets =
+      typeof window !== 'undefined' &&
+      window.location.hostname === 'appassets.androidplatform.net';
+
+    if (!isAndroidLocalAssets && !isDeviceOffline()) {
+      try {
+        const res = await fetch('/api/villages-data');
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const rawData = await res.json();
+          if (rawData && Object.keys(rawData).length > 0) {
+            const prepared: Record<string, Voter[]> = {};
+            for (const [village, voters] of Object.entries(rawData)) {
+              prepared[village] = (voters as Voter[]).map((v) => prepareVoter(v, village));
+            }
+            if (hasValidVillagesData(prepared)) {
+              setVillagesData(prepared);
+              saveVillagesToOfflineCache(prepared).catch(() => false);
+              return prepared;
+            }
           }
-          setVillagesData(prepared);
-          return prepared;
         }
+      } catch (e) {
+        console.warn('API villages fetch fallback to static:', e);
       }
-    } catch (e) {
-      console.warn('API villages fetch fallback to static:', e);
     }
 
-    // Static fallback using relative paths (for GitHub Pages & static hosting)
+    // Static fallback using relative paths (bundles locally inside Android APK & Service Worker cache)
     const fallbackData: Record<string, Voter[]> = {};
     let villageFolders = [
       'pathamara',
@@ -249,11 +264,26 @@ export const App: React.FC = () => {
       } catch (e) {}
     }
 
+    if (hasValidVillagesData(fallbackData)) {
+      setVillagesData(fallbackData);
+      saveVillagesToOfflineCache(fallbackData).catch(() => false);
+      return fallbackData;
+    }
+
+    // Final offline IndexedDB fallback (guarantees full PWA/Web offline availability after initial login)
+    const cachedData = await loadVillagesFromOfflineCache();
+    if (cachedData && hasValidVillagesData(cachedData)) {
+      setVillagesData(cachedData);
+      return cachedData;
+    }
+
     setVillagesData(fallbackData);
     return fallbackData;
   }, [getStaticUrl]);
 
   const isDevUserActiveRef = useRef(Boolean(initialDevEmail));
+  const villagesDataRef = useRef(villagesData);
+  villagesDataRef.current = villagesData;
 
   // Browser testing helper to verify UI flows
   useEffect(() => {
@@ -265,12 +295,12 @@ export const App: React.FC = () => {
         isDevUserActiveRef.current = true;
         setCurrentUser({ email } as any);
         setIsAuthChecking(false);
-        if (Object.keys(villagesData).length === 0) {
+        if (Object.keys(villagesDataRef.current).length === 0) {
           await loadVillages();
         }
       };
     }
-  }, [initialDevEmail, loadVillages, villagesData]);
+  }, [initialDevEmail, loadVillages]);
 
   // Listen for Firebase Auth state changes
   useEffect(() => {
@@ -320,46 +350,52 @@ export const App: React.FC = () => {
             sessionIntervalRef.current = null;
           }
 
-          // 1. Central Firebase Cloud Session Registration (Permanent history + real-time multi-admin visibility)
-          try {
-            const res = await cloudRegisterSession(user.email, mySessionId, detectedDevice);
-            if (res.isBlocked) {
-              await signOut(auth);
-              setLoginAlert({
-                text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
-                isError: true,
-              });
-              return;
-            }
-            if (res.maintenanceBlocked) {
-              await signOut(auth);
-              setLoginAlert({
-                text: `🔧 ${res.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে।'}`,
-                isError: true,
-              });
-              return;
-            }
-          } catch (err) {
-            console.warn('Notice: cloudRegisterSession fallback:', err);
-          }
-
-          // 2. Client store backup for offline resilience
+          // 1. Client store backup for offline resilience (instant, synchronous)
           clientRegisterSession(user.email, mySessionId, detectedDevice);
 
+          // 2. Central Firebase Cloud Session Registration asynchronously (never blocks offline app open)
+          cloudRegisterSession(user.email, mySessionId, detectedDevice)
+            .then(async (res) => {
+              if (res.isBlocked) {
+                await signOut(auth).catch(() => {});
+                setCurrentUser(null);
+                setLoginAlert({
+                  text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
+                  isError: true,
+                });
+                return;
+              }
+              if (res.maintenanceBlocked) {
+                await signOut(auth).catch(() => {});
+                setCurrentUser(null);
+                setLoginAlert({
+                  text: `🔧 ${res.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে।'}`,
+                  isError: true,
+                });
+              }
+            })
+            .catch((err) => {
+              console.warn('Notice: cloudRegisterSession background fallback:', err);
+            });
+
           // 3. Server API registration if backend dev server is running
-          fetch('/api/session/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
-          }).catch(() => null);
+          if (!isDeviceOffline()) {
+            fetch('/api/session/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
+            }).catch(() => null);
+          }
 
           // 4. Set up periodic heartbeat (every 8 seconds) and session validation
           sessionIntervalRef.current = setInterval(async () => {
             const currentSid = localStorage.getItem('voter_device_session_id');
             if (!currentSid || !user.email) return;
 
-            cloudHeartbeat(currentSid, user.email);
             clientHeartbeat(currentSid);
+            if (isDeviceOffline()) return;
+
+            cloudHeartbeat(currentSid, user.email);
 
             try {
               const valRes = await fetch(

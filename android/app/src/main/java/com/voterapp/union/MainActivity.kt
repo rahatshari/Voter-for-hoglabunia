@@ -252,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         settings.textZoom = 100
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
+        webView.overScrollMode = View.OVER_SCROLL_NEVER
 
         val originalUa = settings.userAgentString ?: ""
         settings.userAgentString = "$originalUa VoterAppAndroid/${getInstalledVersionName()}"
@@ -384,10 +385,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupSwipeRefresh() {
-        swipeRefreshLayout.setColorSchemeResources(R.color.primary, R.color.accent)
-        swipeRefreshLayout.setOnRefreshListener {
-            webView.reload()
-        }
+        // Pull-down-to-refresh disabled so swiping down while scrolling never reloads the app
+        swipeRefreshLayout.isEnabled = false
+        swipeRefreshLayout.isRefreshing = false
     }
 
     private fun setupBackNavigation() {

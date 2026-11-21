@@ -32,6 +32,16 @@ import {
   canvasToEscPosBytes,
   sendEscPosToPrinter,
   BluetoothPrinterDevice,
+  BluetoothPrinterError,
+  PairedBluetoothDevice,
+  NativeBluetoothListResult,
+  isAndroidNativeBluetooth,
+  isBluetoothSupported,
+  listNativePairedPrinters,
+  connectNativePrinterByAddress,
+  openAndroidBluetoothSettings,
+  requestAndroidBluetoothPermissions,
+  createTestPrintEscPosBytes,
 } from '../lib/bluetoothPrinter';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 
@@ -299,7 +309,13 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   );
   const [isConnectingBt, setIsConnectingBt] = useState(false);
   const [isPrintingBt, setIsPrintingBt] = useState(false);
+  const [isTestingBt, setIsTestingBt] = useState(false);
   const [btProgress, setBtProgress] = useState(0);
+  const [showBtPicker, setShowBtPicker] = useState(false);
+  const [nativeBtList, setNativeBtList] = useState<NativeBluetoothListResult | null>(null);
+  const [btStatusError, setBtStatusError] = useState<{ code?: string; message: string } | null>(
+    null
+  );
   const [notice, setNotice] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -327,6 +343,8 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
       setActivePrintOption('bluetooth');
       setShowFamilyFinder(false);
       setIsEditingVoter(false);
+      setShowBtPicker(false);
+      setBtStatusError(null);
       if (voter) {
         setVoterData(voter);
         if (voter.villageName) setSelectedVillage(voter.villageName);
@@ -366,16 +384,36 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     checkAutoConnect();
     const interval = setInterval(checkAutoConnect, 4000);
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') checkAutoConnect();
+      if (document.visibilityState === 'visible') {
+        checkAutoConnect();
+        if (isAndroidNativeBluetooth()) {
+          const refreshed = listNativePairedPrinters();
+          if (mounted) setNativeBtList(refreshed);
+        }
+      }
+    };
+    const onPermissionsUpdated = () => {
+      if (isAndroidNativeBluetooth()) {
+        const refreshed = listNativePairedPrinters();
+        if (mounted) {
+          setNativeBtList(refreshed);
+          if (refreshed.success) {
+            setBtStatusError(null);
+          }
+        }
+      }
+      checkAutoConnect();
     };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', checkAutoConnect);
+    window.addEventListener('focus', onVisibility);
+    window.addEventListener('voter_bt_permissions_updated', onPermissionsUpdated);
 
     return () => {
       mounted = false;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', checkAutoConnect);
+      window.removeEventListener('focus', onVisibility);
+      window.removeEventListener('voter_bt_permissions_updated', onPermissionsUpdated);
     };
   }, [isOpen]);
 
@@ -514,15 +552,63 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     showNotice('একসাথে প্রিন্ট লিস্ট খালি করা হয়েছে।');
   };
 
-  const handleConnectBluetooth = async () => {
+  const refreshNativeBluetoothList = (): NativeBluetoothListResult | null => {
+    if (!isAndroidNativeBluetooth()) return null;
+    const listRes = listNativePairedPrinters();
+    setNativeBtList(listRes);
+    if (!listRes.success) {
+      setBtStatusError({ code: listRes.errorCode, message: listRes.error });
+    } else {
+      setBtStatusError(null);
+    }
+    return listRes;
+  };
+
+  const handleSelectNativePrinter = async (dev: PairedBluetoothDevice) => {
     setIsConnectingBt(true);
+    setBtStatusError(null);
+    try {
+      const connected = await connectNativePrinterByAddress(dev.address, dev.name);
+      setBluetoothDevice(connected);
+      setShowBtPicker(false);
+      showNotice(`✅ "${connected.name}" প্রিন্টারের সাথে সফলভাবে কানেক্ট হয়েছে!`);
+    } catch (err: any) {
+      const code = err instanceof BluetoothPrinterError ? err.code : 'CONNECT_FAILED';
+      const message =
+        err?.message || 'প্রিন্টারে কানেক্ট করা যায়নি। প্রিন্টারটি অন আছে কিনা দেখুন।';
+      setBtStatusError({ code, message });
+      showNotice(`⚠️ ${message}`);
+    } finally {
+      setIsConnectingBt(false);
+    }
+  };
+
+  const handleConnectBluetooth = async () => {
+    // Inside Android APK: open the Paired Bluetooth Printer Picker so user can pick ANY paired printer
+    if (isAndroidNativeBluetooth()) {
+      const listRes = refreshNativeBluetoothList();
+      setShowBtPicker(true);
+      if (listRes && listRes.success && listRes.devices.length === 1 && !bluetoothDevice) {
+        await handleSelectNativePrinter(listRes.devices[0]);
+      }
+      return;
+    }
+
+    // In Web Browser (Chrome / Edge / Safari)
+    setIsConnectingBt(true);
+    setBtStatusError(null);
     try {
       const dev = await connectBluetoothPrinter();
       setBluetoothDevice(dev);
+      setShowBtPicker(false);
       showNotice(`✅ "${dev.name}" প্রিন্টারের সাথে সফলভাবে কানেক্ট হয়েছে!`);
     } catch (err: any) {
-      if (err.name !== 'NotFoundError') {
-        showNotice(`⚠️ কানেক্ট ব্যর্থ: ${err.message || 'প্রিন্টারের ব্লুটুথ অন রাখুন'}`);
+      if (err?.name !== 'NotFoundError') {
+        const code = err instanceof BluetoothPrinterError ? err.code : 'CONNECT_FAILED';
+        const message = err?.message || 'প্রিন্টারের ব্লুটুথ অন রাখুন';
+        setBtStatusError({ code, message });
+        setShowBtPicker(true);
+        showNotice(`⚠️ কানেক্ট ব্যর্থ: ${message}`);
       }
     } finally {
       setIsConnectingBt(false);
@@ -532,21 +618,67 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   const handleDisconnectBluetooth = async () => {
     await disconnectBluetoothPrinter();
     setBluetoothDevice(null);
+    setBtStatusError(null);
     showNotice('ব্লুটুথ প্রিন্টার ডিসকানেক্ট করা হয়েছে।');
+  };
+
+  const handleTestBluetoothPrint = async () => {
+    const printer = bluetoothDevice || getConnectedPrinter();
+    if (!printer) {
+      setShowBtPicker(true);
+      refreshNativeBluetoothList();
+      showNotice('আগে আপনার ব্লুটুথ প্রিন্টারটি সিলেক্ট করুন।');
+      return;
+    }
+    setIsTestingBt(true);
+    setBtStatusError(null);
+    try {
+      const testBytes = createTestPrintEscPosBytes(printer.name);
+      await sendEscPosToPrinter(printer, testBytes);
+      showNotice(`✅ "${printer.name}"-এ টেস্ট প্রিন্ট পাঠানো হয়েছে!`);
+    } catch (err: any) {
+      const code = err instanceof BluetoothPrinterError ? err.code : 'PRINT_FAILED';
+      const message = err?.message || 'টেস্ট প্রিন্ট ব্যর্থ হয়েছে। প্রিন্টারটি অন আছে কিনা দেখুন।';
+      setBtStatusError({ code, message });
+      setShowBtPicker(true);
+      showNotice(`⚠️ ${message}`);
+    } finally {
+      setIsTestingBt(false);
+    }
   };
 
   const handlePrintBluetooth = async (votersToPrint: Voter[]) => {
     if (votersToPrint.length === 0) return;
     setIsPrintingBt(true);
     setBtProgress(0);
+    setBtStatusError(null);
     try {
       let printer = bluetoothDevice || getConnectedPrinter();
       if (!printer) {
         printer = await autoConnectBluetoothPrinter();
       }
       if (!printer) {
-        showNotice('ডিভাইস খুঁজছি... আপনার ব্লুটুথ প্রিন্টারটি সিলেক্ট করুন');
-        printer = await connectBluetoothPrinter();
+        if (isAndroidNativeBluetooth()) {
+          const listRes = refreshNativeBluetoothList();
+          if (!listRes || !listRes.success) {
+            setShowBtPicker(true);
+            showNotice(`⚠️ ${listRes?.error || 'ব্লুটুথ প্রিন্টার পাওয়া যায়নি।'}`);
+            return;
+          }
+          if (listRes.devices.length === 1) {
+            printer = await connectNativePrinterByAddress(
+              listRes.devices[0].address,
+              listRes.devices[0].name
+            );
+          } else {
+            setShowBtPicker(true);
+            showNotice('নিচের তালিকা থেকে আপনার ব্লুটুথ প্রিন্টারটি সিলেক্ট করুন।');
+            return;
+          }
+        } else {
+          showNotice('ডিভাইস খুঁজছি... আপনার ব্লুটুথ প্রিন্টারটি সিলেক্ট করুন');
+          printer = await connectBluetoothPrinter();
+        }
       }
       setBluetoothDevice(printer);
 
@@ -572,13 +704,21 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         }
       }
 
+      setShowBtPicker(false);
       showNotice(
         `🎉 থার্মাল প্রিন্টারে ${convertToBengaliNumbers(votersToPrint.length)}টি ভোটার স্লিপ সফলভাবে প্রিন্ট হয়েছে!`
       );
     } catch (err: any) {
       console.warn('Bluetooth print error:', err);
-      if (err.name !== 'NotFoundError') {
-        showNotice(`⚠️ প্রিন্ট ত্রুটি: ${err.message || 'প্রিন্টারটি অন করে আবার চেষ্টা করুন'}`);
+      if (err?.name !== 'NotFoundError') {
+        const code = err instanceof BluetoothPrinterError ? err.code : 'PRINT_FAILED';
+        const message = err?.message || 'প্রিন্টারটি অন করে আবার চেষ্টা করুন';
+        setBtStatusError({ code, message });
+        setShowBtPicker(true);
+        if (isAndroidNativeBluetooth()) {
+          refreshNativeBluetoothList();
+        }
+        showNotice(`⚠️ প্রিন্ট ত্রুটি: ${message}`);
       }
     } finally {
       setIsPrintingBt(false);
@@ -1000,8 +1140,236 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     );
   };
 
+  // Inline Bluetooth Printer Picker & Diagnostics Panel (Android Native SPP + Web BLE)
+  const renderBluetoothManagerPanel = () => {
+    if (!showBtPicker) return null;
+    const isNative = isAndroidNativeBluetooth();
+    const devices = nativeBtList?.devices || [];
+    const errorCode = btStatusError?.code || nativeBtList?.errorCode || '';
+    const errorMessage = btStatusError?.message || (!nativeBtList?.success ? nativeBtList?.error : '');
+
+    return (
+      <div
+        data-testid="bluetooth-picker-panel"
+        className="w-full max-w-[380px] bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm space-y-2.5 text-xs"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+          <div className="font-black text-slate-900 flex items-center gap-1.5">
+            <span>📶</span>
+            <span>ব্লুটুথ প্রিন্টার নির্বাচন ও সংযোগ</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowBtPicker(false)}
+            className="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-0.5 rounded cursor-pointer"
+            aria-label="ব্লুটুথ প্যানেল বন্ধ করুন"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Active connected printer banner */}
+        {bluetoothDevice && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-extrabold text-emerald-900 truncate">
+                  🟢 সংযুক্ত: {bluetoothDevice.name}
+                </div>
+                {bluetoothDevice.address && (
+                  <div className="text-[10px] font-mono text-emerald-700">
+                    {bluetoothDevice.address}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleDisconnectBluetooth}
+                className="px-2 py-1 rounded-lg bg-white border border-red-200 text-red-600 font-bold text-[11px] hover:bg-red-50 cursor-pointer shrink-0"
+              >
+                ডিসকানেক্ট
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleTestBluetoothPrint}
+                disabled={isTestingBt || isPrintingBt}
+                className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-extrabold text-[11px] cursor-pointer"
+              >
+                {isTestingBt ? '⏳ টেস্ট হচ্ছে...' : '🧪 টেস্ট প্রিন্ট করুন'}
+              </button>
+              {isNative && (
+                <button
+                  type="button"
+                  onClick={refreshNativeBluetoothList}
+                  className="px-2.5 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-800 font-bold text-[11px] hover:bg-emerald-100 cursor-pointer"
+                >
+                  🔄 রিফ্রেশ
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Clear error notice + one-tap Android recovery buttons */}
+        {errorMessage && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-2.5 space-y-2">
+            <p className="font-bold leading-snug">⚠️ {errorMessage}</p>
+            {isNative && (
+              <div className="flex flex-wrap gap-1.5">
+                {errorCode === 'PERMISSION_DENIED' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      requestAndroidBluetoothPermissions();
+                      showNotice('ব্লুটুথ (Nearby Devices) অনুমতি Allow করুন।');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[11px] cursor-pointer"
+                  >
+                    🔐 ব্লুটুথ অনুমতি দিন
+                  </button>
+                )}
+                {(errorCode === 'BLUETOOTH_DISABLED' ||
+                  errorCode === 'NO_PAIRED_DEVICES' ||
+                  errorCode === 'CONNECT_FAILED' ||
+                  errorCode === 'PRINT_FAILED') && (
+                  <button
+                    type="button"
+                    onClick={() => openAndroidBluetoothSettings()}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] cursor-pointer"
+                  >
+                    ⚙️ ফোনের ব্লুটুথ সেটিংস
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={refreshNativeBluetoothList}
+                  className="px-2.5 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-900 font-bold text-[11px] hover:bg-amber-100 cursor-pointer"
+                >
+                  🔄 আবার খুঁজুন
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Android Native Paired Devices List */}
+        {isNative ? (
+          <div className="space-y-1.5">
+            {devices.length > 0 && (
+              <>
+                <div className="text-[11px] font-bold text-slate-600">
+                  ফোনে পেয়ার করা ব্লুটুথ ডিভাইস ({convertToBengaliNumbers(devices.length)}টি) — আপনার
+                  প্রিন্টারটিতে ট্যাপ করুন:
+                </div>
+                <div className="max-h-44 overflow-y-auto space-y-1.5 pr-0.5">
+                  {devices.map((dev) => {
+                    const isCurrent =
+                      bluetoothDevice?.address &&
+                      bluetoothDevice.address.toLowerCase() === dev.address.toLowerCase();
+                    return (
+                      <button
+                        key={dev.address}
+                        type="button"
+                        disabled={isConnectingBt}
+                        onClick={() => handleSelectNativePrinter(dev)}
+                        className={`w-full text-left px-3 py-2 rounded-xl border transition flex items-center justify-between gap-2 cursor-pointer ${
+                          isCurrent
+                            ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
+                            : 'bg-slate-50 hover:bg-emerald-50 border-slate-200 hover:border-emerald-300 text-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="font-extrabold truncate flex items-center gap-1.5">
+                            <span>{dev.isLikelyPrinter ? '🖨️' : '📶'}</span>
+                            <span className="truncate">{dev.name}</span>
+                            {dev.isLikelyPrinter && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold shrink-0">
+                                প্রিন্টার
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                            {dev.address}
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-extrabold text-emerald-700 shrink-0">
+                          {isConnectingBt
+                            ? '...'
+                            : isCurrent
+                            ? '✓ সংযুক্ত'
+                            : 'কানেক্ট'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => openAndroidBluetoothSettings()}
+                className="text-[11px] font-bold text-indigo-700 hover:underline cursor-pointer"
+              >
+                ⚙️ নতুন প্রিন্টার পেয়ার করুন (ফোন সেটিংস)
+              </button>
+              <button
+                type="button"
+                onClick={refreshNativeBluetoothList}
+                className="text-[11px] font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                🔄 রিফ্রেশ
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Web Browser (Chrome/Edge/Safari) Bluetooth Controls */
+          <div className="space-y-2">
+            {isBluetoothSupported() ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsConnectingBt(true);
+                  setBtStatusError(null);
+                  try {
+                    const dev = await connectBluetoothPrinter();
+                    setBluetoothDevice(dev);
+                    setShowBtPicker(false);
+                    showNotice(`✅ "${dev.name}" প্রিন্টারের সাথে সফলভাবে কানেক্ট হয়েছে!`);
+                  } catch (err: any) {
+                    if (err?.name !== 'NotFoundError') {
+                      setBtStatusError({
+                        code: err instanceof BluetoothPrinterError ? err.code : 'CONNECT_FAILED',
+                        message: err?.message || 'প্রিন্টারে কানেক্ট করা যায়নি।',
+                      });
+                    }
+                  } finally {
+                    setIsConnectingBt(false);
+                  }
+                }}
+                disabled={isConnectingBt}
+                className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold cursor-pointer"
+              >
+                {isConnectingBt ? '⏳ ডিভাইস খুঁজছি...' : '🔍 ব্লুটুথ প্রিন্টার খুঁজুন (Web Bluetooth)'}
+              </button>
+            ) : (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-700 font-semibold leading-relaxed">
+                ℹ️ এই ব্রাউজার সরাসরি ব্লুটুথ সাপোর্ট করে না। ৫৮মিমি থার্মাল প্রিন্টারের জন্য{' '}
+                <span className="font-extrabold text-slate-900">অ্যান্ড্রয়েড APK অ্যাপ</span> অথবা{' '}
+                <span className="font-extrabold text-slate-900">Google Chrome</span> ব্যবহার করুন।
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-3 overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-end sm:items-center justify-center p-0 sm:p-3 overflow-y-auto">
       <canvas ref={canvasRef} className="hidden" />
 
       <div className="bg-white w-full max-w-4xl rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]">
@@ -1304,9 +1672,18 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                           </button>
 
                           {bluetoothDevice ? (
-                            <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg font-bold text-[11px]">
-                              🟢 {bluetoothDevice.name}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isAndroidNativeBluetooth()) refreshNativeBluetoothList();
+                                setShowBtPicker((prev) => !prev);
+                              }}
+                              className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg font-bold text-[11px] cursor-pointer flex items-center gap-1"
+                              title="প্রিন্টার ম্যানেজ বা পরিবর্তন করুন"
+                            >
+                              <span>🟢</span>
+                              <span className="max-w-[110px] truncate">{bluetoothDevice.name}</span>
+                            </button>
                           ) : (
                             <button
                               type="button"
@@ -1319,6 +1696,8 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                           )}
                         </div>
                       </div>
+
+                      {renderBluetoothManagerPanel()}
 
                       {renderBluetoothThermalPreview()}
                     </div>
@@ -1850,22 +2229,42 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                       </div>
                     </div>
 
-                    <div>
+                    <div className="space-y-2">
                       <label className="block text-xs font-extrabold text-slate-800 mb-1">
                         📶 ব্লুটুথ থার্মাল প্রিন্টার সংযোগ:
                       </label>
                       {bluetoothDevice ? (
-                        <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs">
-                          <span className="font-bold text-emerald-800">
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl text-xs">
+                          <span className="font-bold text-emerald-800 truncate">
                             🟢 সংযুক্ত: {bluetoothDevice.name}
                           </span>
-                          <button
-                            type="button"
-                            onClick={handleDisconnectBluetooth}
-                            className="text-red-600 font-bold hover:underline cursor-pointer"
-                          >
-                            ডিসকানেক্ট
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={handleTestBluetoothPrint}
+                              disabled={isTestingBt}
+                              className="text-emerald-700 font-extrabold hover:underline cursor-pointer"
+                            >
+                              {isTestingBt ? '⏳ টেস্ট...' : '🧪 টেস্ট'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isAndroidNativeBluetooth()) refreshNativeBluetoothList();
+                                setShowBtPicker((prev) => !prev);
+                              }}
+                              className="text-indigo-700 font-bold hover:underline cursor-pointer"
+                            >
+                              বদলান
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleDisconnectBluetooth}
+                              className="text-red-600 font-bold hover:underline cursor-pointer"
+                            >
+                              ডিসকানেক্ট
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <button
@@ -1877,6 +2276,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                           📶 {isConnectingBt ? 'খুঁজছি...' : 'ব্লুটুথ প্রিন্টার পেয়ার / কানেক্ট করুন'}
                         </button>
                       )}
+                      {activeScreen === 'settings' && renderBluetoothManagerPanel()}
                     </div>
                   </div>
                 </div>

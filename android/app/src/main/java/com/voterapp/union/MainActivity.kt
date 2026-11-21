@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.Intent
@@ -48,6 +49,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewAssetLoader
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -88,6 +90,7 @@ class MainActivity : AppCompatActivity() {
 
     // Standard SPP UUID for Bluetooth Thermal Printers
     private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+    private val btLock = Any()
     private var activeBtSocket: BluetoothSocket? = null
     private var activeBtDevice: BluetoothDevice? = null
 
@@ -128,6 +131,16 @@ class MainActivity : AppCompatActivity() {
         } else {
             Log.w("VoterApp", "Some runtime permissions were denied.")
         }
+        try {
+            if (::webView.isInitialized) {
+                webView.post {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new Event('voter_bt_permissions_updated'));",
+                        null
+                    )
+                }
+            }
+        } catch (ignored: Exception) {}
     }
 
     @SuppressLint("SetJavaScriptEnabled", "UnspecifiedRegisterReceiverFlag")
@@ -459,132 +472,494 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Resolve BluetoothAdapter safely across Android versions (API 23..35+)
+     */
+    private fun getBluetoothAdapter(): BluetoothAdapter? {
+        return try {
+            val manager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            @Suppress("DEPRECATION")
+            manager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+        } catch (e: Exception) {
+            Log.w("VoterApp", "getBluetoothAdapter error", e)
+            null
+        }
+    }
+
+    private fun hasBluetoothConnectPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun isLikelyThermalPrinterName(rawName: String): Boolean {
+        val devName = rawName.lowercase()
+        val printerKeywords = listOf(
+            "mtp", "pt-", "rpp", "pos", "printer", "thermal", "xp-", "zj-",
+            "bt-", "innerprinter", "bluetooth", "58", "80", "goojprt", "hoin",
+            "nyear", "peripage", "phomemo", "bixolon", "sewoo", "sprt", "sunmi",
+            "gp-", "p58", "c58", "m58", "k58", "mht", "hprt", "gprinter",
+            "rongta", "print", "mini", "mpt", "rp58", "rp80", "mp58", "mp80"
+        )
+        for (kw in printerKeywords) {
+            if (devName.contains(kw)) return true
+        }
+        return false
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun buildDevicesJsonArray(bondedList: List<BluetoothDevice>): JSONArray {
+        val sorted = bondedList.sortedWith(
+            compareByDescending<BluetoothDevice> { isLikelyThermalPrinterName(it.name ?: "") }
+                .thenBy { (it.name ?: "").lowercase() }
+        )
+        val arr = JSONArray()
+        for (dev in sorted) {
+            val item = JSONObject()
+            val devName = dev.name ?: "Bluetooth Device"
+            item.put("name", devName)
+            item.put("address", dev.address ?: "")
+            item.put("isLikelyPrinter", isLikelyThermalPrinterName(devName))
+            arr.put(item)
+        }
+        return arr
+    }
+
+    /**
+     * Establish RFCOMM SPP connection with 3-tier fallback:
+     * 1. Standard secure SPP socket
+     * 2. Insecure SPP socket (required by many 58mm thermal printers on Android 10-15)
+     * 3. Reflection channel-1 RFCOMM socket fallback
+     */
+    @SuppressLint("MissingPermission")
+    private fun connectRfcommSocket(device: BluetoothDevice, adapter: BluetoothAdapter): BluetoothSocket {
+        try {
+            adapter.cancelDiscovery()
+        } catch (ignored: Exception) {}
+
+        var lastError: Exception? = null
+
+        // Attempt 1: Standard Secure RFCOMM SPP
+        var secureSock: BluetoothSocket? = null
+        try {
+            secureSock = device.createRfcommSocketToServiceRecord(sppUuid)
+            secureSock.connect()
+            return secureSock
+        } catch (e: Exception) {
+            lastError = e
+            try {
+                secureSock?.close()
+            } catch (ignored: Exception) {}
+            Log.w("VoterApp", "Secure RFCOMM connect failed, trying insecure fallback: ${e.message}")
+        }
+
+        // Attempt 2: Insecure RFCOMM SPP
+        var insecureSock: BluetoothSocket? = null
+        try {
+            insecureSock = device.createInsecureRfcommSocketToServiceRecord(sppUuid)
+            insecureSock.connect()
+            return insecureSock
+        } catch (e: Exception) {
+            lastError = e
+            try {
+                insecureSock?.close()
+            } catch (ignored: Exception) {}
+            Log.w("VoterApp", "Insecure RFCOMM connect failed, trying channel-1 reflection: ${e.message}")
+        }
+
+        // Attempt 3: Reflection RFCOMM Channel 1
+        var fallbackSock: BluetoothSocket? = null
+        try {
+            val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+            fallbackSock = method.invoke(device, 1) as BluetoothSocket
+            fallbackSock.connect()
+            return fallbackSock
+        } catch (e: Exception) {
+            lastError = e
+            try {
+                fallbackSock?.close()
+            } catch (ignored: Exception) {}
+            Log.e("VoterApp", "All RFCOMM connection methods failed for ${device.address}", e)
+        }
+
+        throw lastError ?: RuntimeException("Unable to open Bluetooth RFCOMM socket")
+    }
+
+    /**
+     * Open Android System Bluetooth Settings so user can turn on BT or pair a printer
+     */
+    fun openBluetoothSettingsScreen() {
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("VoterApp", "Failed to open Bluetooth settings", e)
+            Toast.makeText(this, "ফোনের Settings > Bluetooth চালু করুন", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * List all paired Bluetooth devices with detailed status & errorCode for JS UI
+     */
+    @SuppressLint("MissingPermission")
+    fun getPairedBluetoothDevicesJson(): String {
+        val json = JSONObject()
+        try {
+            if (!hasBluetoothConnectPermission()) {
+                json.put("success", false)
+                json.put("errorCode", "PERMISSION_DENIED")
+                json.put("bluetoothEnabled", false)
+                json.put("permissionGranted", false)
+                json.put("error", "ব্লুটুথ অনুমতি (Nearby Devices) দেওয়া নেই। নিচের বাটনে চাপ দিয়ে অনুমতি দিন।")
+                json.put("devices", JSONArray())
+                return json.toString()
+            }
+
+            val adapter = getBluetoothAdapter()
+            if (adapter == null) {
+                json.put("success", false)
+                json.put("errorCode", "NO_ADAPTER")
+                json.put("bluetoothEnabled", false)
+                json.put("permissionGranted", true)
+                json.put("error", "এই ফোনে ব্লুটুথ হার্ডওয়্যার পাওয়া যায়নি।")
+                json.put("devices", JSONArray())
+                return json.toString()
+            }
+
+            if (!adapter.isEnabled) {
+                json.put("success", false)
+                json.put("errorCode", "BLUETOOTH_DISABLED")
+                json.put("bluetoothEnabled", false)
+                json.put("permissionGranted", true)
+                json.put("error", "ফোনের ব্লুটুথ বন্ধ আছে। আগে ফোনের ব্লুটুথ চালু (ON) করুন।")
+                json.put("devices", JSONArray())
+                return json.toString()
+            }
+
+            val bondedList: List<BluetoothDevice> = adapter.bondedDevices?.toList() ?: emptyList()
+            if (bondedList.isEmpty()) {
+                json.put("success", false)
+                json.put("errorCode", "NO_PAIRED_DEVICES")
+                json.put("bluetoothEnabled", true)
+                json.put("permissionGranted", true)
+                json.put("error", "কোনো ব্লুটুথ প্রিন্টার পেয়ার করা নেই। ফোনের ব্লুটুথ সেটিংস থেকে প্রিন্টারটি পেয়ার (Pair) করুন।")
+                json.put("devices", JSONArray())
+                return json.toString()
+            }
+
+            json.put("success", true)
+            json.put("errorCode", "")
+            json.put("bluetoothEnabled", true)
+            json.put("permissionGranted", true)
+            json.put("devices", buildDevicesJsonArray(bondedList))
+            return json.toString()
+        } catch (e: Exception) {
+            Log.e("VoterApp", "getPairedBluetoothDevicesJson error", e)
+            json.put("success", false)
+            json.put("errorCode", "UNKNOWN_ERROR")
+            json.put("bluetoothEnabled", false)
+            json.put("permissionGranted", hasBluetoothConnectPermission())
+            json.put("error", "ব্লুটুথ তালিকা লোড করা যায়নি: ${e.message ?: "অজানা ত্রুটি"}")
+            json.put("devices", JSONArray())
+            return json.toString()
+        }
+    }
+
+    /**
+     * Connect directly to a specific paired Bluetooth printer by MAC address
+     */
+    @SuppressLint("MissingPermission")
+    fun connectBluetoothPrinterByAddress(targetAddress: String): String {
+        val json = JSONObject()
+        synchronized(btLock) {
+            try {
+                if (!hasBluetoothConnectPermission()) {
+                    json.put("success", false)
+                    json.put("errorCode", "PERMISSION_DENIED")
+                    json.put("error", "ব্লুটুথ অনুমতি (Nearby Devices) দেওয়া নেই।")
+                    return json.toString()
+                }
+
+                val adapter = getBluetoothAdapter()
+                if (adapter == null) {
+                    json.put("success", false)
+                    json.put("errorCode", "NO_ADAPTER")
+                    json.put("error", "এই ফোনে ব্লুটুথ সাপোর্ট পাওয়া যায়নি।")
+                    return json.toString()
+                }
+
+                if (!adapter.isEnabled) {
+                    json.put("success", false)
+                    json.put("errorCode", "BLUETOOTH_DISABLED")
+                    json.put("error", "ফোনের ব্লুটুথ বন্ধ আছে। আগে ব্লুটুথ চালু (ON) করুন।")
+                    return json.toString()
+                }
+
+                val bondedList: List<BluetoothDevice> = adapter.bondedDevices?.toList() ?: emptyList()
+                var targetDevice: BluetoothDevice? = null
+                for (dev in bondedList) {
+                    if (dev.address.equals(targetAddress, ignoreCase = true)) {
+                        targetDevice = dev
+                        break
+                    }
+                }
+                if (targetDevice == null && targetAddress.isNotBlank()) {
+                    try {
+                        targetDevice = adapter.getRemoteDevice(targetAddress)
+                    } catch (ignored: Exception) {}
+                }
+
+                if (targetDevice == null) {
+                    json.put("success", false)
+                    json.put("errorCode", "DEVICE_NOT_FOUND")
+                    json.put("error", "নির্বাচিত ব্লুটুথ প্রিন্টারটি পেয়ার তালিকায় পাওয়া যায়নি।")
+                    return json.toString()
+                }
+
+                val existingSocket = activeBtSocket
+                val existingDevice = activeBtDevice
+                if (existingSocket == null || !existingSocket.isConnected || !existingDevice?.address.equals(targetDevice.address, ignoreCase = true)) {
+                    try {
+                        existingSocket?.close()
+                    } catch (ignored: Exception) {}
+                    activeBtSocket = null
+
+                    val newSock = connectRfcommSocket(targetDevice, adapter)
+                    activeBtSocket = newSock
+                    activeBtDevice = targetDevice
+                }
+
+                json.put("success", true)
+                json.put("name", targetDevice.name ?: "Bluetooth Printer")
+                json.put("address", targetDevice.address ?: targetAddress)
+                return json.toString()
+            } catch (e: Exception) {
+                Log.e("VoterApp", "connectBluetoothPrinterByAddress error", e)
+                try {
+                    activeBtSocket?.close()
+                } catch (ignored: Exception) {}
+                activeBtSocket = null
+                json.put("success", false)
+                json.put("errorCode", "CONNECT_FAILED")
+                json.put("error", "প্রিন্টারে কানেক্ট করা যায়নি। প্রিন্টারটি অন আছে ও ফোনের কাছাকাছি আছে কিনা দেখুন।")
+                return json.toString()
+            }
+        }
+    }
+
+    /**
      * Auto-detect Paired Bluetooth Thermal Printer from Phone Settings
      */
     @SuppressLint("MissingPermission")
     fun findPairedThermalPrinter(autoConnectSocket: Boolean): String {
+        val json = JSONObject()
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-            ) {
-                return ""
+            if (!hasBluetoothConnectPermission()) {
+                json.put("success", false)
+                json.put("errorCode", "PERMISSION_DENIED")
+                json.put("error", "ব্লুটুথ অনুমতি (Nearby Devices) দেওয়া নেই।")
+                return json.toString()
             }
 
-            @Suppress("DEPRECATION")
-            val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter() ?: return ""
-            if (!adapter.isEnabled) return ""
+            val adapter = getBluetoothAdapter()
+            if (adapter == null) {
+                json.put("success", false)
+                json.put("errorCode", "NO_ADAPTER")
+                json.put("error", "এই ফোনে ব্লুটুথ পাওয়া যায়নি।")
+                return json.toString()
+            }
+            if (!adapter.isEnabled) {
+                json.put("success", false)
+                json.put("errorCode", "BLUETOOTH_DISABLED")
+                json.put("error", "ফোনের ব্লুটুথ বন্ধ আছে। আগে ব্লুটুথ চালু (ON) করুন।")
+                return json.toString()
+            }
 
-            val bondedSet = adapter.bondedDevices
-            if (bondedSet == null || bondedSet.isEmpty()) return ""
-            val bondedList: List<BluetoothDevice> = bondedSet.toList()
-
-            val printerKeywords = listOf(
-                "mtp", "pt-", "rpp", "pos", "printer", "thermal", "xp-", "zj-", "bt-", "innerprinter", "bluetooth", "58", "80"
-            )
+            val bondedList: List<BluetoothDevice> = adapter.bondedDevices?.toList() ?: emptyList()
+            if (bondedList.isEmpty()) {
+                json.put("success", false)
+                json.put("errorCode", "NO_PAIRED_DEVICES")
+                json.put("error", "কোনো ব্লুটুথ প্রিন্টার পেয়ার করা নেই। ফোনের ব্লুটুথ সেটিংস থেকে প্রিন্টারটি পেয়ার করুন।")
+                return json.toString()
+            }
 
             var candidate: BluetoothDevice? = null
             for (dev in bondedList) {
-                val devName = (dev.name ?: "").lowercase()
-                for (kw in printerKeywords) {
-                    if (devName.contains(kw)) {
-                        candidate = dev
-                        break
-                    }
+                if (isLikelyThermalPrinterName(dev.name ?: "")) {
+                    candidate = dev
+                    break
                 }
-                if (candidate != null) break
             }
             if (candidate == null && bondedList.size == 1) {
                 candidate = bondedList[0]
             }
 
-            val target: BluetoothDevice = candidate ?: return ""
-
-            if (autoConnectSocket) {
-                try {
-                    val existingSocket = activeBtSocket
-                    val existingDevice = activeBtDevice
-                    if (existingSocket == null || !existingSocket.isConnected || existingDevice?.address != target.address) {
-                        try {
-                            existingSocket?.close()
-                        } catch (ignored: Exception) {}
-                        val newSock: BluetoothSocket? = target.createRfcommSocketToServiceRecord(sppUuid)
-                        newSock?.connect()
-                        activeBtSocket = newSock
-                        activeBtDevice = target
-                    }
-                } catch (e: Exception) {
-                    activeBtDevice = target
-                }
+            val target = candidate
+            if (target == null) {
+                json.put("success", false)
+                json.put("errorCode", "MULTIPLE_DEVICES_SELECT_REQUIRED")
+                json.put("error", "একাধিক ব্লুটুথ ডিভাইস পেয়ার করা আছে। তালিকা থেকে আপনার প্রিন্টারটি সিলেক্ট করুন।")
+                json.put("devices", buildDevicesJsonArray(bondedList))
+                return json.toString()
             }
 
-            val json = JSONObject()
+            if (autoConnectSocket) {
+                return connectBluetoothPrinterByAddress(target.address ?: "")
+            }
+
             json.put("success", true)
             json.put("name", target.name ?: "Bluetooth Printer")
             json.put("address", target.address ?: "")
             return json.toString()
         } catch (e: Exception) {
             Log.w("VoterApp", "findPairedThermalPrinter error", e)
-            return ""
+            json.put("success", false)
+            json.put("errorCode", "UNKNOWN_ERROR")
+            json.put("error", "ব্লুটুথ প্রিন্টার খোঁজায় সমস্যা হয়েছে।")
+            return json.toString()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun sendEscPosOverBluetoothDetailed(base64Payload: String, targetAddress: String): String {
+        val json = JSONObject()
+        synchronized(btLock) {
+            try {
+                if (!hasBluetoothConnectPermission()) {
+                    json.put("success", false)
+                    json.put("errorCode", "PERMISSION_DENIED")
+                    json.put("error", "ব্লুটুথ অনুমতি (Nearby Devices) দেওয়া নেই।")
+                    return json.toString()
+                }
+
+                val bytes = Base64.decode(base64Payload, Base64.DEFAULT)
+                val adapter = getBluetoothAdapter()
+                if (adapter == null) {
+                    json.put("success", false)
+                    json.put("errorCode", "NO_ADAPTER")
+                    json.put("error", "এই ফোনে ব্লুটুথ হার্ডওয়্যার পাওয়া যায়নি।")
+                    return json.toString()
+                }
+                if (!adapter.isEnabled) {
+                    json.put("success", false)
+                    json.put("errorCode", "BLUETOOTH_DISABLED")
+                    json.put("error", "ফোনের ব্লুটুথ বন্ধ আছে। আগে ব্লুটুথ চালু (ON) করুন।")
+                    return json.toString()
+                }
+
+                val bondedList: List<BluetoothDevice> = adapter.bondedDevices?.toList() ?: emptyList()
+
+                var matchedDevice: BluetoothDevice? = null
+                if (targetAddress.isNotBlank()) {
+                    for (dev in bondedList) {
+                        if (dev.address.equals(targetAddress, ignoreCase = true)) {
+                            matchedDevice = dev
+                            break
+                        }
+                    }
+                    if (matchedDevice == null) {
+                        try {
+                            matchedDevice = adapter.getRemoteDevice(targetAddress)
+                        } catch (ignored: Exception) {}
+                    }
+                }
+
+                var likelyPrinter: BluetoothDevice? = null
+                for (dev in bondedList) {
+                    if (isLikelyThermalPrinterName(dev.name ?: "")) {
+                        likelyPrinter = dev
+                        break
+                    }
+                }
+
+                val fallbackFirst: BluetoothDevice? = if (bondedList.isNotEmpty()) bondedList[0] else null
+                val device: BluetoothDevice? = matchedDevice
+                    ?: activeBtDevice
+                    ?: likelyPrinter
+                    ?: fallbackFirst
+
+                if (device == null) {
+                    json.put("success", false)
+                    json.put("errorCode", "NO_PAIRED_DEVICES")
+                    json.put("error", "কোনো পেয়ার করা ব্লুটুথ প্রিন্টার পাওয়া যায়নি।")
+                    return json.toString()
+                }
+
+                var attempt = 0
+                var lastWriteErr: Exception? = null
+                while (attempt < 2) {
+                    attempt++
+                    try {
+                        var currentSocket: BluetoothSocket? = activeBtSocket
+                        val currentDevice: BluetoothDevice? = activeBtDevice
+                        if (currentSocket == null || !currentSocket.isConnected || !currentDevice?.address.equals(device.address, ignoreCase = true)) {
+                            try {
+                                currentSocket?.close()
+                            } catch (ignored: Exception) {}
+                            activeBtSocket = null
+                            val createdSocket = connectRfcommSocket(device, adapter)
+                            activeBtSocket = createdSocket
+                            activeBtDevice = device
+                            currentSocket = createdSocket
+                        }
+
+                        val out = currentSocket.outputStream
+                        val chunkSize = 256
+                        var offset = 0
+                        while (offset < bytes.size) {
+                            val end = minOf(offset + chunkSize, bytes.size)
+                            out.write(bytes, offset, end - offset)
+                            out.flush()
+                            offset = end
+                            Thread.sleep(12)
+                        }
+                        Thread.sleep(120)
+
+                        json.put("success", true)
+                        json.put("name", device.name ?: "Bluetooth Printer")
+                        json.put("address", device.address ?: "")
+                        return json.toString()
+                    } catch (e: Exception) {
+                        lastWriteErr = e
+                        Log.w("VoterApp", "Bluetooth write attempt $attempt failed: ${e.message}")
+                        try {
+                            activeBtSocket?.close()
+                        } catch (ignored: Exception) {}
+                        activeBtSocket = null
+                    }
+                }
+
+                Log.e("VoterApp", "sendEscPosOverBluetoothDetailed failed after retry", lastWriteErr)
+                json.put("success", false)
+                json.put("errorCode", "PRINT_FAILED")
+                json.put("error", "প্রিন্টারে ডাটা পাঠানো যায়নি। প্রিন্টারটি অন আছে, কাগজ আছে ও ফোনের কাছাকাছি আছে কিনা দেখুন।")
+                return json.toString()
+            } catch (e: Exception) {
+                Log.e("VoterApp", "sendEscPosOverBluetoothDetailed error", e)
+                try {
+                    activeBtSocket?.close()
+                } catch (ignored: Exception) {}
+                activeBtSocket = null
+                json.put("success", false)
+                json.put("errorCode", "PRINT_FAILED")
+                json.put("error", "ব্লুটুথ প্রিন্টে সমস্যা হয়েছে: ${e.message ?: "আবার চেষ্টা করুন"}")
+                return json.toString()
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     fun sendEscPosOverBluetooth(base64Payload: String, targetAddress: String): Boolean {
         return try {
-            val bytes = Base64.decode(base64Payload, Base64.DEFAULT)
-            @Suppress("DEPRECATION")
-            val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter() ?: return false
-            if (!adapter.isEnabled) return false
-
-            val bondedSet = adapter.bondedDevices
-            val bondedList: List<BluetoothDevice> = bondedSet?.toList() ?: emptyList()
-
-            var matchedDevice: BluetoothDevice? = null
-            for (dev in bondedList) {
-                if (dev.address == targetAddress) {
-                    matchedDevice = dev
-                    break
-                }
-            }
-
-            val fallbackFirst: BluetoothDevice? = if (bondedList.isNotEmpty()) bondedList[0] else null
-            val device: BluetoothDevice = matchedDevice
-                ?: activeBtDevice
-                ?: fallbackFirst
-                ?: return false
-
-            var currentSocket: BluetoothSocket? = activeBtSocket
-            val currentDevice: BluetoothDevice? = activeBtDevice
-            if (currentSocket == null || !currentSocket.isConnected || currentDevice?.address != device.address) {
-                try {
-                    currentSocket?.close()
-                } catch (ignored: Exception) {}
-                val createdSocket: BluetoothSocket = device.createRfcommSocketToServiceRecord(sppUuid) ?: return false
-                adapter.cancelDiscovery()
-                createdSocket.connect()
-                activeBtSocket = createdSocket
-                activeBtDevice = device
-                currentSocket = createdSocket
-            }
-
-            val finalSocket: BluetoothSocket = currentSocket ?: return false
-            val out = finalSocket.outputStream ?: return false
-            val chunkSize = 512
-            var offset = 0
-            while (offset < bytes.size) {
-                val end = minOf(offset + chunkSize, bytes.size)
-                out.write(bytes, offset, end - offset)
-                out.flush()
-                offset = end
-                Thread.sleep(15)
-            }
-            true
+            val res = sendEscPosOverBluetoothDetailed(base64Payload, targetAddress)
+            JSONObject(res).optBoolean("success", false)
         } catch (e: Exception) {
-            Log.e("VoterApp", "sendEscPosOverBluetooth error", e)
-            try {
-                activeBtSocket?.close()
-            } catch (ignored: Exception) {}
-            activeBtSocket = null
             false
         }
     }
@@ -972,21 +1347,53 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getPairedBluetoothDevices(): String {
+            return getPairedBluetoothDevicesJson()
+        }
+
+        @JavascriptInterface
         fun connectPairedPrinter(): String {
             return findPairedThermalPrinter(true)
         }
 
         @JavascriptInterface
+        fun connectPrinterByAddress(address: String): String {
+            return connectBluetoothPrinterByAddress(address)
+        }
+
+        @JavascriptInterface
         fun disconnectPrinter() {
-            try {
-                activeBtSocket?.close()
-            } catch (ignored: Exception) {}
-            activeBtSocket = null
+            synchronized(btLock) {
+                try {
+                    activeBtSocket?.close()
+                } catch (ignored: Exception) {}
+                activeBtSocket = null
+                activeBtDevice = null
+            }
         }
 
         @JavascriptInterface
         fun printEscPosBase64(base64Data: String, address: String): Boolean {
             return sendEscPosOverBluetooth(base64Data, address)
+        }
+
+        @JavascriptInterface
+        fun printEscPosBase64Detailed(base64Data: String, address: String): String {
+            return sendEscPosOverBluetoothDetailed(base64Data, address)
+        }
+
+        @JavascriptInterface
+        fun openBluetoothSettings() {
+            runOnUiThread {
+                openBluetoothSettingsScreen()
+            }
+        }
+
+        @JavascriptInterface
+        fun requestBluetoothPermissions() {
+            runOnUiThread {
+                requestRuntimePermissions()
+            }
         }
 
         @JavascriptInterface

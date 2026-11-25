@@ -758,7 +758,7 @@ app.post('/api/admin/users/add', async (req: Request, res: Response) => {
 
   // Attempt creating user in Firebase Auth via Identity Toolkit REST API
   const FIREBASE_API_KEY =
-    process.env.VITE_FIREBASE_API_KEY || 'AIzaSyC0Y3ai0mTgLFU6__A8Inl5sAPaG-Z2Jok';
+    process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A';
   let firebaseResult: any = null;
 
   if (password) {
@@ -888,7 +888,7 @@ app.post('/api/admin/users/change-password', async (req: Request, res: Response)
   }
 
   const FIREBASE_API_KEY =
-    process.env.VITE_FIREBASE_API_KEY || 'AIzaSyC0Y3ai0mTgLFU6__A8Inl5sAPaG-Z2Jok';
+    process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A';
   let fbMessage = '';
   let fbSuccess = false;
 

@@ -15,7 +15,7 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 
 const FIREBASE_API_KEY =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_API_KEY) ||
-  'AIzaSyC0Y3ai0mTgLFU6__A8Inl5sAPaG-Z2Jok';
+  'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A';
 
 export interface CreateUserResult {
   success: boolean;

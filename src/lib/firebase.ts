@@ -12,14 +12,14 @@ const env: Record<string, string | undefined> =
 export const FIREBASE_PROJECT_ID = env.VITE_FIREBASE_PROJECT_ID || 'voter-ba30b';
 
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyC0Y3ai0mTgLFU6__A8Inl5sAPaG-Z2Jok',
+  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A',
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'voter-ba30b.firebaseapp.com',
   databaseURL:
     env.VITE_FIREBASE_DATABASE_URL || 'https://voter-ba30b-default-rtdb.firebaseio.com',
   projectId: FIREBASE_PROJECT_ID,
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'voter-ba30b.firebasestorage.app',
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '886401397261',
-  appId: env.VITE_FIREBASE_APP_ID || '1:886401397261:android:ac1669cc0bdbe693005b44',
+  appId: env.VITE_FIREBASE_APP_ID || '1:886401397261:web:12f87c8a5cae31ac005b44',
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();

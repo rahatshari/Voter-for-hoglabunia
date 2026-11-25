@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Android build artifacts (keep source, signing keys & wrapper config)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk

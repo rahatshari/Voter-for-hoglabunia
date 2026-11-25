@@ -2,20 +2,33 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ইউনিয়ন ভোটার তালিকা</title>
-    <meta name="description" content="ইউনিয়ন ভোটার তালিকা ও ভোটার অনুসন্ধান অ্যাপ্লিকেশন">
-    <meta property="og:title" content="ইউনিয়ন ভোটার তালিকা">
-    <meta property="og:description" content="ইউনিয়ন ভোটার তালিকা ও ভোটার অনুসন্ধান অ্যাপ্লিকেশন">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>হোগলাবুনিয়া ভোটার তালিকা — স্মার্ট ভোটার ও নির্বাচনী স্লিপ অ্যাপ</title>
+    <meta name="description" content="হোগলাবুনিয়া ইউনিয়ন ডিজিটাল ভোটার তালিকা, স্মার্ট অনুসন্ধান, পরিবার বৃক্ষ, অ্যানালাইটিক্স ও থার্মাল ভোটার স্লিপ অ্যাপ্লিকেশন">
+    <meta property="og:title" content="হোগলাবুনিয়া ভোটার তালিকা">
+    <meta property="og:description" content="স্মার্ট ভোটার অনুসন্ধান, ক্যাম্পেইন ট্র্যাকার ও নির্বাচনী স্লিপ অ্যাপ্লিকেশন">
     <link rel="icon" href="./icon-192.png" type="image/png">
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="./icon-192.png">
-    <meta name="theme-color" content="#4f46e5">
+    <meta name="theme-color" content="#006b54">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script>
       (function() {
+        try {
+          var rawTheme = localStorage.getItem('voter_m3_theme_prefs_v1');
+          if (rawTheme) {
+            var prefs = JSON.parse(rawTheme);
+            var root = document.documentElement;
+            if (prefs.palette) root.setAttribute('data-theme', prefs.palette);
+            var mode = prefs.mode === 'system'
+              ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+              : (prefs.mode || 'light');
+            root.setAttribute('data-mode', mode);
+            if (prefs.fontScale) root.setAttribute('data-font-scale', prefs.fontScale);
+          }
+        } catch (e) {}
         try {
           var p = window.location.pathname;
           var base = p.endsWith('.html') ? p.substring(0, p.lastIndexOf('/') + 1) : p.endsWith('/') ? p : p + '/';
@@ -35,17 +48,18 @@
         } catch (e) {}
       })();
     </script>
-  <script type="module" crossorigin src="./assets/index-DJFSlVfG.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DmH4yB1W.css">
+  <script type="module" crossorigin src="./assets/index-D8Wqvuu4.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/index.esm-CdhYGq5v.js">
+  <link rel="stylesheet" crossorigin href="./assets/index-Dja1zEeR.css">
 </head>
-<body class="bg-[#F0F3F8] min-h-screen text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
+<body class="m3-surface min-h-screen antialiased">
     <div id="root" class="min-h-screen w-full flex flex-col">
-        <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #F0F3F8; font-family: 'Noto Sans Bengali', system-ui, sans-serif; padding: 20px; text-align: center;">
-            <div style="background: #ffffff; padding: 32px 24px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); max-width: 320px; width: 100%; display: flex; flex-direction: column; align-items: center; border: 1px solid #e2e8f0;">
-                <img src="./assets/logo-DqXKQray.png" alt="লোগো" style="width: 96px; height: 96px; border-radius: 50%; margin-bottom: 16px; object-fit: contain; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15); border: 2px solid #e0e7ff; padding: 4px;" onerror="this.src='./icon-192.png';" />
-                <h2 style="margin: 0 0 6px 0; color: #1e293b; font-size: 20px; font-weight: 800;">ইউনিয়ন ভোটার তালিকা</h2>
-                <p style="margin: 0 0 20px 0; color: #64748b; font-size: 13px;">লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</p>
-                <div style="width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top-color: #4f46e5; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f5fbf7; font-family: 'Noto Sans Bengali', system-ui, sans-serif; padding: 20px; text-align: center;">
+            <div style="background: #ffffff; padding: 36px 28px; border-radius: 28px; box-shadow: 0 4px 16px rgba(0, 107, 84, 0.08); max-width: 340px; width: 100%; display: flex; flex-direction: column; align-items: center; border: 1px solid #dde4e0;">
+                <img src="./assets/logo-DqXKQray.png" alt="লোগো" style="width: 92px; height: 92px; border-radius: 24px; margin-bottom: 18px; object-fit: contain; box-shadow: 0 4px 12px rgba(0, 107, 84, 0.14); border: 2px solid #a0f2d4; padding: 6px; background: #ffffff;" onerror="this.src='./icon-192.png';" />
+                <h2 style="margin: 0 0 6px 0; color: #171d1b; font-size: 21px; font-weight: 800;">হোগলাবুনিয়া ভোটার তালিকা</h2>
+                <p style="margin: 0 0 22px 0; color: #3f4945; font-size: 13px;">লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</p>
+                <div style="width: 38px; height: 38px; border: 3.5px solid #cde8dd; border-top-color: #006b54; border-radius: 50%; animation: spin 0.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;"></div>
             </div>
             <style>@keyframes spin{0%{transform:rotate(0)}to{transform:rotate(360deg)}}</style>
         </div>

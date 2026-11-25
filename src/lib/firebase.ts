@@ -9,14 +9,17 @@ const env: Record<string, string | undefined> =
     ? (process.env as any)
     : {};
 
+export const FIREBASE_PROJECT_ID = env.VITE_FIREBASE_PROJECT_ID || 'voter-ba30b';
+
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || "AIzaSyDSE5kxWXULnlTB2sOY7AE6MLFLmHuguWg",
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || "voter-apps-14962.firebaseapp.com",
-  databaseURL: env.VITE_FIREBASE_DATABASE_URL || "https://voter-apps-14962-default-rtdb.firebaseio.com",
-  projectId: env.VITE_FIREBASE_PROJECT_ID || "voter-apps-14962",
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || "voter-apps-14962.firebasestorage.app",
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || "957567395353",
-  appId: env.VITE_FIREBASE_APP_ID || "1:957567395353:android:84aad0acdb14a8a343ec88"
+  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyC0Y3ai0mTgLFU6__A8Inl5sAPaG-Z2Jok',
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'voter-ba30b.firebaseapp.com',
+  databaseURL:
+    env.VITE_FIREBASE_DATABASE_URL || 'https://voter-ba30b-default-rtdb.firebaseio.com',
+  projectId: FIREBASE_PROJECT_ID,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'voter-ba30b.firebasestorage.app',
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '886401397261',
+  appId: env.VITE_FIREBASE_APP_ID || '1:886401397261:android:ac1669cc0bdbe693005b44',
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();

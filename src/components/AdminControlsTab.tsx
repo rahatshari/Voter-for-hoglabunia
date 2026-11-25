@@ -168,7 +168,7 @@ export const AdminControlsTab: React.FC<AdminControlsTabProps> = ({
             </span>
           )}
           <a
-            href="https://console.firebase.google.com/project/voter-apps-14962/database/voter-apps-14962-default-rtdb/rules"
+            href="https://console.firebase.google.com/project/voter-ba30b/database/voter-ba30b-default-rtdb/rules"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-indigo-700 font-bold hover:underline text-[11px]"

@@ -8,7 +8,11 @@ export const Toast: React.FC<ToastProps> = ({ message }) => {
   if (!message) return null;
 
   return (
-    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-5 py-3 rounded-full text-sm font-semibold shadow-xl border border-slate-700 animate-bounce transition-all duration-300">
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-22 sm:bottom-20 left-1/2 -translate-x-1/2 z-50 max-w-[92vw] sm:max-w-md px-5 py-3 rounded-2xl bg-[var(--md-inverse-surface)] text-[var(--md-inverse-on-surface)] text-xs sm:text-sm font-bold shadow-xl animate-m3-scale"
+    >
       {message}
     </div>
   );

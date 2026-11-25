@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity() {
 
     // WebViewAssetLoader serves assets from secure HTTPS origin to enable ES Modules & CORS without blank screen
     private val localAppUrl = "https://appassets.androidplatform.net/assets/public/index.html"
-    private val defaultLiveUrl = "https://rahatsharif10448.github.io/voter-apps/"
+    private val defaultLiveUrl = "https://rahatshari.github.io/hoglabunia-union-voter/"
 
     // File Chooser Launcher for uploads
     private val filePickerLauncher = registerForActivityResult(

@@ -56,6 +56,10 @@ export const SECURE_RTDB_RULES_JSON = JSON.stringify(
         '.read': 'auth != null && auth.token.email != null',
         '.write': RTDB_IS_ADMIN_EXPR,
       },
+      app_release: {
+        '.read': 'auth != null && auth.token.email != null',
+        '.write': RTDB_IS_ADMIN_EXPR,
+      },
       users: {
         '.read': RTDB_IS_ADMIN_EXPR,
         $emailKey: {

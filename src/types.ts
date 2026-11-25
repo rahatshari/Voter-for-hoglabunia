@@ -32,19 +32,25 @@ export interface VillageSummary {
 }
 
 export interface AppSearchFilters {
+  omni?: string;
   serial: string;
   name: string;
   father: string;
   mother: string;
   dob: string;
+  voterId?: string;
   profession: string;
   gender: string;
+  ageGroup?: AgeGroupFilter;
+  campaignFilter?: CampaignStatusFilter;
+  sortBy?: VoterSortOption;
 }
 
 export interface AppSettings {
   fullList: boolean;
   stats: boolean;
   migrated: boolean;
+  viewMode?: VoterViewMode;
 }
 
 export interface SavedAppState {
@@ -228,5 +234,31 @@ export interface CandidateProfile {
 
 export type ElectionSlipConfig = CandidateProfile;
 
+export type M3ColorPalette = 'emerald' | 'indigo' | 'amber' | 'ocean';
+export type M3ThemeMode = 'light' | 'dark' | 'system';
+export type M3FontScale = 'normal' | 'large';
 
+export interface M3ThemePreferences {
+  palette: M3ColorPalette;
+  mode: M3ThemeMode;
+  fontScale: M3FontScale;
+}
 
+export type SupportTagType = 'supporter' | 'followup' | 'neutral' | 'away' | 'elderly_care' | '';
+
+export interface VoterAnnotation {
+  key: string;
+  starred?: boolean;
+  voted?: boolean;
+  votedAt?: number | null;
+  supportTag?: SupportTagType;
+  phone?: string;
+  note?: string;
+  updatedAt: number;
+}
+
+export type VoterSortOption = 'serial_asc' | 'serial_desc' | 'name_asc' | 'age_asc' | 'age_desc';
+export type AgeGroupFilter = '' | 'youth' | 'working' | 'middle' | 'senior';
+export type CampaignStatusFilter = '' | 'starred' | 'voted' | 'unvoted' | 'has_note' | 'supporter' | 'followup';
+export type VoterViewMode = 'card' | 'compact';
+export type AppScreenType = 'home' | 'search' | 'saved' | 'analytics';

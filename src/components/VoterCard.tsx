@@ -1,6 +1,21 @@
 import React from 'react';
-import { Voter } from '../types';
-import { calculateAge, isMigrated } from '../lib/bengaliUtils';
+import {
+  Bookmark,
+  Check,
+  CheckCircle2,
+  Copy,
+  MapPin,
+  Phone,
+  Plus,
+  Printer,
+  QrCode,
+  StickyNote,
+  Users,
+} from 'lucide-react';
+import { Voter, VoterAnnotation, VoterViewMode } from '../types';
+import { calculateAge, convertToEnglishNumbers, isMigrated } from '../lib/bengaliUtils';
+import { SUPPORT_TAGS_META } from '../lib/voterTrackerStore';
+import { VoterDetailTab } from './VoterDetailSheet';
 
 interface VoterCardProps {
   voter: Voter;
@@ -8,6 +23,12 @@ interface VoterCardProps {
   onPrint: (voter: Voter) => void;
   isQueued?: boolean;
   onToggleQueue?: (voter: Voter) => void;
+  viewMode?: VoterViewMode;
+  annotation?: VoterAnnotation;
+  onToggleStar?: (voter: Voter) => void;
+  onToggleVoted?: (voter: Voter) => void;
+  onOpenDetail?: (voter: Voter, tab?: VoterDetailTab) => void;
+  onCopyVoterId?: (voterId: string) => void;
 }
 
 export const VoterCard: React.FC<VoterCardProps> = ({
@@ -16,129 +37,403 @@ export const VoterCard: React.FC<VoterCardProps> = ({
   onPrint,
   isQueued = false,
   onToggleQueue,
+  viewMode = 'card',
+  annotation,
+  onToggleStar,
+  onToggleVoted,
+  onOpenDetail,
+  onCopyVoterId,
 }) => {
   const isMig = isMigrated(voter);
   const calculatedAge = voter._age || calculateAge(voter.dob);
   const displayName = voter.name || (isMig ? 'মাইগ্রেট হয়েছে' : '-');
+  const isFemale = (voter._gender || voter.gender) === 'মহিলা';
+  const tagMeta = SUPPORT_TAGS_META.find((t) => t.id === annotation?.supportTag);
 
-  return (
-    <div
-      className={`border rounded-xl p-4 shadow-xs transition hover:shadow-md relative overflow-hidden ${
-        isMig
-          ? 'border-red-300 bg-red-50/60'
-          : isQueued
-          ? 'border-emerald-400 bg-emerald-50/30 ring-1 ring-emerald-300'
-          : 'border-slate-200 bg-white'
-      }`}
-    >
-      {/* Header */}
-      <div className="flex justify-between items-start border-b border-dashed border-slate-200 pb-2.5 mb-2.5 flex-wrap gap-2">
-        <div className="flex flex-col gap-1">
-          <span
-            className={`font-bold text-base ${
-              isMig ? 'text-red-600 line-through' : 'text-indigo-600'
+  // =========================================================================
+  // COMPACT LIST VIEW (High-density mobile scanning mode)
+  // =========================================================================
+  if (viewMode === 'compact') {
+    return (
+      <div
+        className={`m3-card-elevated px-3.5 py-2.5 flex items-center justify-between gap-2.5 transition ${
+          isMig
+            ? 'border-[var(--md-error)]/40 bg-[var(--md-error-container)]/20'
+            : isQueued
+            ? 'ring-2 ring-[var(--md-primary)]'
+            : ''
+        }`}
+      >
+        <div
+          className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+          onClick={() => onOpenDetail && onOpenDetail(voter, 'info')}
+        >
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-black shrink-0 ${
+              isMig
+                ? 'bg-[var(--md-error-container)] text-[var(--md-on-error-container)]'
+                : isFemale
+                ? 'bg-rose-100 text-rose-800'
+                : 'm3-tonal-container'
             }`}
           >
-            {displayName}
-          </span>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-semibold">
-              {voter.gender || '-'}
-            </span>
-            {isMig && (
-              <span className="text-[11px] bg-red-100 text-red-700 border border-red-200 px-2.5 py-0.5 rounded-full font-bold">
-                🚫 {voter.name || 'স্থানান্তরিত/কর্তিত'}
+            {voter.serialNo || '#'}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span
+                className={`text-sm font-extrabold truncate ${
+                  isMig ? 'line-through text-[var(--md-error)]' : ''
+                }`}
+              >
+                {displayName}
               </span>
-            )}
-            {isQueued && (
-              <span className="text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
-                👨‍👩‍👧‍👦 একসাথে স্লিপ লিস্টে যুক্ত
-              </span>
-            )}
+              {annotation?.voted && (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              )}
+              {annotation?.starred && (
+                <Bookmark className="w-3.5 h-3.5 text-amber-500 fill-current shrink-0" />
+              )}
+            </div>
+            <p className="text-[11px] text-[var(--md-on-surface-variant)] truncate">
+              পিতা: {voter.fatherName || '-'} • {voter.voterId || '-'}
+              {voter.villageName ? ` • ${voter.villageName}` : ''}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {voter.villageName && (
-            <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-md font-bold">
-              📍 {voter.villageName}
-            </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {onToggleVoted && !isMig && (
+            <button
+              type="button"
+              onClick={() => onToggleVoted(voter)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer ${
+                annotation?.voted
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
+              }`}
+              title="ভোট মার্ক"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+            </button>
           )}
-          <span className="text-xs bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-md font-bold">
-            ক্রমিক: {voter.serialNo || '-'}
-          </span>
+          {onToggleQueue && (
+            <button
+              type="button"
+              onClick={() => onToggleQueue(voter)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer ${
+                isQueued
+                  ? 'm3-tonal-container'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
+              }`}
+              title="একসাথে প্রিন্ট লিস্টে নিন"
+            >
+              {isQueued ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onPrint(voter)}
+            className="m3-btn-filled h-8 px-2.5 text-[11px] flex items-center gap-1"
+            title="ভোটার স্লিপ"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">স্লিপ</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // DETAILED MATERIAL DESIGN 3 CARD VIEW
+  // =========================================================================
+  return (
+    <article
+      className={`m3-card-elevated p-4 sm:p-4.5 relative overflow-hidden transition ${
+        isMig
+          ? 'border-[var(--md-error)]/50 bg-[var(--md-error-container)]/15'
+          : isQueued
+          ? 'ring-2 ring-[var(--md-primary)] bg-[var(--md-primary-container)]/10'
+          : ''
+      }`}
+    >
+      {/* Top Header Row */}
+      <div className="flex items-start justify-between gap-2.5 pb-3 mb-3 border-b border-[var(--md-outline-variant)]/50">
+        <div
+          className="flex items-start gap-3 min-w-0 flex-1 cursor-pointer group"
+          onClick={() => onOpenDetail && onOpenDetail(voter, 'info')}
+        >
+          {/* M3 Tonal Serial Avatar */}
+          <div
+            className={`min-w-[44px] h-11 px-2 rounded-2xl flex flex-col items-center justify-center shrink-0 font-black leading-none shadow-2xs ${
+              isMig
+                ? 'bg-[var(--md-error-container)] text-[var(--md-on-error-container)]'
+                : isFemale
+                ? 'bg-rose-100 text-rose-900'
+                : 'm3-tonal-container'
+            }`}
+          >
+            <span className="text-[9px] font-bold opacity-75 mb-0.5">ক্রমিক</span>
+            <span className="text-xs sm:text-sm">{voter.serialNo || '-'}</span>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h3
+              className={`font-extrabold text-base sm:text-[17px] leading-snug group-hover:text-[var(--md-primary)] transition ${
+                isMig ? 'text-[var(--md-error)] line-through' : ''
+              }`}
+            >
+              {displayName}
+            </h3>
+
+            {/* Status & Gender Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                  isFemale
+                    ? 'bg-rose-500/12 text-rose-700'
+                    : 'bg-sky-500/12 text-sky-700'
+                }`}
+              >
+                {voter.gender || '-'}
+              </span>
+
+              {voter.villageName && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full m3-secondary-container font-bold inline-flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  {voter.villageName}
+                </span>
+              )}
+
+              {isMig && (
+                <span className="text-[11px] bg-[var(--md-error-container)] text-[var(--md-on-error-container)] px-2.5 py-0.5 rounded-full font-bold">
+                  স্থানান্তরিত/কর্তিত
+                </span>
+              )}
+
+              {tagMeta && (
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${tagMeta.badgeClass}`}
+                >
+                  {tagMeta.shortLabel}
+                </span>
+              )}
+
+              {isQueued && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full m3-tonal-container font-bold">
+                  প্রিন্ট কিউতে যুক্ত
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Top-Right Quick Bookmark & Voted Toggle */}
+        <div className="flex items-center gap-1 shrink-0">
+          {onToggleVoted && !isMig && (
+            <button
+              type="button"
+              onClick={() => onToggleVoted(voter)}
+              className={`h-8 px-2.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1 transition cursor-pointer active:scale-95 ${
+                annotation?.voted
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)] hover:text-[var(--md-on-surface)]'
+              }`}
+              title="ভোট প্রদান স্ট্যাটাস মার্ক করুন"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">
+                {annotation?.voted ? 'ভোট সম্পন্ন' : 'ভোট'}
+              </span>
+            </button>
+          )}
+
+          {onToggleStar && (
+            <button
+              type="button"
+              onClick={() => onToggleStar(voter)}
+              className={`w-8 h-8 rounded-full inline-flex items-center justify-center transition cursor-pointer active:scale-90 ${
+                annotation?.starred
+                  ? 'bg-amber-400/20 text-amber-600'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
+              }`}
+              title="বুকমার্ক করুন"
+            >
+              <Bookmark
+                className={`w-4 h-4 ${annotation?.starred ? 'fill-current' : ''}`}
+              />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Details Rows */}
-      <div className="space-y-1.5 text-sm">
-        <div className="flex justify-between">
-          <span className="text-slate-500 font-semibold w-[35%]">পিতার নাম:</span>
-          <span className="text-slate-800 font-medium w-[65%]">{voter.fatherName || '-'}</span>
+      {/* Structured 2-Column Mobile-Friendly Metadata Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
+        <div className="flex justify-between sm:justify-start sm:gap-2">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            পিতার নাম:
+          </span>
+          <span className="font-bold text-right sm:text-left">
+            {voter.fatherName || '-'}
+          </span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500 font-semibold w-[35%]">মাতার নাম:</span>
-          <span className="text-slate-800 font-medium w-[65%]">{voter.motherName || '-'}</span>
+
+        <div className="flex justify-between sm:justify-start sm:gap-2">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            মাতার নাম:
+          </span>
+          <span className="font-bold text-right sm:text-left">
+            {voter.motherName || '-'}
+          </span>
         </div>
-        <div className="flex justify-between items-center">
-          <span className="text-slate-500 font-semibold w-[35%]">জন্ম তারিখ:</span>
-          <span className="text-slate-800 font-medium w-[65%] flex items-center gap-1.5 flex-wrap">
+
+        <div className="flex justify-between sm:justify-start sm:gap-2 items-center">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            জন্ম তারিখ:
+          </span>
+          <span className="font-bold flex items-center gap-1.5 flex-wrap justify-end sm:justify-start">
             <span>{voter.dob || '-'}</span>
             {calculatedAge && (
-              <span className="text-indigo-700 font-bold bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded text-xs">
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-[var(--md-surface-container-high)] text-[var(--md-primary)]">
                 {calculatedAge}
               </span>
             )}
           </span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500 font-semibold w-[35%]">পেশা:</span>
-          <span className="text-slate-800 font-medium w-[65%]">{voter.profession || '-'}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500 font-semibold w-[35%]">ভোটার নং:</span>
-          <span className="text-red-600 font-bold tracking-wider w-[65%]">
-            {voter.voterId || '-'}
+
+        <div className="flex justify-between sm:justify-start sm:gap-2">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            পেশা:
+          </span>
+          <span className="font-semibold text-right sm:text-left">
+            {voter.profession || '-'}
           </span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500 font-semibold w-[35%]">ঠিকানা:</span>
-          <span className="text-slate-800 font-medium w-[65%]">{voter.address || '-'}</span>
+
+        {/* Highlighted Copyable Voter ID */}
+        <div className="flex justify-between sm:justify-start sm:gap-2 items-center">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            ভোটার নং:
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              voter.voterId &&
+              (onCopyVoterId ? onCopyVoterId(voter.voterId) : onCopy(voter))
+            }
+            className="inline-flex items-center gap-1.5 font-black tracking-wide text-[var(--md-primary)] bg-[var(--md-primary-container)]/35 hover:bg-[var(--md-primary-container)]/60 px-2 py-0.5 rounded-lg transition cursor-pointer"
+            title="ভোটার নম্বর কপি করতে ট্যাপ করুন"
+          >
+            <span>{voter.voterId || '-'}</span>
+            {voter.voterId && <Copy className="w-3 h-3 opacity-75" />}
+          </button>
+        </div>
+
+        <div className="flex justify-between sm:justify-start sm:gap-2">
+          <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
+            ঠিকানা:
+          </span>
+          <span className="font-medium text-right sm:text-left truncate">
+            {voter.address || '-'}
+          </span>
         </div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex justify-end gap-2 mt-3 pt-2.5 border-t border-slate-100 flex-wrap">
-        {onToggleQueue && (
+      {/* Saved Note / Phone Banner (if field agent added one) */}
+      {(annotation?.note || annotation?.phone) && (
+        <div className="mt-2.5 px-3 py-2 rounded-xl bg-[var(--md-surface-container)] flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <StickyNote className="w-3.5 h-3.5 text-[var(--md-primary)] shrink-0" />
+            <span className="truncate font-medium">
+              {annotation.note || `মোবাইল: ${annotation.phone}`}
+            </span>
+          </div>
+          {annotation.phone && (
+            <a
+              href={`tel:${convertToEnglishNumbers(annotation.phone)}`}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full m3-tonal-container text-[11px] font-bold shrink-0"
+            >
+              <Phone className="w-3 h-3" />
+              <span>কল</span>
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* M3 Action Bar */}
+      <div className="flex items-center justify-between gap-1.5 mt-3.5 pt-3 border-t border-[var(--md-outline-variant)]/50 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {onOpenDetail && (
+            <>
+              <button
+                type="button"
+                onClick={() => onOpenDetail(voter, 'family')}
+                className="m3-btn-tonal h-8 px-3 text-xs inline-flex items-center gap-1.5"
+                title="পরিবারের অন্য ভোটারদের দেখুন"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>পরিবার</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpenDetail(voter, 'info')}
+                className="m3-btn-outlined h-8 px-2.5 text-xs inline-flex items-center gap-1"
+                title="বিস্তারিত, শেয়ার ও QR কোড"
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>শেয়ার/QR</span>
+              </button>
+            </>
+          )}
+
           <button
             type="button"
-            onClick={() => onToggleQueue(voter)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition flex items-center gap-1 shadow-xs border ${
-              isQueued
-                ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
-                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
-            }`}
-            title="পরিবারের সদস্য বা একাধিক ভোটার একসাথে এক পেজে প্রিন্ট করার লিস্টে নিন"
+            onClick={() => onCopy(voter)}
+            className="m3-btn-outlined h-8 px-2.5 text-xs inline-flex items-center gap-1"
+            title="সম্পূর্ণ তথ্য কপি"
           >
-            {isQueued ? '✅ একসাথে লিস্টে আছে' : '➕ একসাথে প্রিন্টে নিন'}
+            <Copy className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">কপি</span>
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onCopy(voter)}
-          className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition flex items-center gap-1 shadow-xs"
-        >
-          📋 কপি
-        </button>
-        <button
-          type="button"
-          onClick={() => onPrint(voter)}
-          className="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition flex items-center gap-1 shadow-xs"
-          title="নির্বাচনী ভোটার স্লিপ প্রস্তুত ও প্রিন্ট"
-        >
-          🗳️ ভোটার স্লিপ
-        </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          {onToggleQueue && (
+            <button
+              type="button"
+              onClick={() => onToggleQueue(voter)}
+              className={`h-8 px-3 rounded-full text-xs font-bold inline-flex items-center gap-1 transition cursor-pointer active:scale-95 ${
+                isQueued ? 'm3-tonal-container' : 'm3-btn-outlined'
+              }`}
+              title="একসাথে একাধিক ভোটার স্লিপ প্রিন্ট লিস্টে যোগ করুন"
+            >
+              {isQueued ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>যুক্ত</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>একসাথে</span>
+                </>
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => onPrint(voter)}
+            className="m3-btn-filled h-8 px-3.5 text-xs inline-flex items-center gap-1.5 shadow-2xs"
+            title="ভোটার স্লিপ তৈরি ও প্রিন্ট"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>ভোটার স্লিপ</span>
+          </button>
+        </div>
       </div>
-    </div>
+    </article>
   );
 };

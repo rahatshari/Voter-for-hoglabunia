@@ -1,4 +1,13 @@
 import React, { useEffect, useState } from 'react';
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  LogIn,
+  Mail,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { recordSuccessfulLoginTimestamp } from '../lib/sessionExpiryUtils';
@@ -44,7 +53,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setUnauthorizedDomain(null);
 
     try {
-      // Check block status from server or client store on GitHub Pages
       try {
         const checkRes = await fetch(`/api/auth/check-status?email=${encodeURIComponent(cleanEmail)}`);
         const ct = checkRes.headers.get('content-type') || '';
@@ -53,19 +61,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           if (checkJson.isBlocked) {
             setLoading(false);
             setStatusMessage({
-              text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+              text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
               isError: true,
             });
             return;
           }
         } else {
-          // GitHub Pages client store check
           const { loadStoredUsers } = await import('../lib/clientAdminStore');
           const clientUsers = loadStoredUsers();
           if (clientUsers[cleanEmail]?.status === 'blocked') {
             setLoading(false);
             setStatusMessage({
-              text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+              text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
               isError: true,
             });
             return;
@@ -78,7 +85,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const loggedEmail = userCredential.user.email || cleanEmail;
 
-      // Check real-time Firebase Cloud block & maintenance lock immediately after auth token is ready
       try {
         const { checkCloudAccessForUser } = await import('../lib/cloudStore');
         const cloudCheck = await checkCloudAccessForUser(loggedEmail);
@@ -86,7 +92,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           await signOut(auth);
           setLoading(false);
           setStatusMessage({
-            text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+            text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
             isError: true,
           });
           return;
@@ -95,7 +101,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           await signOut(auth);
           setLoading(false);
           setStatusMessage({
-            text: `🔧 ${cloudCheck.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'}`,
+            text: `${cloudCheck.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'}`,
             isError: true,
           });
           return;
@@ -129,7 +135,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           await signOut(auth);
           setLoading(false);
           setStatusMessage({
-            text: '⚠️ আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+            text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
             isError: true,
           });
           return;
@@ -156,7 +162,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         code === 'auth/wrong-password'
       ) {
         errMsg =
-          'ইমেইল বা পাসওয়ার্ড সঠিক নয়। অনুগ্রহ করে পুনরায় সতর্কতার সাথে টাইপ করুন (বড়/ছোট হাতের অক্ষর ও বাড়তি স্পেস খেয়াল করুন)।';
+          'ইমেইল বা পাসওয়ার্ড সঠিক নয়। অনুগ্রহ করে পুনরায় সতর্কতার সাথে টাইপ করুন।';
       } else if (code === 'auth/invalid-email') {
         errMsg = 'ইমেইলের ফরম্যাট সঠিক নয়। যেমন: user@gmail.com';
       } else if (code === 'auth/too-many-requests') {
@@ -197,27 +203,29 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-sm p-7 sm:p-8 rounded-3xl shadow-xl border border-slate-100">
+    <div className="min-h-screen m3-surface flex items-center justify-center p-4">
+      <div className="m3-card-elevated w-full max-w-sm p-7 sm:p-8 rounded-[28px] animate-m3-scale">
         <div className="text-center mb-6">
           <img
             src="./logo.png"
-            alt="Logo"
-            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full mx-auto mb-4 object-contain shadow-md border-2 border-indigo-100 p-1 bg-white ring-4 ring-indigo-50/80 transition-transform duration-200 hover:scale-105"
+            alt="ইউনিয়ন ভোটার তালিকা লোগো"
+            className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl mx-auto mb-4 object-contain shadow-md border-2 border-[var(--md-primary-container)] p-2 bg-white transition-transform duration-200 hover:scale-105"
             onError={(e) => {
               (e.target as HTMLElement).style.display = 'none';
             }}
           />
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">স্বাগতম</h2>
-          <p className="text-slate-500 text-sm mt-1">ইউনিয়ন ভোটার তালিকায় প্রবেশ করুন</p>
+          <h1 className="text-2xl font-black tracking-tight">স্বাগতম</h1>
+          <p className="text-[var(--md-on-surface-variant)] text-xs sm:text-sm mt-1">
+            হোগলাবুনিয়া ভোটার তালিকায় নিরাপদে লগইন করুন
+          </p>
         </div>
 
         {statusMessage && (
           <div
-            className={`p-3 rounded-xl text-xs mb-3 text-center leading-relaxed font-medium ${
+            className={`p-3.5 rounded-2xl text-xs mb-4 text-center leading-relaxed font-semibold ${
               statusMessage.isError
-                ? 'bg-red-50 text-red-700 border border-red-200'
-                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                ? 'bg-[var(--md-error-container)] text-[var(--md-on-error-container)]'
+                : 'm3-tonal-container'
             }`}
           >
             {statusMessage.text}
@@ -225,16 +233,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         )}
 
         {unauthorizedDomain && (
-          <div className="mb-5 p-4 rounded-xl bg-amber-50 border border-amber-200 text-left text-xs text-amber-900 space-y-2.5">
-            <div className="flex items-center gap-2 font-bold text-amber-950">
-              <span className="text-base">🔐</span>
+          <div className="mb-5 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left text-xs text-amber-950 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold">
+              <ShieldCheck className="w-4 h-4 shrink-0" />
               <span>ফায়ারবেস অনুমোদিত ডোমেন পারমিশন দিন</span>
             </div>
-            <p className="text-[11px] leading-relaxed text-amber-800">
-              ফায়ারবেসের নিরাপত্তা নিয়মের কারণে নতুন হোস্টিং ডোমেনটিতে লগইন চালু করতে নিচের ডোমেনটি অনুমতি দিতে হবে:
-            </p>
-            <div className="flex items-center justify-between bg-white border border-amber-300 rounded-lg p-2 font-mono text-[11px]">
-              <span className="truncate select-all font-semibold text-slate-800">{unauthorizedDomain}</span>
+            <div className="flex items-center justify-between bg-white border border-amber-300 rounded-xl p-2 font-mono text-[11px]">
+              <span className="truncate select-all font-semibold text-slate-800">
+                {unauthorizedDomain}
+              </span>
               <button
                 type="button"
                 onClick={() => {
@@ -242,50 +249,42 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   setCopiedDomain(true);
                   setTimeout(() => setCopiedDomain(false), 2500);
                 }}
-                className="ml-2 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded font-sans text-[11px] font-bold cursor-pointer transition shrink-0"
+                className="ml-2 px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg font-sans text-[11px] font-bold cursor-pointer transition shrink-0"
               >
-                {copiedDomain ? '✓ কপি হয়েছে' : 'কপি করুন'}
+                {copiedDomain ? 'কপি হয়েছে' : 'কপি করুন'}
               </button>
             </div>
-            <div className="space-y-1 text-[11px] text-amber-900 pt-1">
-              <p className="font-bold">অনুমোদন দেওয়ার ধাপসমূহ:</p>
-              <ol className="list-decimal list-inside space-y-1 pl-1">
-                <li>Firebase Console-এ আপনার <strong className="font-bold">voter-apps-14962</strong> প্রজেক্টে যান।</li>
-                <li>বাম পাশের মেনু থেকে <strong className="font-bold">Authentication</strong> &gt; <strong className="font-bold">Settings</strong> ট্যাবে যান।</li>
-                <li><strong className="font-bold">Authorized domains</strong> অপশনে গিয়ে <strong className="font-bold">Add domain</strong> বাটনে চাপ দিন।</li>
-                <li>কপি করা ডোমেনটি পেস্ট করে <strong className="font-bold">Save</strong> করলেই সাথে সাথে লগইন কার্যকর হবে।</li>
-              </ol>
-            </div>
-            <div className="pt-1.5 text-center">
+            <div className="pt-1 text-center">
               <a
-                href="https://console.firebase.google.com/project/voter-apps-14962/authentication/settings"
+                href="https://console.firebase.google.com/project/voter-ba30b/authentication/settings"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full font-bold text-xs transition"
               >
-                <span>ফায়ারবেস কনসোলে যান</span>
-                <span>↗</span>
+                <span>ফায়ারবেস কনসোলে যান ↗</span>
               </a>
             </div>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
+        <form onSubmit={handleLogin} className="space-y-3.5">
+          <div className="relative">
+            <Mail className="w-4 h-4 text-[var(--md-on-surface-variant)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="আপনার ইমেইল"
+              placeholder="আপনার ইমেইল অ্যাড্রেস"
               required
               autoComplete="email"
               autoCapitalize="none"
               spellCheck="false"
-              className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 transition"
+              className="m3-input w-full !pl-10 !py-3 !rounded-2xl !text-sm"
             />
           </div>
 
           <div className="relative">
+            <Lock className="w-4 h-4 text-[var(--md-on-surface-variant)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
@@ -294,15 +293,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               required
               autoComplete="current-password"
               autoCapitalize="none"
-              className="w-full px-4 py-3 pr-12 border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 transition"
+              className="m3-input w-full !pl-10 !pr-11 !py-3 !rounded-2xl !text-sm"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 text-base cursor-pointer"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 m3-icon-btn !w-8 !h-8"
               title="পাসওয়ার্ড দেখুন/লুকান"
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
 
@@ -310,7 +309,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <button
               type="button"
               onClick={handleResetPassword}
-              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium cursor-pointer"
+              className="text-xs text-[var(--md-primary)] hover:underline font-bold cursor-pointer"
             >
               পাসওয়ার্ড ভুলে গেছেন?
             </button>
@@ -319,20 +318,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-sm font-bold cursor-pointer transition shadow-md hover:shadow-lg shadow-indigo-500/20"
+            className="w-full m3-btn-filled py-3.5 text-sm inline-flex items-center justify-center gap-2 shadow-sm"
           >
-            {loading ? 'লগইন করা হচ্ছে...' : 'লগইন করুন'}
+            <LogIn className="w-4 h-4" />
+            <span>{loading ? 'লগইন করা হচ্ছে...' : 'লগইন করুন'}</span>
           </button>
         </form>
 
-        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center">
+        <div className="mt-5 pt-4 border-t border-[var(--md-outline-variant)]/50 flex items-center justify-center">
           <button
             type="button"
             onClick={() => window.dispatchEvent(new Event('voter_open_update_modal'))}
-            className="text-xs text-slate-500 hover:text-indigo-700 font-semibold flex items-center gap-1.5 cursor-pointer transition"
+            className="text-xs text-[var(--md-on-surface-variant)] hover:text-[var(--md-primary)] font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
           >
-            <span>🔄</span>
-            <span>অ্যাপ আপডেট ও অটো-আপডেট সেটিংস</span>
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>অ্যাপ আপডেট ও সেটিংস</span>
           </button>
         </div>
       </div>

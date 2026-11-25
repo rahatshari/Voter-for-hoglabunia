@@ -1,368 +1,610 @@
-import React, { useEffect, useState } from 'react';
-import { Voter } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowUpDown,
+  Award,
+  BarChart3,
+  Bookmark,
+  CheckCircle2,
+  ChevronRight,
+  LogOut,
+  MapPin,
+  Mic,
+  MicOff,
+  Palette,
+  Printer,
+  RefreshCw,
+  Search,
+  Shield,
+  Sparkles,
+  Users,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
+import { AgeGroupFilter, CampaignStatusFilter, Voter, VoterAnnotation } from '../types';
 import { convertToBengaliNumbers, isMigrated } from '../lib/bengaliUtils';
+import { getVoterUniqueKey } from '../lib/voterSlipUtils';
 
 interface HomeScreenProps {
   userEmail: string | null;
   villagesData: Record<string, Voter[]>;
+  annotationsMap?: Record<string, VoterAnnotation>;
   onSelectVillage: (villageName: string) => void;
-  onOpenGlobalSearch: () => void;
+  onOpenGlobalSearch: (preset?: {
+    omni?: string;
+    ageGroup?: AgeGroupFilter;
+    campaignFilter?: CampaignStatusFilter;
+    fullList?: boolean;
+  }) => void;
+  onOpenSavedHub?: () => void;
   onOpenAnalytics: (villageName?: string) => void;
   onOpenSlipModal?: (voter?: Voter | null) => void;
+  onOpenThemeSettings?: () => void;
   onOpenUserMonitoring?: () => void;
   isAdmin?: boolean;
   onOpenAdminPanel?: () => void;
   onOpenUpdateModal?: () => void;
   onLogoutClick: () => void;
+  showToast?: (msg: string) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   userEmail,
   villagesData,
+  annotationsMap = {},
   onSelectVillage,
   onOpenGlobalSearch,
+  onOpenSavedHub,
   onOpenAnalytics,
   onOpenSlipModal,
+  onOpenThemeSettings,
   isAdmin,
   onOpenAdminPanel,
   onOpenUpdateModal,
   onLogoutClick,
+  showToast,
 }) => {
   const [hasNewUpdate, setHasNewUpdate] = useState(false);
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== 'undefined' ? !navigator.onLine : false
+  );
+  const [quickQuery, setQuickQuery] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [villageFilter, setVillageFilter] = useState('');
+  const [sortVillagesByCount, setSortVillagesByCount] = useState(false);
 
   useEffect(() => {
     const onAvail = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       setHasNewUpdate(Boolean(detail?.hasUpdate));
     };
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+
     window.addEventListener('voter_update_availability', onAvail);
-    return () => window.removeEventListener('voter_update_availability', onAvail);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('voter_update_availability', onAvail);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
   }, []);
-  const villageNames = Object.keys(villagesData);
 
-  // Total voters across all villages
-  let grandTotalActive = 0;
-  let grandTotalMigrated = 0;
-  let totalMales = 0;
-  let totalFemales = 0;
+  const summary = useMemo(() => {
+    let active = 0;
+    let migrated = 0;
+    let males = 0;
+    let females = 0;
+    let voted = 0;
+    let starred = 0;
 
-  Object.values(villagesData).forEach((list) => {
-    list.forEach((v) => {
-      const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
-      if (isMig) {
-        grandTotalMigrated++;
-      } else {
-        grandTotalActive++;
-        const g = v._gender || v.gender;
-        if (g === 'পুরুষ') totalMales++;
-        else if (g === 'মহিলা') totalFemales++;
-      }
+    Object.values(villagesData).forEach((list) => {
+      list.forEach((v) => {
+        const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
+        const ann = annotationsMap[getVoterUniqueKey(v)];
+        if (ann?.starred) starred++;
+        if (isMig) {
+          migrated++;
+        } else {
+          active++;
+          if (ann?.voted) voted++;
+          const g = v._gender || v.gender;
+          if (g === 'পুরুষ') males++;
+          else if (g === 'মহিলা') females++;
+        }
+      });
     });
-  });
+
+    const malePct = active > 0 ? Math.round((males / active) * 100) : 0;
+    const femalePct = active > 0 ? Math.round((females / active) * 100) : 0;
+    const turnoutPct = active > 0 ? Math.round((voted / active) * 1000) / 10 : 0;
+
+    return { active, migrated, males, females, malePct, femalePct, voted, starred, turnoutPct };
+  }, [villagesData, annotationsMap]);
+
+  const villageCardsData = useMemo(() => {
+    const names = Object.keys(villagesData);
+    const items = names.map((village) => {
+      const voters = villagesData[village] || [];
+      let activeCount = 0;
+      let malesCount = 0;
+      let femalesCount = 0;
+      let migratedCount = 0;
+      let votedCount = 0;
+
+      for (const v of voters) {
+        const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
+        if (isMig) {
+          migratedCount++;
+        } else {
+          activeCount++;
+          const g = v._gender || v.gender;
+          if (g === 'পুরুষ') malesCount++;
+          else if (g === 'মহিলা') femalesCount++;
+          if (annotationsMap[getVoterUniqueKey(v)]?.voted) votedCount++;
+        }
+      }
+
+      const maleRatio = activeCount > 0 ? Math.round((malesCount / activeCount) * 100) : 50;
+
+      return {
+        village,
+        activeCount,
+        malesCount,
+        femalesCount,
+        migratedCount,
+        votedCount,
+        maleRatio,
+      };
+    });
+
+    const filtered = villageFilter.trim()
+      ? items.filter((item) =>
+          item.village.toLowerCase().includes(villageFilter.trim().toLowerCase())
+        )
+      : items;
+
+    if (sortVillagesByCount) {
+      return [...filtered].sort((a, b) => b.activeCount - a.activeCount);
+    }
+    return filtered;
+  }, [villagesData, annotationsMap, villageFilter, sortVillagesByCount]);
+
+  const handleQuickSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onOpenGlobalSearch({ omni: quickQuery.trim() });
+  };
+
+  const handleVoiceSearch = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      if (showToast) showToast('এই ব্রাউজারে ভয়েস সার্চ সাপোর্ট নেই');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'bn-BD';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      setIsListening(true);
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
+        setIsListening(false);
+        if (transcript.trim()) {
+          setQuickQuery(transcript.trim());
+          onOpenGlobalSearch({ omni: transcript.trim() });
+        }
+      };
+      recognition.onerror = () => {
+        setIsListening(false);
+        if (showToast) showToast('ভয়েস বুঝতে সমস্যা হয়েছে, আবার চেষ্টা করুন');
+      };
+      recognition.onend = () => setIsListening(false);
+      recognition.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* 1. Responsive Top Bar for HomeScreen (Looks great on Mobile & PC) */}
-      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-xs flex flex-wrap items-center justify-between gap-3.5">
-        <div className="flex items-center gap-3">
+    <div className="space-y-4 sm:space-y-5 animate-slide-down">
+      {/* 1. Material Design 3 Top App Bar */}
+      <header className="m3-card-elevated px-4 py-3.5 sm:px-5 sm:py-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <img
             src="./logo.png"
-            alt="Logo"
-            className="w-11 h-11 sm:w-12 sm:h-12 object-cover rounded-2xl border-2 border-indigo-100 shadow-sm shrink-0"
+            alt="ইউনিয়ন ভোটার লোগো"
+            className="w-11 h-11 sm:w-12 sm:h-12 object-cover rounded-2xl border border-[var(--md-outline-variant)] shadow-2xs shrink-0 bg-white"
             onError={(e) => {
               (e.target as HTMLElement).style.display = 'none';
             }}
           />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
-                গ্রাম নির্বাচন করুন
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-lg font-black tracking-tight truncate">
+                হোগলাবুনিয়া ভোটার তালিকা
               </h1>
-              <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                অনলাইন
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  isOffline
+                    ? 'bg-amber-100 text-amber-900'
+                    : 'm3-tonal-container'
+                }`}
+              >
+                {isOffline ? (
+                  <>
+                    <WifiOff className="w-2.5 h-2.5" />
+                    <span>অফলাইন মোড</span>
+                  </>
+                ) : (
+                  <>
+                    <Wifi className="w-2.5 h-2.5" />
+                    <span>অনলাইন</span>
+                  </>
+                )}
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-medium truncate max-w-[220px] sm:max-w-md">
-              {userEmail ? (
-                <span>লগইন: <strong className="text-slate-700 font-semibold">{userEmail}</strong></span>
-              ) : (
-                'ইউনিয়ন ভোটার তালিকা ও নির্বাচনী স্লিপ'
-              )}
+            <p className="text-xs text-[var(--md-on-surface-variant)] truncate mt-0.5">
+              {userEmail || 'স্মার্ট ভোটার অনুসন্ধান ও নির্বাচনী স্লিপ'}
             </p>
           </div>
         </div>
 
-        {/* Top Header Action Buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Admin Panel Button (Only visible to authorized Admins) */}
+        {/* Top Bar Actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {isAdmin && onOpenAdminPanel && (
             <button
               type="button"
               onClick={onOpenAdminPanel}
-              className="bg-slate-900 hover:bg-black text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
-              title="সুপার অ্যাডমিন ড্যাশবোর্ড"
+              className="m3-btn-tonal h-9 px-3 text-xs hidden sm:inline-flex items-center gap-1.5"
+              title="অ্যাডমিন ড্যাশবোর্ড"
             >
-              <span>⚙️</span>
-              <span>অ্যাডমিন প্যানেল</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+              <Shield className="w-4 h-4" />
+              <span>অ্যাডমিন</span>
             </button>
           )}
 
-          {/* Analytics Button */}
-          <button
-            type="button"
-            onClick={() => onOpenAnalytics('all')}
-            className="bg-pink-50 hover:bg-pink-100 text-pink-700 border border-pink-200 px-3.5 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
-            title="ইউনিয়ন ভোটার ডাটা অ্যানালাইসিস"
-          >
-            <span>📊</span>
-            <span className="hidden sm:inline">ডাটা</span> অ্যানালাইসিস
-          </button>
-
-          {/* Voter Slip Maker */}
-          {onOpenSlipModal && (
+          {onOpenThemeSettings && (
             <button
               type="button"
-              onClick={() => onOpenSlipModal(null)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
-              title="নির্বাচনী ভোটার স্লিপ প্রস্তুতকারক ও ব্লুটুথ প্রিন্টার"
+              onClick={onOpenThemeSettings}
+              className="m3-icon-btn-tonal"
+              title="মেটেরিয়াল ইউ থিম, ডার্ক মোড ও ব্যাকআপ সেটিংস"
             >
-              <span>🗳️</span>
-              <span>ভোটার স্লিপ</span>
+              <Palette className="w-[18px] h-[18px]" />
             </button>
           )}
 
-          {/* App Update & Auto-Update Settings Button */}
           {onOpenUpdateModal && (
             <button
               type="button"
               onClick={onOpenUpdateModal}
-              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1.5 relative"
-              title="অ্যাপ আপডেট চেক ও অটো-আপডেট সেটিংস"
+              className="m3-icon-btn-tonal relative"
+              title="অ্যাপ আপডেট চেক করুন"
             >
-              <span>🔄</span>
-              <span>আপডেট</span>
+              <RefreshCw className="w-[18px] h-[18px]" />
               {hasNewUpdate && (
-                <span
-                  aria-label="নতুন আপডেট পাওয়া গেছে"
-                  className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"
-                />
+                <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-[var(--md-surface-container-lowest)] animate-pulse" />
               )}
             </button>
           )}
 
-          {/* Logout Button */}
           <button
             type="button"
             onClick={onLogoutClick}
-            className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition cursor-pointer flex items-center gap-1"
+            className="w-10 h-10 rounded-full inline-flex items-center justify-center bg-[var(--md-error-container)]/70 hover:bg-[var(--md-error-container)] text-[var(--md-on-error-container)] transition cursor-pointer active:scale-90"
             title="লগআউট"
           >
-            <span>🚪</span>
-            <span className="hidden sm:inline">লগআউট</span>
+            <LogOut className="w-[18px] h-[18px]" />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* 2. Responsive Summary KPI Stats Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3.5">
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500 block">মোট সক্রিয় ভোটার</span>
-          <span className="text-xl sm:text-2xl font-black text-indigo-900">
-            {convertToBengaliNumbers(grandTotalActive)}
-          </span>
-          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">অরিজিনাল ভোটার</span>
-        </div>
-
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500 block">পুরুষ ভোটার</span>
-          <span className="text-xl sm:text-2xl font-black text-blue-600">
-            {convertToBengaliNumbers(totalMales)}
-          </span>
-          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">মোট পুরুষ</span>
-        </div>
-
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500 block">মহিলা ভোটার</span>
-          <span className="text-xl sm:text-2xl font-black text-rose-600">
-            {convertToBengaliNumbers(totalFemales)}
-          </span>
-          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">মোট মহিলা</span>
-        </div>
-
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500 block">মোট গ্রাম এলাকা</span>
-          <span className="text-xl sm:text-2xl font-black text-emerald-600">
-            {convertToBengaliNumbers(villageNames.length)} টি
-          </span>
-          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">তালিকাভুক্ত এলাকা</span>
-        </div>
-      </div>
-
-      {/* 3. Quick Action Responsive Grid (2-cols on mobile, 4-cols on PC) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3.5">
-        {/* Action 1: Search */}
-        <button
-          type="button"
-          onClick={onOpenGlobalSearch}
-          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-indigo-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
-        >
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xl shrink-0">
-            🔍
-          </div>
-          <div className="min-w-0">
-            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
-              ভোটার খুঁজুন
-            </h4>
-            <p className="text-[10px] text-slate-500 truncate mt-0.5">নাম, পিতা বা ক্রমিক</p>
-          </div>
-        </button>
-
-        {/* Action 2: Voter Slip */}
-        <button
-          type="button"
-          onClick={() => onOpenSlipModal && onOpenSlipModal(null)}
-          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-emerald-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
-        >
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-xl shrink-0">
-            🗳️
-          </div>
-          <div className="min-w-0">
-            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
-              স্লিপ ও প্রিন্ট
-            </h4>
-            <p className="text-[10px] text-slate-500 truncate mt-0.5">থার্মাল ব্লুটুথ প্রিন্ট</p>
-          </div>
-        </button>
-
-        {/* Action 3: Analytics */}
-        <button
-          type="button"
-          onClick={() => onOpenAnalytics('all')}
-          className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-pink-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
-        >
-          <div className="w-10 h-10 rounded-xl bg-pink-50 border border-pink-100 flex items-center justify-center text-xl shrink-0">
-            📊
-          </div>
-          <div className="min-w-0">
-            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
-              অ্যানালাইসিস
-            </h4>
-            <p className="text-[10px] text-slate-500 truncate mt-0.5">পরিসংখ্যান ও চার্ট</p>
-          </div>
-        </button>
-
-        {/* Action 4: Admin Panel or Global List */}
-        {isAdmin && onOpenAdminPanel ? (
+      {/* 2. Hero Material 3 Global Search Surface + Voice Search */}
+      <section className="m3-card-elevated p-4 sm:p-5 space-y-3.5">
+        <form onSubmit={handleQuickSearchSubmit} className="m3-search-bar">
+          <Search className="w-5 h-5 text-[var(--md-primary)] shrink-0 ml-1" />
+          <input
+            id="home-global-omni-search"
+            type="text"
+            value={quickQuery}
+            onChange={(e) => setQuickQuery(e.target.value)}
+            placeholder="সকল গ্রামে খুঁজুন: নাম, পিতা, ভোটার নং বা ক্রমিক..."
+            className="w-full bg-transparent text-sm font-medium focus:outline-none"
+          />
           <button
             type="button"
-            onClick={onOpenAdminPanel}
-            className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-3.5 rounded-2xl border border-slate-800 shadow-xs active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+            onClick={handleVoiceSearch}
+            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition cursor-pointer ${
+              isListening
+                ? 'bg-[var(--md-error)] text-[var(--md-on-error)] animate-pulse'
+                : 'hover:bg-[var(--md-surface-container-highest)] text-[var(--md-on-surface-variant)]'
+            }`}
+            title="বাংলা ভয়েস সার্চ"
           >
-            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-xl shrink-0 relative">
-              ⚙️
-              <span className="w-2 h-2 rounded-full bg-emerald-400 absolute top-1 right-1 animate-pulse" />
-            </div>
-            <div className="min-w-0">
-              <h4 className="font-extrabold text-xs sm:text-sm text-white leading-tight">
-                অ্যাডমিন প্যানেল
-              </h4>
-              <p className="text-[10px] text-indigo-200 truncate mt-0.5">ইউজার সময় ও সেশন</p>
-            </div>
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
-        ) : (
+          <button
+            type="submit"
+            className="m3-btn-filled h-9 px-4 text-xs shrink-0"
+          >
+            খুঁজুন
+          </button>
+        </form>
+
+        {/* Horizontal Scrollable M3 Assist Chips */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
           <button
             type="button"
-            onClick={onOpenGlobalSearch}
-            className="bg-white hover:bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 shadow-xs hover:border-blue-300 active:scale-95 transition cursor-pointer text-left flex items-center gap-3"
+            onClick={() => onOpenGlobalSearch({ fullList: true })}
+            className="m3-chip"
           >
-            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-xl shrink-0">
-              📋
-            </div>
-            <div className="min-w-0">
-              <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 leading-tight">
-                সম্পূর্ণ তালিকা
-              </h4>
-              <p className="text-[10px] text-slate-500 truncate mt-0.5">সব গ্রামের ভোটার</p>
-            </div>
+            <Users className="w-3.5 h-3.5 text-[var(--md-primary)]" />
+            <span>সম্পূর্ণ ইউনিয়ন তালিকা</span>
           </button>
-        )}
-      </div>
 
-      {/* 4. Village List Section (2 cols on mobile, 3-4 cols on PC) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between px-1">
+          <button
+            type="button"
+            onClick={() => onOpenGlobalSearch({ ageGroup: 'youth' })}
+            className="m3-chip"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+            <span>নতুন ভোটার (১৮-২৫)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenGlobalSearch({ ageGroup: 'senior' })}
+            className="m3-chip"
+          >
+            <Award className="w-3.5 h-3.5 text-amber-600" />
+            <span>প্রবীণ ভোটার (৬০+)</span>
+          </button>
+
+          {onOpenSlipModal && (
+            <button
+              type="button"
+              onClick={() => onOpenSlipModal(null)}
+              className="m3-chip"
+            >
+              <Printer className="w-3.5 h-3.5 text-[var(--md-primary)]" />
+              <span>ভোটার স্লিপ ও থার্মাল প্রিন্ট</span>
+            </button>
+          )}
+
+          {onOpenSavedHub && (
+            <button
+              type="button"
+              onClick={onOpenSavedHub}
+              className="m3-chip"
+            >
+              <Bookmark className="w-3.5 h-3.5 text-amber-600" />
+              <span>বুকমার্ক ও ক্যাম্পেইন</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => onOpenAnalytics('all')}
+            className="m3-chip"
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-sky-600" />
+            <span>পরিসংখ্যান ও চার্ট</span>
+          </button>
+        </div>
+      </section>
+
+      {/* 3. M3 Expressive KPI Summary Cards */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
+        {/* Card 1: Total Active Voters (Primary Tonal Container) */}
+        <div
+          onClick={() => onOpenGlobalSearch({ fullList: true })}
+          className="m3-tonal-container rounded-3xl p-4 cursor-pointer transition active:scale-[0.98] shadow-2xs"
+        >
+          <span className="text-xs font-bold opacity-80 block">মোট সক্রিয় ভোটার</span>
+          <span className="text-2xl sm:text-3xl font-black tracking-tight block mt-1">
+            {convertToBengaliNumbers(summary.active)}
+          </span>
+          <span className="text-[11px] font-semibold opacity-75 block mt-1">
+            কর্তিত বাদে অরিজিনাল তালিকা
+          </span>
+        </div>
+
+        {/* Card 2: Male Voters */}
+        <div className="m3-card-elevated rounded-3xl p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              পুরুষ ভোটার
+            </span>
+            <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-sky-500/12 text-sky-700">
+              {convertToBengaliNumbers(summary.malePct)}%
+            </span>
+          </div>
+          <span className="text-2xl sm:text-3xl font-black text-sky-700 block mt-1">
+            {convertToBengaliNumbers(summary.males)}
+          </span>
+          <span className="text-[11px] text-[var(--md-on-surface-variant)] block mt-1">
+            ইউনিয়নের মোট পুরুষ
+          </span>
+        </div>
+
+        {/* Card 3: Female Voters */}
+        <div className="m3-card-elevated rounded-3xl p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              মহিলা ভোটার
+            </span>
+            <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/12 text-rose-700">
+              {convertToBengaliNumbers(summary.femalePct)}%
+            </span>
+          </div>
+          <span className="text-2xl sm:text-3xl font-black text-rose-600 block mt-1">
+            {convertToBengaliNumbers(summary.females)}
+          </span>
+          <span className="text-[11px] text-[var(--md-on-surface-variant)] block mt-1">
+            ইউনিয়নের মোট মহিলা
+          </span>
+        </div>
+
+        {/* Card 4: Live Campaign / Turnout Tracker */}
+        <div
+          onClick={onOpenSavedHub}
+          className="m3-card-elevated rounded-3xl p-4 cursor-pointer hover:border-[var(--md-primary)] transition active:scale-[0.98]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              ভোট ও বুকমার্ক
+            </span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          </div>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="text-2xl sm:text-3xl font-black text-emerald-600">
+              {convertToBengaliNumbers(summary.voted)}
+            </span>
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              ভোট ({convertToBengaliNumbers(summary.turnoutPct)}%)
+            </span>
+          </div>
+          <div className="w-full h-1.5 rounded-full bg-[var(--md-surface-container-highest)] overflow-hidden mt-2">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+              style={{ width: `${Math.min(100, Math.max(summary.turnoutPct, summary.voted > 0 ? 4 : 0))}%` }}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* 4. Village Directory Section */}
+      <section className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-0.5">
           <div className="flex items-center gap-2">
-            <span className="text-lg">🏡</span>
-            <h2 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">
-              গ্রামভিত্তিক ভোটার তালিকা ({convertToBengaliNumbers(villageNames.length)} টি)
-            </h2>
+            <div className="w-8 h-8 rounded-xl m3-secondary-container flex items-center justify-center">
+              <MapPin className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight">
+                গ্রামভিত্তিক ভোটার ডিরেক্টরি ({convertToBengaliNumbers(Object.keys(villagesData).length)} টি)
+              </h2>
+            </div>
           </div>
-          <span className="text-xs text-indigo-600 font-bold">
-            গ্রাম নির্বাচন করুন
-          </span>
+
+          {/* Village Filter & Sort Controls */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-3 h-9 rounded-full bg-[var(--md-surface-container-high)] border border-[var(--md-outline-variant)]/50 flex-1 sm:w-48">
+              <Search className="w-3.5 h-3.5 text-[var(--md-on-surface-variant)] shrink-0" />
+              <input
+                type="text"
+                value={villageFilter}
+                onChange={(e) => setVillageFilter(e.target.value)}
+                placeholder="গ্রাম খুঁজুন..."
+                className="w-full bg-transparent text-xs focus:outline-none"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSortVillagesByCount((v) => !v)}
+              className={`m3-chip !h-9 !rounded-full ${
+                sortVillagesByCount ? 'm3-chip-selected' : ''
+              }`}
+              title="ভোটার সংখ্যা অনুযায়ী সাজান"
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              <span>{sortVillagesByCount ? 'বেশি ভোটার আগে' : 'ক্রমানুসারে'}</span>
+            </button>
+          </div>
         </div>
 
-        {villageNames.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-slate-200 p-6">
-            <p className="text-xs text-slate-500 font-medium">কোনো গ্রামের ডাটা লোড করা যায়নি।</p>
+        {villageCardsData.length === 0 ? (
+          <div className="m3-card-outlined p-12 text-center">
+            <p className="text-xs font-semibold text-[var(--md-on-surface-variant)]">
+              কোনো গ্রামের তথ্য পাওয়া যায়নি।
+            </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-            {villageNames.map((village) => {
-              const voters = villagesData[village] || [];
-              const activeCount = voters.filter((v) =>
-                v._isMigrated !== undefined ? !v._isMigrated : !isMigrated(v)
-              ).length;
-              const malesCount = voters.filter(
-                (v) => (v._gender || v.gender) === 'পুরুষ'
-              ).length;
-              const femalesCount = voters.filter(
-                (v) => (v._gender || v.gender) === 'মহিলা'
-              ).length;
-
-              return (
-                <button
-                  key={village}
-                  type="button"
-                  onClick={() => onSelectVillage(village)}
-                  className="bg-white hover:bg-slate-50 active:scale-[0.99] border border-slate-200 hover:border-indigo-300 rounded-2xl p-4 transition-all shadow-xs hover:shadow-md flex items-center justify-between text-left cursor-pointer gap-3 group"
-                >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {villageCardsData.map((item, idx) => (
+              <div
+                key={item.village}
+                onClick={() => onSelectVillage(item.village)}
+                className="m3-card-elevated p-4 hover:border-[var(--md-primary)] active:scale-[0.99] transition cursor-pointer flex flex-col justify-between gap-3 group"
+              >
+                <div className="flex items-start justify-between gap-2.5">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center text-xl shrink-0 font-bold group-hover:bg-indigo-600 group-hover:text-white transition">
-                      🏡
+                    <div className="w-11 h-11 rounded-2xl m3-tonal-container flex items-center justify-center font-black text-sm shrink-0 group-hover:scale-105 transition-transform">
+                      {convertToBengaliNumbers(idx + 1)}
                     </div>
                     <div className="min-w-0">
-                      <h3 className="font-extrabold text-sm sm:text-base text-slate-900 leading-tight truncate group-hover:text-indigo-600 transition">
-                        {village}
+                      <h3 className="font-extrabold text-base leading-snug truncate group-hover:text-[var(--md-primary)] transition-colors">
+                        {item.village}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-500 font-medium flex-wrap">
-                        <span className="flex items-center gap-0.5 text-blue-600 font-semibold">
-                          <span>👨</span> {convertToBengaliNumbers(malesCount)}
+                      <div className="flex items-center gap-2 text-xs text-[var(--md-on-surface-variant)] font-semibold mt-0.5 flex-wrap">
+                        <span className="text-sky-700">
+                          পুরুষ: {convertToBengaliNumbers(item.malesCount)}
                         </span>
                         <span>•</span>
-                        <span className="flex items-center gap-0.5 text-rose-600 font-semibold">
-                          <span>👩</span> {convertToBengaliNumbers(femalesCount)}
+                        <span className="text-rose-600">
+                          মহিলা: {convertToBengaliNumbers(item.femalesCount)}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <div className="text-right">
-                      <span className="block font-black text-indigo-600 text-sm sm:text-base">
-                        {convertToBengaliNumbers(activeCount)}
+                      <span className="block font-black text-base sm:text-lg text-[var(--md-primary)] leading-none">
+                        {convertToBengaliNumbers(item.activeCount)}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-semibold">ভোটার</span>
+                      <span className="text-[10px] font-semibold text-[var(--md-on-surface-variant)]">
+                        ভোটার
+                      </span>
                     </div>
-                    <span className="text-slate-400 group-hover:text-indigo-600 text-lg transition">›</span>
+                    <ChevronRight className="w-4 h-4 text-[var(--md-outline)] group-hover:text-[var(--md-primary)] group-hover:translate-x-0.5 transition" />
                   </div>
-                </button>
-              );
-            })}
+                </div>
+
+                {/* Gender Ratio Progress Bar & Mini Stats Footer */}
+                <div className="space-y-1.5">
+                  <div className="w-full h-1.5 rounded-full bg-rose-200/80 overflow-hidden flex">
+                    <div
+                      className="h-full bg-sky-600 rounded-l-full"
+                      style={{ width: `${item.maleRatio}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[var(--md-on-surface-variant)]">
+                    <div className="flex items-center gap-2">
+                      {item.votedCount > 0 ? (
+                        <span className="text-emerald-600 font-bold">
+                          ভোট সম্পন্ন: {convertToBengaliNumbers(item.votedCount)} জন
+                        </span>
+                      ) : (
+                        <span>
+                          পুরুষ {convertToBengaliNumbers(item.maleRatio)}% • মহিলা{' '}
+                          {convertToBengaliNumbers(100 - item.maleRatio)}%
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenAnalytics(item.village);
+                      }}
+                      className="text-[11px] font-bold text-[var(--md-primary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <BarChart3 className="w-3 h-3" />
+                      <span>চার্ট</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

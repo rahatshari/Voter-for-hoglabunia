@@ -6,8 +6,9 @@ import {
 } from '../types';
 import { convertToBengaliNumbers } from './bengaliUtils';
 
-export const DEFAULT_REPO = 'rahatsharif10448/voter-apps';
-export const DEFAULT_LIVE_VERSION_URL = 'https://rahatsharif10448.github.io/voter-apps/version.json';
+export const DEFAULT_REPO = 'rahatshari/hoglabunia-union-voter';
+export const DEFAULT_LIVE_VERSION_URL =
+  'https://rahatshari.github.io/hoglabunia-union-voter/version.json';
 export const UPDATE_PREFS_STORAGE_KEY = 'voter_app_update_prefs_v1';
 export const UPDATE_DISMISSED_SESSION_KEY = 'dismissed_apk_update_version';
 export const UPDATE_FIRST_SEEN_STORAGE_KEY = 'voter_update_first_seen_v1';
@@ -273,8 +274,38 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
   let detectedRemote: RemoteReleaseInfo | null = null;
   let anyNetworkSucceeded = false;
 
-  // 1. Check GitHub Releases API
+  // 0. Check Firebase Realtime Database (/app_release) first — works even when GitHub repo is Private!
   try {
+    const [{ get, ref }, { database }] = await Promise.all([
+      import('firebase/database'),
+      import('./firebase'),
+    ]);
+    const snap = await Promise.race([
+      get(ref(database, 'app_release')),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]);
+    if (snap && typeof (snap as any).exists === 'function' && (snap as any).exists()) {
+      anyNetworkSucceeded = true;
+      const parsed = normalizeVersionJson((snap as any).val(), installed.repo);
+      if (
+        parsed &&
+        isRemoteVersionNewer(
+          parsed.versionCode,
+          parsed.versionName,
+          installed.versionCode,
+          installed.versionName
+        )
+      ) {
+        detectedRemote = parsed;
+      }
+    }
+  } catch {
+    // fallback below
+  }
+
+  // 1. Check GitHub Releases API
+  if (!detectedRemote) {
+    try {
     const ghRes = await fetch(`https://api.github.com/repos/${installed.repo}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json' },
       cache: 'no-store',
@@ -294,9 +325,10 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
       ) {
         detectedRemote = parsed;
       }
+      }
+    } catch {
+      // fallback below
     }
-  } catch {
-    // fallback below
   }
 
   // 2. Fallback: check GitHub Pages live version.json

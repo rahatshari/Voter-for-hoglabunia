@@ -1,20 +1,38 @@
-import React, { useState, useMemo } from 'react';
-import { Voter } from '../types';
+import React, { useMemo, useState } from 'react';
+import {
+  ArrowLeft,
+  BarChart3,
+  Briefcase,
+  CheckCircle2,
+  ChevronRight,
+  MapPin,
+  Printer,
+  Search,
+  Sliders,
+  Users,
+} from 'lucide-react';
+import { AgeGroupFilter, Voter, VoterAnnotation } from '../types';
 import {
   convertToBengaliNumbers,
   convertToEnglishNumbers,
   isMigrated,
 } from '../lib/bengaliUtils';
+import { getVoterUniqueKey } from '../lib/voterSlipUtils';
 
 interface AnalyticsScreenProps {
   villagesData: Record<string, Voter[]>;
+  annotationsMap?: Record<string, VoterAnnotation>;
   initialVillage?: string;
-  onNavigateSearch: (village?: string) => void;
+  onNavigateSearch: (
+    village?: string,
+    preset?: { ageGroup?: AgeGroupFilter; profession?: string }
+  ) => void;
   onNavigateHome: () => void;
 }
 
 export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   villagesData,
+  annotationsMap = {},
   initialVillage = 'all',
   onNavigateSearch,
   onNavigateHome,
@@ -22,22 +40,17 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   const [selectedVillage, setSelectedVillage] = useState<string>(initialVillage || 'all');
   const [gaugeMetric, setGaugeMetric] = useState<'female' | 'male' | 'active'>('female');
   const [maxAgeFilter, setMaxAgeFilter] = useState<number>(100);
-  const [minAgeFilter, setMinAgeFilter] = useState<number>(18);
+  const [minAgeFilter] = useState<number>(18);
 
   const villageNames = useMemo(() => Object.keys(villagesData), [villagesData]);
 
-  // Aggregate voters based on selected village
   const activeVotersPool = useMemo(() => {
-    let pool: Voter[] = [];
     if (selectedVillage === 'all') {
-      pool = Object.values(villagesData).flat();
-    } else {
-      pool = villagesData[selectedVillage] || [];
+      return Object.values(villagesData).flat();
     }
-    return pool;
+    return villagesData[selectedVillage] || [];
   }, [villagesData, selectedVillage]);
 
-  // Filtered by age slider
   const filteredVoters = useMemo(() => {
     return activeVotersPool.filter((voter) => {
       if (!voter.dob || voter.dob === '-') return true;
@@ -54,7 +67,6 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
     });
   }, [activeVotersPool, minAgeFilter, maxAgeFilter]);
 
-  // High-level Metrics
   const stats = useMemo(() => {
     const total = filteredVoters.length;
     if (total === 0) {
@@ -64,6 +76,9 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
         migrated: 0,
         males: 0,
         females: 0,
+        votedCount: 0,
+        starredCount: 0,
+        turnoutPercent: 0,
         malePercent: 0,
         femalePercent: 0,
         migratedPercent: 0,
@@ -79,35 +94,37 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
     let migratedCount = 0;
     let males = 0;
     let females = 0;
+    let votedCount = 0;
+    let starredCount = 0;
     let totalAgeYears = 0;
     let ageKnownCount = 0;
 
     const ageGroups = {
-      youth: 0, // 18-25
-      working: 0, // 26-40
-      middle: 0, // 41-60
-      senior: 0, // 60+
+      youth: 0,
+      working: 0,
+      middle: 0,
+      senior: 0,
     };
 
     const profMap: Record<string, number> = {};
 
     filteredVoters.forEach((v) => {
       const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
+      const ann = annotationsMap[getVoterUniqueKey(v)];
+      if (ann?.starred) starredCount++;
+
       if (isMig) {
         migratedCount++;
       } else {
         activeCount++;
+        if (ann?.voted) votedCount++;
       }
 
       const gender = (v._gender || v.gender || 'পুরুষ').trim();
-      if (gender === 'মহিলা') {
-        females++;
-      } else {
-        males++;
-      }
+      if (gender === 'মহিলা') females++;
+      else males++;
 
-      // Age grouping
-      if (v.dob && v.dob !== '-') {
+      if (!isMig && v.dob && v.dob !== '-') {
         const engDob = convertToEnglishNumbers(v.dob);
         const parts = engDob.split('/');
         if (parts.length === 3) {
@@ -117,7 +134,6 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
             if (age >= 0 && age <= 120) {
               totalAgeYears += age;
               ageKnownCount++;
-
               if (age <= 25) ageGroups.youth++;
               else if (age <= 40) ageGroups.working++;
               else if (age <= 60) ageGroups.middle++;
@@ -127,25 +143,28 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
         }
       }
 
-      // Professions
-      let prof = (v._profession || v.profession || '').trim();
-      if (!prof || prof === 'nan') prof = 'পেশা দেওয়া নেই';
-      profMap[prof] = (profMap[prof] || 0) + 1;
+      if (!isMig) {
+        let prof = (v._profession || v.profession || '').trim();
+        if (!prof || prof === 'nan') prof = 'পেশা দেওয়া নেই';
+        profMap[prof] = (profMap[prof] || 0) + 1;
+      }
     });
 
+    const denomActive = activeCount || 1;
     const topProfessions = Object.entries(profMap)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
+      .slice(0, 6)
       .map(([name, count]) => ({
         name,
         count,
-        percent: Math.round((count / total) * 100),
+        percent: Math.round((count / denomActive) * 100),
       }));
 
     const malePercent = Math.round((males / total) * 100);
     const femalePercent = Math.round((females / total) * 100);
     const migratedPercent = Math.round((migratedCount / total) * 100);
     const activePercent = Math.round((activeCount / total) * 100);
+    const turnoutPercent = activeCount > 0 ? Math.round((votedCount / activeCount) * 1000) / 10 : 0;
     const avgAge = ageKnownCount > 0 ? Math.round(totalAgeYears / ageKnownCount) : 0;
 
     const ageSum = ageGroups.youth + ageGroups.working + ageGroups.middle + ageGroups.senior || 1;
@@ -162,6 +181,9 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
       migrated: migratedCount,
       males,
       females,
+      votedCount,
+      starredCount,
+      turnoutPercent,
       malePercent,
       femalePercent,
       migratedPercent,
@@ -171,9 +193,60 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
       agePercentages,
       topProfessions,
     };
-  }, [filteredVoters]);
+  }, [filteredVoters, annotationsMap]);
 
-  // Selected Gauge Value based on state
+  // Village-by-Village Comparison Matrix
+  const villageComparison = useMemo(() => {
+    return villageNames
+      .map((vName) => {
+        const list = villagesData[vName] || [];
+        let active = 0;
+        let males = 0;
+        let females = 0;
+        let youth = 0;
+        let migrated = 0;
+        let voted = 0;
+
+        for (const v of list) {
+          const isMig = v._isMigrated !== undefined ? v._isMigrated : isMigrated(v);
+          if (isMig) {
+            migrated++;
+            continue;
+          }
+          active++;
+          const g = (v._gender || v.gender || '').trim();
+          if (g === 'মহিলা') females++;
+          else males++;
+
+          if (annotationsMap[getVoterUniqueKey(v)]?.voted) voted++;
+
+          if (v.dob && v.dob !== '-') {
+            const parts = convertToEnglishNumbers(v.dob).split('/');
+            if (parts.length === 3) {
+              const yr = parseInt(parts[2], 10);
+              const age = new Date().getFullYear() - yr;
+              if (!isNaN(age) && age >= 18 && age <= 25) youth++;
+            }
+          }
+        }
+
+        const malePct = active > 0 ? Math.round((males / active) * 100) : 0;
+        const turnoutPct = active > 0 ? Math.round((voted / active) * 100) : 0;
+        return {
+          name: vName,
+          active,
+          males,
+          females,
+          malePct,
+          youth,
+          migrated,
+          voted,
+          turnoutPct,
+        };
+      })
+      .sort((a, b) => b.active - a.active);
+  }, [villageNames, villagesData, annotationsMap]);
+
   const gaugePercent = useMemo(() => {
     if (gaugeMetric === 'female') return stats.femalePercent;
     if (gaugeMetric === 'male') return stats.malePercent;
@@ -181,59 +254,53 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   }, [gaugeMetric, stats]);
 
   const gaugeLabel = useMemo(() => {
-    if (gaugeMetric === 'female') return 'নারী ভোটার';
-    if (gaugeMetric === 'male') return 'পুরুষ ভোটার';
-    return 'সক্রিয় ভোটার';
+    if (gaugeMetric === 'female') return 'নারী ভোটার অনুপাত';
+    if (gaugeMetric === 'male') return 'পুরুষ ভোটার অনুপাত';
+    return 'সক্রিয় ভোটার অনুপাত';
   }, [gaugeMetric]);
 
-  // Circumference for 220-degree circular dial gauge
-  const radius = 64;
+  const radius = 62;
   const stroke = 12;
   const normalizedRadius = radius - stroke / 2;
   const circumference = 2 * Math.PI * normalizedRadius;
   const strokeDashoffset = circumference - (gaugePercent / 100) * circumference * 0.75;
 
-  const handlePrintReport = () => {
-    window.print();
-  };
-
   return (
-    <div className="p-3 sm:p-4 space-y-4 animate-slide-down pb-24">
-      {/* Top Header & Village Switcher Bar */}
-      <div className="soft-card p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-4 sm:space-y-5 animate-slide-down pb-12">
+      {/* 1. Material Design 3 Top Bar */}
+      <header className="m3-card-elevated p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onNavigateHome}
-            className="soft-btn w-10 h-10 flex items-center justify-center text-slate-600 hover:text-indigo-600 text-lg cursor-pointer"
+            className="m3-icon-btn-tonal"
             title="হোমে ফিরুন"
           >
-            🏠
+            <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xl">📊</span>
-              <h1 className="text-lg sm:text-xl font-bold text-slate-800">
-                ইউনিয়ন ভোটার ডাটা অ্যানালাইসিস
+              <BarChart3 className="w-5 h-5 text-[var(--md-primary)]" />
+              <h1 className="text-base sm:text-lg font-black tracking-tight">
+                ভোটার ডাটা অ্যানালাইসিস
               </h1>
             </div>
-            <p className="text-xs text-slate-500 font-medium">
-              রিয়েলটাইম ডেমোগ্রাফিক অ্যানালিটিক্স ও ইন্টারেক্টিভ মেট্রিক্স ড্যাশবোর্ড
+            <p className="text-xs text-[var(--md-on-surface-variant)]">
+              ডেমোগ্রাফিক চার্ট, গ্রামভিত্তিক তুলনা ও ক্যাম্পেইন ইনসাইটস
             </p>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Village Filter Select */}
-          <div className="soft-card-inset px-3 py-1.5 flex items-center gap-2">
-            <span className="text-xs text-slate-500 font-bold">📍 গ্রাম:</span>
+        {/* Village Selector & Actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="h-9 px-3 rounded-full bg-[var(--md-surface-container-high)] border border-[var(--md-outline-variant)]/60 flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5 text-[var(--md-primary)] shrink-0" />
             <select
               value={selectedVillage}
               onChange={(e) => setSelectedVillage(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer"
+              className="bg-transparent text-xs font-bold focus:outline-none cursor-pointer"
             >
-              <option value="all">🌐 সকল গ্রাম (ইউনিয়ন ওভারভিউ)</option>
+              <option value="all">সকল গ্রাম (ইউনিয়ন)</option>
               {villageNames.map((name) => (
                 <option key={name} value={name}>
                   {name}
@@ -245,54 +312,122 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
           <button
             type="button"
             onClick={() => onNavigateSearch(selectedVillage === 'all' ? '' : selectedVillage)}
-            className="soft-btn px-3 py-2 text-xs font-bold text-indigo-600 flex items-center gap-1.5 cursor-pointer"
+            className="m3-btn-tonal h-9 px-3.5 text-xs inline-flex items-center gap-1.5"
           >
-            <span>🔍</span> তালিকায় দেখুন
+            <Search className="w-3.5 h-3.5" />
+            <span>তালিকায় দেখুন</span>
           </button>
 
           <button
             type="button"
-            onClick={handlePrintReport}
-            className="bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md hover:shadow-lg shadow-pink-500/25 cursor-pointer transition flex items-center gap-1.5"
+            onClick={() => window.print()}
+            className="m3-btn-filled h-9 px-3.5 text-xs inline-flex items-center gap-1.5"
           >
-            <span>🖨️</span> প্রিন্ট রিপোর্ট
+            <Printer className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">প্রিন্ট রিপোর্ট</span>
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Main Dashboard Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Left Column: Circular Dial Gauge Widget (Matches 65% Expenses widget from image) */}
-        <div className="lg:col-span-4 flex flex-col gap-5">
-          <div className="soft-card p-6 flex flex-col items-center justify-between relative overflow-hidden">
-            {/* Top Indicator Pills */}
-            <div className="w-full flex justify-between items-center mb-4">
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase">
-                  অনুপাত ডায়াল
+      {/* 2. Top 4 M3 KPI Cards */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
+        <div className="m3-tonal-container rounded-3xl p-4">
+          <span className="text-xs font-bold opacity-80 block">সক্রিয় ভোটার</span>
+          <span className="text-2xl sm:text-3xl font-black block mt-1">
+            {convertToBengaliNumbers(stats.active)}
+          </span>
+          <span className="text-[11px] font-semibold opacity-80 block mt-1">
+            গড় বয়স ~ {convertToBengaliNumbers(stats.avgAge)} বছর
+          </span>
+        </div>
+
+        <div className="m3-card-elevated rounded-3xl p-4">
+          <span className="text-xs font-bold text-[var(--md-on-surface-variant)] block">
+            লিঙ্গ অনুপাত
+          </span>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="text-xl sm:text-2xl font-black text-sky-700">
+              {convertToBengaliNumbers(stats.malePercent)}%
+            </span>
+            <span className="text-xs text-[var(--md-outline)]">/</span>
+            <span className="text-xl sm:text-2xl font-black text-rose-600">
+              {convertToBengaliNumbers(stats.femalePercent)}%
+            </span>
+          </div>
+          <span className="text-[11px] text-[var(--md-on-surface-variant)] block mt-1">
+            পুরুষ {convertToBengaliNumbers(stats.males)} • নারী{' '}
+            {convertToBengaliNumbers(stats.females)}
+          </span>
+        </div>
+
+        <div
+          onClick={() =>
+            onNavigateSearch(selectedVillage === 'all' ? '' : selectedVillage, {
+              ageGroup: 'youth',
+            })
+          }
+          className="m3-card-elevated rounded-3xl p-4 cursor-pointer hover:border-[var(--md-primary)] transition"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              তরুণ ভোটার (১৮-২৫)
+            </span>
+            <ChevronRight className="w-4 h-4 text-[var(--md-outline)]" />
+          </div>
+          <span className="text-2xl sm:text-3xl font-black text-emerald-600 block mt-1">
+            {convertToBengaliNumbers(stats.ageGroups.youth)}
+          </span>
+          <span className="text-[11px] text-[var(--md-primary)] font-bold block mt-1">
+            মোটের {convertToBengaliNumbers(stats.agePercentages.youth)}% (দেখতে ট্যাপ করুন)
+          </span>
+        </div>
+
+        <div className="m3-card-elevated rounded-3xl p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[var(--md-on-surface-variant)]">
+              ভোট প্রদান ট্র্যাকার
+            </span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          </div>
+          <span className="text-2xl sm:text-3xl font-black text-[var(--md-primary)] block mt-1">
+            {convertToBengaliNumbers(stats.turnoutPercent)}%
+          </span>
+          <span className="text-[11px] text-[var(--md-on-surface-variant)] block mt-1">
+            সম্পন্ন: {convertToBengaliNumbers(stats.votedCount)} জন • বুকমার্ক:{' '}
+            {convertToBengaliNumbers(stats.starredCount)}
+          </span>
+        </div>
+      </section>
+
+      {/* 3. Main Analytics Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left Column: M3 Circular Dial + Age Range Slider */}
+        <div className="lg:col-span-4 space-y-4">
+          <div className="m3-card-elevated p-5 flex flex-col items-center">
+            <div className="w-full flex items-center justify-between mb-2">
+              <div>
+                <span className="text-[11px] font-bold text-[var(--md-on-surface-variant)] block">
+                  ইন্টারেক্টিভ ডায়াল
                 </span>
-                <span className="text-sm font-bold text-slate-700">{gaugeLabel}</span>
+                <span className="text-sm font-extrabold">{gaugeLabel}</span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full">
-                <span>{convertToBengaliNumbers(stats.total)}</span> মোট
-              </div>
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full m3-secondary-container">
+                মোট {convertToBengaliNumbers(stats.total)}
+              </span>
             </div>
 
-            {/* Circular Gauge Display */}
             <div className="relative w-44 h-44 flex items-center justify-center my-2">
               <svg className="w-full h-full -rotate-135" viewBox="0 0 128 128">
-                {/* Background Track */}
                 <circle
                   cx="64"
                   cy="64"
                   r={normalizedRadius}
                   fill="transparent"
-                  stroke="#E2E8F0"
+                  stroke="var(--md-surface-container-highest)"
                   strokeWidth={stroke}
                   strokeDasharray={`${circumference * 0.75} ${circumference}`}
                   strokeLinecap="round"
                 />
-                {/* Active Colored Arc */}
                 <circle
                   cx="64"
                   cy="64"
@@ -300,10 +435,10 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
                   fill="transparent"
                   stroke={
                     gaugeMetric === 'female'
-                      ? '#EC4899'
+                      ? '#e11d48'
                       : gaugeMetric === 'male'
-                      ? '#6366F1'
-                      : '#10B981'
+                      ? '#0284c7'
+                      : 'var(--md-primary)'
                   }
                   strokeWidth={stroke}
                   strokeDasharray={`${circumference} ${circumference}`}
@@ -312,13 +447,11 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
                   className="transition-all duration-700 ease-out"
                 />
               </svg>
-
-              {/* Inner Center Label */}
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                <span className="text-3xl font-black tracking-tight">
                   {convertToBengaliNumbers(gaugePercent)}%
                 </span>
-                <span className="text-[11px] font-bold text-slate-400 mt-0.5">
+                <span className="text-xs font-semibold text-[var(--md-on-surface-variant)] mt-0.5">
                   {gaugeMetric === 'female'
                     ? `${convertToBengaliNumbers(stats.females)} জন`
                     : gaugeMetric === 'male'
@@ -328,439 +461,298 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
               </div>
             </div>
 
-            {/* Toggle Metric Pills (Like Expenses / Income toggle in user image) */}
-            <div className="w-full grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setGaugeMetric('female')}
-                className={`py-2 px-2 text-xs font-bold rounded-xl cursor-pointer transition ${
-                  gaugeMetric === 'female'
-                    ? 'bg-pink-500 text-white shadow-md shadow-pink-500/25'
-                    : 'soft-btn text-slate-600 hover:text-pink-600'
-                }`}
-              >
-                👩 নারী
-              </button>
-              <button
-                type="button"
-                onClick={() => setGaugeMetric('male')}
-                className={`py-2 px-2 text-xs font-bold rounded-xl cursor-pointer transition ${
-                  gaugeMetric === 'male'
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                    : 'soft-btn text-slate-600 hover:text-indigo-600'
-                }`}
-              >
-                👨 পুরুষ
-              </button>
-              <button
-                type="button"
-                onClick={() => setGaugeMetric('active')}
-                className={`py-2 px-2 text-xs font-bold rounded-xl cursor-pointer transition ${
-                  gaugeMetric === 'active'
-                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25'
-                    : 'soft-btn text-slate-600 hover:text-emerald-600'
-                }`}
-              >
-                ⚡ সক্রিয়
-              </button>
+            {/* M3 Segmented Toggle */}
+            <div className="w-full grid grid-cols-3 rounded-full border border-[var(--md-outline-variant)] p-1 bg-[var(--md-surface-container-low)] mt-2">
+              {[
+                { id: 'female' as const, label: 'নারী' },
+                { id: 'male' as const, label: 'পুরুষ' },
+                { id: 'active' as const, label: 'সক্রিয়' },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setGaugeMetric(m.id)}
+                  className={`py-1.5 text-xs font-bold rounded-full transition cursor-pointer ${
+                    gaugeMetric === m.id
+                      ? 'm3-secondary-container shadow-2xs'
+                      : 'text-[var(--md-on-surface-variant)]'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Age Filter Slider */}
+            <div className="w-full mt-4 pt-3.5 border-t border-[var(--md-outline-variant)]/50">
+              <div className="flex items-center justify-between text-xs font-bold mb-2">
+                <span className="inline-flex items-center gap-1 text-[var(--md-on-surface-variant)]">
+                  <Sliders className="w-3.5 h-3.5" />
+                  বয়স সীমা ফিল্টার:
+                </span>
+                <span className="text-[var(--md-primary)]">
+                  ১৮ – {convertToBengaliNumbers(maxAgeFilter)} বছর
+                </span>
+              </div>
+              <input
+                type="range"
+                min="25"
+                max="100"
+                value={maxAgeFilter}
+                onChange={(e) => setMaxAgeFilter(parseInt(e.target.value, 10))}
+                className="w-full accent-[var(--md-primary)] cursor-pointer"
+              />
             </div>
           </div>
 
-          {/* Quick Metrics Cards */}
-          <div className="soft-card p-5 space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-              সাধারণ তথ্য ও পরিসংখ্যান
+          {/* Demographic Ratios Card */}
+          <div className="m3-card-elevated p-5 space-y-3.5">
+            <h3 className="text-xs font-extrabold text-[var(--md-on-surface-variant)] uppercase tracking-wider">
+              ডেমোগ্রাফিক সূচক মিটার
             </h3>
-            <div className="flex justify-between items-center text-xs pb-2 border-b border-slate-100">
-              <span className="text-slate-500 font-semibold flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /> মোট ভোটার
-              </span>
-              <span className="font-bold text-slate-800 text-sm">
-                {convertToBengaliNumbers(stats.total)} জন
-              </span>
-            </div>
-            <div className="flex justify-between items-center text-xs pb-2 border-b border-slate-100">
-              <span className="text-slate-500 font-semibold flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> সক্রিয় ভোটার
-              </span>
-              <span className="font-bold text-emerald-600">
-                {convertToBengaliNumbers(stats.active)} জন ({convertToBengaliNumbers(stats.activePercent)}%)
-              </span>
-            </div>
-            <div className="flex justify-between items-center text-xs pb-2 border-b border-slate-100">
-              <span className="text-slate-500 font-semibold flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> কর্তিত/স্থানান্তরিত
-              </span>
-              <span className="font-bold text-rose-600">
-                {convertToBengaliNumbers(stats.migrated)} জন ({convertToBengaliNumbers(stats.migratedPercent)}%)
-              </span>
-            </div>
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-slate-500 font-semibold flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> ভোটারদের গড় বয়স
-              </span>
-              <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
-                ~ {convertToBengaliNumbers(stats.avgAge)} বছর
-              </span>
-            </div>
+
+            {[
+              {
+                label: 'পুরুষ ভোটার হার',
+                pct: stats.malePercent,
+                barClass: 'bg-sky-600',
+              },
+              {
+                label: 'নারী ভোটার হার',
+                pct: stats.femalePercent,
+                barClass: 'bg-rose-500',
+              },
+              {
+                label: 'তরুণ ভোটার (১৮-২৫)',
+                pct: stats.agePercentages.youth,
+                barClass: 'bg-emerald-600',
+              },
+              {
+                label: 'কর্তিত / স্থানান্তরিত হার',
+                pct: stats.migratedPercent,
+                barClass: 'bg-amber-500',
+              },
+            ].map((row) => (
+              <div key={row.label} className="space-y-1">
+                <div className="flex justify-between text-xs font-bold">
+                  <span>{row.label}</span>
+                  <span>{convertToBengaliNumbers(row.pct)}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-[var(--md-surface-container-highest)] overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${row.barClass}`}
+                    style={{ width: `${Math.max(row.pct, row.pct > 0 ? 3 : 0)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Center & Right Columns: Demographic Bar Chart, Smart Card & Sliders */}
-        <div className="lg:col-span-8 space-y-5">
-          {/* Top Row: Demographic Sliders & Digital Smart ID Card */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* 4 Interactive Progress Sliders (Matches user image's 4 limit sliders) */}
-            <div className="soft-card p-5 flex flex-col justify-between">
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  ডেমোগ্রাফিক সূচক মিটার
-                </span>
-                <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
-                  অনুপাত
-                </span>
-              </div>
-
-              <div className="space-y-4">
-                {/* 1. Male limit */}
-                <div>
-                  <div className="flex justify-between text-xs font-bold mb-1.5">
-                    <span className="text-slate-600">পুরুষ ভোটার হার</span>
-                    <span className="text-indigo-600">{convertToBengaliNumbers(stats.malePercent)}%</span>
-                  </div>
-                  <div className="h-2.5 w-full soft-card-inset relative overflow-hidden rounded-full">
-                    <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
-                      style={{ width: `${stats.malePercent}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* 2. Female limit */}
-                <div>
-                  <div className="flex justify-between text-xs font-bold mb-1.5">
-                    <span className="text-slate-600">নারী ভোটার হার</span>
-                    <span className="text-pink-600">{convertToBengaliNumbers(stats.femalePercent)}%</span>
-                  </div>
-                  <div className="h-2.5 w-full soft-card-inset relative overflow-hidden rounded-full">
-                    <div
-                      className="h-full bg-gradient-to-r from-pink-500 to-rose-400 rounded-full transition-all duration-500"
-                      style={{ width: `${stats.femalePercent}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* 3. Youth limit */}
-                <div>
-                  <div className="flex justify-between text-xs font-bold mb-1.5">
-                    <span className="text-slate-600">নতুন/তরুণ ভোটার (১৮-২৫)</span>
-                    <span className="text-emerald-600">
-                      {convertToBengaliNumbers(stats.agePercentages.youth)}%
-                    </span>
-                  </div>
-                  <div className="h-2.5 w-full soft-card-inset relative overflow-hidden rounded-full">
-                    <div
-                      className="h-full bg-gradient-to-r from-emerald-400 to-teal-500 rounded-full transition-all duration-500"
-                      style={{ width: `${stats.agePercentages.youth}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* 4. Migrated limit */}
-                <div>
-                  <div className="flex justify-between text-xs font-bold mb-1.5">
-                    <span className="text-slate-600">স্থানান্তরিত/কর্তিত হার</span>
-                    <span className="text-rose-600">{convertToBengaliNumbers(stats.migratedPercent)}%</span>
-                  </div>
-                  <div className="h-2.5 w-full soft-card-inset relative overflow-hidden rounded-full">
-                    <div
-                      className="h-full bg-gradient-to-r from-amber-400 to-rose-500 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.max(stats.migratedPercent, 2)}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Digital Union Voter Smart Card Mockup (Matches credit card in top right of user image) */}
-            <div className="rounded-2xl p-6 text-white bg-gradient-to-tr from-sky-500 via-indigo-600 to-pink-500 shadow-xl relative overflow-hidden flex flex-col justify-between min-h-[220px]">
-              {/* Background holographic rings */}
-              <div className="absolute -right-8 -top-8 w-36 h-36 rounded-full border-4 border-white/20 pointer-events-none" />
-              <div className="absolute right-6 -bottom-10 w-44 h-44 rounded-full border-4 border-white/15 pointer-events-none" />
-
-              <div className="relative z-10 flex justify-between items-start">
-                <div>
-                  <span className="text-[10px] tracking-widest uppercase opacity-80 block">
-                    গণপ্রজাতন্ত্রী বাংলাদেশ
-                  </span>
-                  <h4 className="text-sm font-bold tracking-wide">ডিজিটাল ভোটার স্মার্ট কার্ড</h4>
-                </div>
-                <div className="w-8 h-6 bg-amber-300/80 rounded-md border border-amber-100/40 shadow-inner flex items-center justify-center text-[10px] text-amber-900 font-mono font-bold">
-                  SIM
-                </div>
-              </div>
-
-              {/* Masked Card Number */}
-              <div className="relative z-10 my-3">
-                <span className="text-[10px] opacity-75 block mb-1">ভোটার / স্মার্ট এনআইডি নং</span>
-                <span className="font-mono text-lg font-bold tracking-widest drop-shadow-sm">
-                  ০১০৯ •••• •••• ৬৩৪৬
-                </span>
-              </div>
-
-              {/* Card Footer Info */}
-              <div className="relative z-10 flex justify-between items-end text-xs">
-                <div>
-                  <span className="text-[10px] opacity-75 block">ইউনিয়ন পরিষদ</span>
-                  <span className="font-bold">
-                    {selectedVillage === 'all' ? 'ইউনিয়ন ভোটার তালিকা' : selectedVillage}
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] opacity-75 block">মেয়াদ</span>
-                  <span className="font-mono font-bold">০৫ / ৩৪</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Middle Row: Vertical Bar Chart (Income / Month chart in user image) */}
-          <div className="soft-card p-6">
-            <div className="flex flex-wrap justify-between items-center mb-6">
+        {/* Right Column: Interactive Age Bars & Top Professions */}
+        <div className="lg:col-span-8 space-y-4">
+          {/* Interactive Age Group Bar Chart */}
+          <div className="m3-card-elevated p-5">
+            <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                  বয়স স্তরবিন্যাস চার্ট
-                </span>
-                <h3 className="text-sm sm:text-base font-bold text-slate-800">
-                  বয়সভিত্তিক ভোটারদের আনুপাতিক চিত্র
+                <h3 className="text-sm sm:text-base font-extrabold">
+                  বয়সভিত্তিক ভোটার স্তরবিন্যাস
                 </h3>
+                <p className="text-xs text-[var(--md-on-surface-variant)]">
+                  যেকোনো বয়স স্তরে ট্যাপ করলে সরাসরি সেই বয়সের ভোটার তালিকা খুলবে
+                </p>
               </div>
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-                <span>🗓️ বছর ২০২৪-২৬</span>
-              </div>
+              <span className="text-[11px] font-bold px-2.5 py-1 rounded-full m3-tonal-container">
+                ট্যাপ করে ফিল্টার করুন
+              </span>
             </div>
 
-            {/* Vertical Bar Chart Graphic */}
-            <div className="grid grid-cols-4 gap-3 sm:gap-6 items-end h-52 pt-4 px-2 sm:px-6">
-              {/* Group 1: 18-25 */}
-              <div className="flex flex-col items-center h-full justify-end group">
-                <span className="text-xs font-bold text-pink-600 mb-2 transition group-hover:scale-110">
-                  {convertToBengaliNumbers(stats.ageGroups.youth)} জন
-                </span>
-                <div className="w-full max-w-[50px] bg-slate-100 rounded-2xl h-36 flex items-end p-1">
-                  <div
-                    className="w-full bg-gradient-to-t from-pink-500 to-rose-400 rounded-xl transition-all duration-700 shadow-sm"
-                    style={{ height: `${Math.max(stats.agePercentages.youth, 8)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-slate-700 mt-2 text-center">১৮-২৫ বছর</span>
-                <span className="text-[10px] text-slate-400">নতুন ভোটার</span>
-              </div>
-
-              {/* Group 2: 26-40 */}
-              <div className="flex flex-col items-center h-full justify-end group">
-                <span className="text-xs font-bold text-amber-600 mb-2 transition group-hover:scale-110">
-                  {convertToBengaliNumbers(stats.ageGroups.working)} জন
-                </span>
-                <div className="w-full max-w-[50px] bg-slate-100 rounded-2xl h-36 flex items-end p-1">
-                  <div
-                    className="w-full bg-gradient-to-t from-amber-400 to-amber-500 rounded-xl transition-all duration-700 shadow-sm"
-                    style={{ height: `${Math.max(stats.agePercentages.working, 8)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-slate-700 mt-2 text-center">২৬-৪০ বছর</span>
-                <span className="text-[10px] text-slate-400">যুবক/কর্মক্ষম</span>
-              </div>
-
-              {/* Group 3: 41-60 */}
-              <div className="flex flex-col items-center h-full justify-end group">
-                <span className="text-xs font-bold text-emerald-600 mb-2 transition group-hover:scale-110">
-                  {convertToBengaliNumbers(stats.ageGroups.middle)} জন
-                </span>
-                <div className="w-full max-w-[50px] bg-slate-100 rounded-2xl h-36 flex items-end p-1">
-                  <div
-                    className="w-full bg-gradient-to-t from-emerald-400 to-teal-500 rounded-xl transition-all duration-700 shadow-sm"
-                    style={{ height: `${Math.max(stats.agePercentages.middle, 8)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-slate-700 mt-2 text-center">৪১-৬০ বছর</span>
-                <span className="text-[10px] text-slate-400">মধ্যবয়সী</span>
-              </div>
-
-              {/* Group 4: 60+ */}
-              <div className="flex flex-col items-center h-full justify-end group">
-                <span className="text-xs font-bold text-purple-600 mb-2 transition group-hover:scale-110">
-                  {convertToBengaliNumbers(stats.ageGroups.senior)} জন
-                </span>
-                <div className="w-full max-w-[50px] bg-slate-100 rounded-2xl h-36 flex items-end p-1">
-                  <div
-                    className="w-full bg-gradient-to-t from-purple-500 to-indigo-500 rounded-xl transition-all duration-700 shadow-sm"
-                    style={{ height: `${Math.max(stats.agePercentages.senior, 8)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-slate-700 mt-2 text-center">৬০+ বছর</span>
-                <span className="text-[10px] text-slate-400">প্রবীণ নাগরিক</span>
-              </div>
+            <div className="grid grid-cols-4 gap-2.5 sm:gap-5 items-end h-52 pt-4 px-1 sm:px-4">
+              {[
+                {
+                  id: 'youth' as AgeGroupFilter,
+                  title: '১৮-২৫ বছর',
+                  sub: 'নতুন ভোটার',
+                  count: stats.ageGroups.youth,
+                  pct: stats.agePercentages.youth,
+                  color: 'bg-emerald-500',
+                },
+                {
+                  id: 'working' as AgeGroupFilter,
+                  title: '২৬-৪০ বছর',
+                  sub: 'কর্মক্ষম যুবক',
+                  count: stats.ageGroups.working,
+                  pct: stats.agePercentages.working,
+                  color: 'bg-sky-600',
+                },
+                {
+                  id: 'middle' as AgeGroupFilter,
+                  title: '৪১-৬০ বছর',
+                  sub: 'মধ্যবয়সী',
+                  count: stats.ageGroups.middle,
+                  pct: stats.agePercentages.middle,
+                  color: 'bg-amber-500',
+                },
+                {
+                  id: 'senior' as AgeGroupFilter,
+                  title: '৬০+ বছর',
+                  sub: 'প্রবীণ নাগরিক',
+                  count: stats.ageGroups.senior,
+                  pct: stats.agePercentages.senior,
+                  color: 'bg-rose-500',
+                },
+              ].map((col) => (
+                <button
+                  key={col.id}
+                  type="button"
+                  onClick={() =>
+                    onNavigateSearch(selectedVillage === 'all' ? '' : selectedVillage, {
+                      ageGroup: col.id,
+                    })
+                  }
+                  className="flex flex-col items-center h-full justify-end group cursor-pointer"
+                >
+                  <span className="text-xs font-extrabold mb-1.5 group-hover:text-[var(--md-primary)] transition">
+                    {convertToBengaliNumbers(col.count)}
+                  </span>
+                  <div className="w-full max-w-[54px] bg-[var(--md-surface-container-high)] rounded-2xl h-34 flex items-end p-1 group-hover:ring-2 group-hover:ring-[var(--md-primary)] transition">
+                    <div
+                      className={`w-full ${col.color} rounded-xl transition-all duration-700`}
+                      style={{ height: `${Math.max(col.pct, 10)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-extrabold mt-2 text-center leading-tight">
+                    {col.title}
+                  </span>
+                  <span className="text-[10px] text-[var(--md-on-surface-variant)]">
+                    {convertToBengaliNumbers(col.pct)}% • {col.sub}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Bottom Row: Arc Gauges (Bottom left of user image) & Top Professions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Concentric Arc Gauges (Matches 12% & 15% pink concentric arcs in user image) */}
-            <div className="soft-card p-5 flex flex-col justify-between">
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  আর্ক মিটার ও ব্যালেন্স
-                </span>
-                <span className="text-[11px] font-bold text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full">
-                  রেসিও
-                </span>
+          {/* Interactive Top Professions Card */}
+          <div className="m3-card-elevated p-5 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-[var(--md-primary)]" />
+                <h3 className="text-sm sm:text-base font-extrabold">শীর্ষ পেশাসমূহ</h3>
               </div>
-
-              <div className="flex items-center justify-around py-3">
-                {/* Arc 1: Senior Citizens */}
-                <div className="flex flex-col items-center text-center">
-                  <div className="relative w-24 h-16 flex items-end justify-center overflow-hidden">
-                    <svg className="w-24 h-24" viewBox="0 0 100 100">
-                      <path
-                        d="M 15 65 A 35 35 0 0 1 85 65"
-                        fill="none"
-                        stroke="#FEE2E2"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M 15 65 A 35 35 0 0 1 85 65"
-                        fill="none"
-                        stroke="#F43F5E"
-                        strokeWidth="8"
-                        strokeDasharray="110"
-                        strokeDashoffset={110 - (stats.agePercentages.senior / 100) * 110}
-                        strokeLinecap="round"
-                        className="transition-all duration-700"
-                      />
-                    </svg>
-                  </div>
-                  <span className="text-base font-extrabold text-slate-800 mt-1">
-                    {convertToBengaliNumbers(stats.agePercentages.senior)}%
-                  </span>
-                  <span className="text-[11px] text-slate-500 font-semibold">প্রবীণ অনুপাত</span>
-                </div>
-
-                {/* Arc 2: Gender Parity / Parity balance */}
-                <div className="flex flex-col items-center text-center">
-                  <div className="relative w-24 h-16 flex items-end justify-center overflow-hidden">
-                    <svg className="w-24 h-24" viewBox="0 0 100 100">
-                      <path
-                        d="M 15 65 A 35 35 0 0 1 85 65"
-                        fill="none"
-                        stroke="#E0E7FF"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M 15 65 A 35 35 0 0 1 85 65"
-                        fill="none"
-                        stroke="#6366F1"
-                        strokeWidth="8"
-                        strokeDasharray="110"
-                        strokeDashoffset={110 - (stats.femalePercent / 100) * 110}
-                        strokeLinecap="round"
-                        className="transition-all duration-700"
-                      />
-                    </svg>
-                  </div>
-                  <span className="text-base font-extrabold text-slate-800 mt-1">
-                    {convertToBengaliNumbers(stats.femalePercent)}%
-                  </span>
-                  <span className="text-[11px] text-slate-500 font-semibold">নারী অংশগ্রহণ</span>
-                </div>
-              </div>
-
-              {/* Interactive Age Range Filter Slider (Matches the sliders in user image) */}
-              <div className="mt-2 pt-3 border-t border-slate-100">
-                <div className="flex justify-between items-center text-xs font-bold mb-2">
-                  <span className="text-slate-600">বয়সের ফিল্টার পরিসর:</span>
-                  <span className="text-indigo-600 font-mono">
-                    {convertToBengaliNumbers(minAgeFilter)} - {convertToBengaliNumbers(maxAgeFilter)} বছর
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-slate-400 font-bold">১৮</span>
-                  <input
-                    type="range"
-                    min="18"
-                    max="90"
-                    value={maxAgeFilter}
-                    onChange={(e) => setMaxAgeFilter(parseInt(e.target.value, 10))}
-                    className="w-full accent-pink-500 cursor-pointer"
-                  />
-                  <span className="text-[10px] text-slate-400 font-bold">৯০+</span>
-                </div>
-              </div>
+              <span className="text-xs text-[var(--md-on-surface-variant)] font-semibold">
+                ট্যাপ করে পেশাভিত্তিক ভোটার দেখুন
+              </span>
             </div>
 
-            {/* Top Professions Breakdown List */}
-            <div className="soft-card p-5 flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    শীর্ষ পেশাসমূহ
-                  </span>
-                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                    পেশা অ্যানালাইসিস
-                  </span>
-                </div>
-
-                <div className="space-y-2.5">
-                  {stats.topProfessions.map((prof, idx) => (
-                    <div key={prof.name} className="flex flex-col gap-1">
-                      <div className="flex justify-between text-xs font-bold text-slate-700">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                          {prof.name}
-                        </span>
-                        <span className="text-slate-500 font-mono">
-                          {convertToBengaliNumbers(prof.count)} জন ({convertToBengaliNumbers(prof.percent)}%)
-                        </span>
-                      </div>
-                      <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            idx === 0
-                              ? 'bg-pink-500'
-                              : idx === 1
-                              ? 'bg-indigo-500'
-                              : idx === 2
-                              ? 'bg-emerald-500'
-                              : 'bg-amber-500'
-                          }`}
-                          style={{ width: `${Math.max(prof.percent, 3)}%` }}
-                        />
-                      </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {stats.topProfessions.map((prof) => {
+                const clickable = prof.name !== 'পেশা দেওয়া নেই';
+                return (
+                  <button
+                    key={prof.name}
+                    type="button"
+                    disabled={!clickable}
+                    onClick={() =>
+                      clickable &&
+                      onNavigateSearch(selectedVillage === 'all' ? '' : selectedVillage, {
+                        profession: prof.name,
+                      })
+                    }
+                    className={`m3-card-filled p-3 text-left space-y-1.5 ${
+                      clickable
+                        ? 'cursor-pointer hover:ring-1 hover:ring-[var(--md-primary)]'
+                        : 'opacity-80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="truncate">{prof.name}</span>
+                      <span className="text-[var(--md-primary)] shrink-0 ml-2">
+                        {convertToBengaliNumbers(prof.count)} জন (
+                        {convertToBengaliNumbers(prof.percent)}%)
+                      </span>
                     </div>
-                  ))}
-                  {stats.topProfessions.length === 0 && (
-                    <div className="text-center text-xs text-slate-400 py-6">
-                      কোনো পেশার তথ্য পাওয়া যায়নি
+                    <div className="h-1.5 w-full rounded-full bg-[var(--md-surface-container-highest)] overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-[var(--md-primary)] transition-all duration-500"
+                        style={{ width: `${Math.max(prof.percent, 4)}%` }}
+                      />
                     </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => onNavigateSearch(selectedVillage === 'all' ? '' : selectedVillage)}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 cursor-pointer transition"
-                >
-                  বিস্তারিত ভোটার তালিকায় যান ➔
-                </button>
-              </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
       </div>
+
+      {/* 4. NEW: Village-by-Village Comparison Matrix */}
+      {villageComparison.length > 0 && (
+        <section className="m3-card-elevated p-4 sm:p-5 space-y-3.5">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-[var(--md-primary)]" />
+              <h3 className="text-sm sm:text-base font-extrabold">
+                সকল গ্রামের তুলনামূলক পরিসংখ্যান ({convertToBengaliNumbers(villageComparison.length)} টি গ্রাম)
+              </h3>
+            </div>
+            <span className="text-xs text-[var(--md-on-surface-variant)]">
+              গ্রামে ট্যাপ করে সরাসরি তালিকা খুলুন
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse min-w-[540px]">
+              <thead>
+                <tr className="border-b border-[var(--md-outline-variant)] text-[var(--md-on-surface-variant)]">
+                  <th className="py-2.5 px-2 font-bold">গ্রাম / এলাকা</th>
+                  <th className="py-2.5 px-2 font-bold text-right">সক্রিয় ভোটার</th>
+                  <th className="py-2.5 px-2 font-bold text-right">পুরুষ</th>
+                  <th className="py-2.5 px-2 font-bold text-right">মহিলা</th>
+                  <th className="py-2.5 px-2 font-bold text-right">তরুণ (১৮-২৫)</th>
+                  <th className="py-2.5 px-2 font-bold text-right">ভোট সম্পন্ন</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--md-outline-variant)]/40">
+                {villageComparison.map((v, i) => (
+                  <tr
+                    key={v.name}
+                    onClick={() => onNavigateSearch(v.name)}
+                    className="hover:bg-[var(--md-surface-container-low)] cursor-pointer transition"
+                  >
+                    <td className="py-2.5 px-2 font-extrabold flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full m3-secondary-container text-[10px] inline-flex items-center justify-center">
+                        {convertToBengaliNumbers(i + 1)}
+                      </span>
+                      <span>{v.name}</span>
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-black text-[var(--md-primary)]">
+                      {convertToBengaliNumbers(v.active)}
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-semibold text-sky-700">
+                      {convertToBengaliNumbers(v.males)} ({convertToBengaliNumbers(v.malePct)}%)
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-semibold text-rose-600">
+                      {convertToBengaliNumbers(v.females)} ({convertToBengaliNumbers(100 - v.malePct)}%)
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-semibold text-emerald-700">
+                      {convertToBengaliNumbers(v.youth)}
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-bold">
+                      {v.voted > 0 ? (
+                        <span className="text-emerald-600">
+                          {convertToBengaliNumbers(v.voted)} ({convertToBengaliNumbers(v.turnoutPct)}%)
+                        </span>
+                      ) : (
+                        <span className="text-[var(--md-outline)]">০</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   );
 };

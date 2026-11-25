@@ -1,4 +1,4 @@
-name: Build & Release Signed Android APK (Auto-Version)
+name: Build & Release Signed Android APK (Hoglabunia Voter App)
 
 on:
   push:
@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🔢 Calculate Auto-Incrementing App Version
+      - name: Calculate Auto-Incrementing App Version
         id: version
         run: |
           VERSION_CODE=$((100 + ${{ github.run_number }}))
@@ -32,31 +32,33 @@ jobs:
             "versionCode": ${VERSION_CODE},
             "versionName": "${VERSION_NAME}",
             "repo": "${{ github.repository }}",
-            "apkUrl": "https://github.com/${{ github.repository }}/releases/latest/download/Union-Voter-App.apk",
-            "releaseNotes": "ভার্সন v${VERSION_NAME} (বিল্ড #${{ github.run_number }}) — স্বয়ংক্রিয়ভাবে গিটহাব পুশ থেকে আপডেটকৃত।"
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/latest/download/Hoglabunia-Voter-App.apk",
+            "releaseNotes": "ভার্সন v${VERSION_NAME} (বিল্ড #${{ github.run_number }}) — হোগলাবুনিয়া ভোটার তালিকা (Material UI 3)।"
           }
           EOF
           cat public/version.json
 
-      - name: 🟢 Setup Node.js 22
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
 
-      - name: ☕ Setup Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: 17
 
-      - name: 📦 Install Web Dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install Web Dependencies
+        run: |
+          npm install --no-audit --no-fund
+          node node_modules/esbuild/install.js 2>/dev/null || true
 
-      - name: 🔨 Build Web Production Bundle
+      - name: Build Web Production Bundle
         run: npm run build
 
-      - name: 📂 Embed Web Assets into Android App
+      - name: Embed Web Assets into Android App
         run: |
           rm -rf android/app/src/main/assets/public
           mkdir -p android/app/src/main/assets/public
@@ -67,7 +69,7 @@ jobs:
           echo "Assets bundled successfully:"
           ls -la android/app/src/main/assets/public/
 
-      - name: 🔐 Verify Deterministic Signing Keystore
+      - name: Verify Deterministic Signing Keystore
         run: |
           if [ ! -s android/app/voter-release-key.p12 ] && [ -f android/app/voter-release-key.base64 ]; then
             base64 -d android/app/voter-release-key.base64 > android/app/voter-release-key.p12
@@ -87,52 +89,56 @@ jobs:
             -noprompt || cp android/app/voter-release-key.p12 android/app/voter-release-key.jks
           keytool -list -v -keystore android/app/voter-release-key.jks -storepass voter123456 | head -n 18
 
-      - name: 🐘 Setup Gradle
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: ⚙️ Generate Gradle Wrapper
+      - name: Generate Gradle Wrapper
         working-directory: android
         run: |
           gradle wrapper --gradle-version 8.5
           chmod +x gradlew
 
-      - name: 🚀 Build Consistently Signed APK (v${{ steps.version.outputs.version_name }})
+      - name: Build Signed APK (v${{ steps.version.outputs.version_name }})
         working-directory: android
         run: |
           ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
             --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk ../Union-Voter-App.apk
-          cp ../Union-Voter-App.apk "../Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk ../Hoglabunia-Voter-App.apk
+          cp ../Hoglabunia-Voter-App.apk "../Hoglabunia-Voter-App-v${{ steps.version.outputs.version_name }}.apk"
+          cp ../Hoglabunia-Voter-App.apk ../Union-Voter-App.apk
 
-      - name: 📤 Upload APK Artifacts
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Union-Voter-App-v${{ steps.version.outputs.version_name }}
+          name: Hoglabunia-Voter-App-v${{ steps.version.outputs.version_name }}
           path: |
-            Union-Voter-App.apk
-            Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk
+            Hoglabunia-Voter-App.apk
+            Hoglabunia-Voter-App-v${{ steps.version.outputs.version_name }}.apk
             public/version.json
-          retention-days: 30
+          retention-days: 90
 
-      - name: 🏷️ Publish APK to GitHub Releases Automatically on Push
+      - name: Publish APK to GitHub Releases Automatically
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version_name }}
-          name: "ইউনিয়ন ভোটার তালিকা APK v${{ steps.version.outputs.version_name }}"
+          name: "হোগলাবুনিয়া ভোটার তালিকা APK v${{ steps.version.outputs.version_name }}"
           make_latest: true
           body: |
-            ## 📱 ইউনিয়ন ভোটার তালিকা - Android APK (v${{ steps.version.outputs.version_name }})
+            ## 📱 হোগলাবুনিয়া ভোটার তালিকা - Android APK (v${{ steps.version.outputs.version_name }})
+            - **অ্যাপের নাম:** হোগলাবুনিয়া ভোটার তালিকা (`com.voter.hoglabunia`)
+            - **ডিজাইন:** Material Design 3 (Material You)
+            - **ফায়ারবেস প্রজেক্ট:** `voter-ba30b`
             - **ভার্সন:** `v${{ steps.version.outputs.version_name }}` (Version Code: `${{ steps.version.outputs.version_code }}`)
-            - **সিগনেচার:** স্থায়ী রিলিজ সিগনেচার (পূর্বের অ্যাপ আনইন্সটল না করেই সরাসরি আপডেট হবে)
 
-            ### ⬇️ ডাউনলোড ও আপডেট করার নিয়ম:
-            1. নিচে থেকে **`Union-Voter-App.apk`** ডাউনলোড করুন (অথবা অ্যাপের ভেতরে থাকা **এখনই আপডেট করুন** নোটিফিকেশনে চাপ দিন)।
-            2. মোবাইলে APK ফাইলটি ওপেন করে **Update / Install** বাটনে চাপ দিন।
+            ### ⬇️ ডাউনলোড ও ইনস্টল করার নিয়ম:
+            1. নিচে Assets থেকে **`Hoglabunia-Voter-App.apk`** ডাউনলোড করুন।
+            2. মোবাইলে APK ফাইলটি ওপেন করে **Install** বাটনে চাপ দিন।
           files: |
+            Hoglabunia-Voter-App.apk
+            Hoglabunia-Voter-App-v${{ steps.version.outputs.version_name }}.apk
             Union-Voter-App.apk
-            Union-Voter-App-v${{ steps.version.outputs.version_name }}.apk
             public/version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

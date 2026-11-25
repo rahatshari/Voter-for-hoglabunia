@@ -1,13 +1,13 @@
 {
-  "name": "ইউনিয়ন ভোটার তালিকা",
-  "short_name": "ভোটার তালিকা",
-  "description": "ইউনিয়ন ভোটার তালিকা ও ভোটার অনুসন্ধান অ্যাপ্লিকেশন",
+  "name": "হোগলাবুনিয়া ভোটার তালিকা",
+  "short_name": "হোগলাবুনিয়া ভোটার",
+  "description": "হোগলাবুনিয়া ইউনিয়ন ভোটার তালিকা ও নির্বাচনী স্লিপ অ্যাপ্লিকেশন",
   "start_url": "index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#F0F3F8",
-  "theme_color": "#4f46e5",
+  "background_color": "#f5fbf7",
+  "theme_color": "#006b54",
   "icons": [
     {
       "src": "./icon-192.png",

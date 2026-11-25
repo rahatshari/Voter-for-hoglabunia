@@ -1,12 +1,25 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { Megaphone, Wrench } from 'lucide-react';
 import { auth } from './lib/firebase';
-import { Voter, AppGlobalConfig, AppSearchFilters, AppSettings, SavedAppState } from './types';
+import {
+  AgeGroupFilter,
+  AppGlobalConfig,
+  AppScreenType,
+  AppSearchFilters,
+  AppSettings,
+  CampaignStatusFilter,
+  M3ThemePreferences,
+  SavedAppState,
+  Voter,
+  VoterAnnotation,
+} from './types';
 import { prepareVoter } from './lib/bengaliUtils';
 import { LoginScreen } from './components/LoginScreen';
 import { LoadingScreen } from './components/LoadingScreen';
 import { HomeScreen } from './components/HomeScreen';
 import { SearchScreen } from './components/SearchScreen';
+import { SavedVotersScreen } from './components/SavedVotersScreen';
 import { AnalyticsScreen } from './components/AnalyticsScreen';
 import { NavigationDock } from './components/NavigationDock';
 import { LogoutModal } from './components/LogoutModal';
@@ -16,6 +29,8 @@ import { InstallPwaBanner } from './components/InstallPwaBanner';
 import { AppUpdateBanner } from './components/AppUpdateBanner';
 import { VoterSlipModal } from './components/VoterSlipModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
+import { ThemeSettingsSheet } from './components/ThemeSettingsSheet';
+import { VoterDetailSheet, VoterDetailTab } from './components/VoterDetailSheet';
 import {
   DEFAULT_APP_CONFIG,
   clientRegisterSession,
@@ -44,6 +59,31 @@ import {
   getLoginExpiryStatus,
   recordSuccessfulLoginTimestamp,
 } from './lib/sessionExpiryUtils';
+import {
+  applyThemeToDocument,
+  loadThemePreferences,
+  saveThemePreferences,
+} from './lib/themeStore';
+import {
+  computeTrackerSummary,
+  loadVoterAnnotations,
+} from './lib/voterTrackerStore';
+import { getSlipQueue } from './lib/voterSlipUtils';
+
+const EMPTY_FILTERS: AppSearchFilters = {
+  omni: '',
+  serial: '',
+  name: '',
+  father: '',
+  mother: '',
+  dob: '',
+  voterId: '',
+  profession: '',
+  gender: '',
+  ageGroup: '',
+  campaignFilter: '',
+  sortBy: 'serial_asc',
+};
 
 export const App: React.FC = () => {
   const initialDevEmail =
@@ -58,26 +98,35 @@ export const App: React.FC = () => {
   const [isAuthChecking, setIsAuthChecking] = useState(!initialDevEmail);
   const [authStatusText, setAuthStatusText] = useState('নিরাপত্তা যাচাই করা হচ্ছে...');
   const [villagesData, setVillagesData] = useState<Record<string, Voter[]>>({});
-  const [activeScreen, setActiveScreen] = useState<'home' | 'search' | 'analytics'>('home');
+  const [activeScreen, setActiveScreen] = useState<AppScreenType>('home');
   const [activeVillageKey, setActiveVillageKey] = useState<string>('');
   const [searchTitle, setSearchTitle] = useState<string>('');
   const [currentVoters, setCurrentVoters] = useState<Voter[]>([]);
   const [analyticsVillage, setAnalyticsVillage] = useState<string>('all');
 
+  // Material Design 3 Theme State
+  const [themePrefs, setThemePrefs] = useState<M3ThemePreferences>(() =>
+    loadThemePreferences()
+  );
+  const [isThemeSheetOpen, setIsThemeSheetOpen] = useState(false);
+
+  // Campaign Annotations & Slip Queue State
+  const [annotationsMap, setAnnotationsMap] = useState<Record<string, VoterAnnotation>>(() =>
+    loadVoterAnnotations()
+  );
+  const [slipQueue, setSlipQueue] = useState<Voter[]>(() => getSlipQueue());
+
+  // Voter Detail / Family / QR Sheet State
+  const [detailVoter, setDetailVoter] = useState<Voter | null>(null);
+  const [detailTab, setDetailTab] = useState<VoterDetailTab>('info');
+
   // State saved across reloads
-  const [savedSearch, setSavedSearch] = useState<AppSearchFilters>({
-    serial: '',
-    name: '',
-    father: '',
-    mother: '',
-    dob: '',
-    profession: '',
-    gender: '',
-  });
+  const [savedSearch, setSavedSearch] = useState<AppSearchFilters>({ ...EMPTY_FILTERS });
   const [savedSettings, setSavedSettings] = useState<AppSettings>({
     fullList: false,
     stats: false,
     migrated: false,
+    viewMode: 'card',
   });
 
   // Modals & Notifications
@@ -92,14 +141,68 @@ export const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginAlert, setLoginAlert] = useState<{ text: string; isError: boolean } | null>(null);
 
+  // Apply Material Design 3 theme to document & follow OS dark-mode changes when mode === 'system'
+  useEffect(() => {
+    applyThemeToDocument(themePrefs);
+    if (themePrefs.mode !== 'system' || typeof window === 'undefined' || !window.matchMedia) {
+      return;
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => applyThemeToDocument(themePrefs);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [themePrefs]);
+
+  const handleUpdateThemePrefs = useCallback((next: M3ThemePreferences) => {
+    setThemePrefs(saveThemePreferences(next));
+  }, []);
+
+  const refreshAnnotations = useCallback(() => {
+    setAnnotationsMap(loadVoterAnnotations());
+  }, []);
+
+  const refreshSlipQueue = useCallback(() => {
+    setSlipQueue(getSlipQueue());
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('voter_tracker_updated', refreshAnnotations);
+    window.addEventListener('slip-queue-updated', refreshSlipQueue);
+    return () => {
+      window.removeEventListener('voter_tracker_updated', refreshAnnotations);
+      window.removeEventListener('slip-queue-updated', refreshSlipQueue);
+    };
+  }, [refreshAnnotations, refreshSlipQueue]);
+
+  const allVotersFlat = useMemo(
+    () => Object.values(villagesData).flat(),
+    [villagesData]
+  );
+
+  const trackerSummary = useMemo(
+    () => computeTrackerSummary(allVotersFlat, annotationsMap),
+    [allVotersFlat, annotationsMap]
+  );
+
   const handleOpenSlipModal = (voter?: Voter | null) => {
     setSlipModalVoter(voter || null);
     setIsSlipModalOpen(true);
   };
 
+  const handleOpenVoterDetail = useCallback(
+    (voter: Voter, tab: VoterDetailTab = 'info') => {
+      setDetailVoter(voter);
+      setDetailTab(tab);
+    },
+    []
+  );
+
   const sessionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const sessionListenerUnsubRef = useRef<(() => void) | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isDevUserActiveRef = useRef(Boolean(initialDevEmail));
+  const villagesDataRef = useRef(villagesData);
+  villagesDataRef.current = villagesData;
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -141,18 +244,17 @@ export const App: React.FC = () => {
     setCurrentUser(null);
     setActiveScreen('home');
     setLoginAlert({
-      text: '⏰ ২৪ ঘণ্টা পূর্ণ হয়েছে! নিরাপত্তার স্বার্থে আপনার অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। অনুগ্রহ করে পুনরায় লগইন করুন।',
+      text: '২৪ ঘণ্টা পূর্ণ হয়েছে! নিরাপত্তার স্বার্থে আপনার অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। অনুগ্রহ করে পুনরায় লগইন করুন।',
       isError: true,
     });
   }, []);
 
-  // Check URL params for logged_out
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const loggedOutParam = params.get('logged_out');
     if (loggedOutParam === 'another_device') {
       setLoginAlert({
-        text: '⚠️ আপনার অ্যাকাউন্টটি অন্য একটি মোবাইলে লগইন করা হয়েছে! এক সাথে কেবল একটি মোবাইলেই ব্যবহার করা যাবে, তাই এই ডিভাইসটি স্বয়ংক্রিয়ভাবে লগআউট করা হয়েছে।',
+        text: 'আপনার অ্যাকাউন্টটি অন্য একটি মোবাইলে লগইন করা হয়েছে! এক সাথে কেবল একটি মোবাইলেই ব্যবহার করা যাবে, তাই এই ডিভাইসটি স্বয়ংক্রিয়ভাবে লগআউট করা হয়েছে।',
         isError: true,
       });
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -161,7 +263,6 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Verify Admin Permissions for currentUser (Cloud Database first + Local Store fallback)
   useEffect(() => {
     if (!currentUser?.email) {
       setIsAdmin(false);
@@ -171,17 +272,14 @@ export const App: React.FC = () => {
 
     getCloudAdminEmails()
       .then((admins) => {
-        const userIsAdmin = isEmailAdmin(cleanEmail, admins);
-        setIsAdmin(userIsAdmin);
+        setIsAdmin(isEmailAdmin(cleanEmail, admins));
       })
       .catch(() => {
         const storedAdmins = loadStoredAdminEmails();
-        const userIsAdmin = isEmailAdmin(cleanEmail, storedAdmins);
-        setIsAdmin(userIsAdmin);
+        setIsAdmin(isEmailAdmin(cleanEmail, storedAdmins));
       });
   }, [currentUser]);
 
-  // Real-time Global App Config listener (Announcement Banner, Maintenance Mode, Single-Device Policy)
   useEffect(() => {
     const unsubCfg = subscribeAppGlobalConfig((cfg) => {
       setAppConfig(cfg || DEFAULT_APP_CONFIG);
@@ -198,7 +296,6 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Helper to resolve static asset path relative to current app URL
   const getStaticUrl = useCallback((path: string) => {
     const clean = path.replace(/^\.?\//, '');
     try {
@@ -208,7 +305,6 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Fetch village data (online API/static, APK bundled static assets, or offline IndexedDB cache)
   const loadVillages = useCallback(async () => {
     const isAndroidLocalAssets =
       typeof window !== 'undefined' &&
@@ -237,7 +333,6 @@ export const App: React.FC = () => {
       }
     }
 
-    // Static fallback using relative paths (bundles locally inside Android APK & Service Worker cache)
     const fallbackData: Record<string, Voter[]> = {};
     let villageFolders = [
       'pathamara',
@@ -260,7 +355,7 @@ export const App: React.FC = () => {
           villageFolders = folders;
         }
       }
-    } catch (e) {}
+    } catch {}
 
     for (const folder of villageFolders) {
       try {
@@ -275,7 +370,7 @@ export const App: React.FC = () => {
             const info = await infoRes.json();
             if (info?.name) vName = info.name;
           }
-        } catch (e) {}
+        } catch {}
 
         const list: Voter[] = [];
         try {
@@ -284,10 +379,12 @@ export const App: React.FC = () => {
           if (mRes.ok && mCt.includes('application/json')) {
             const males = await mRes.json();
             if (Array.isArray(males)) {
-              list.push(...males.map((v) => ({ ...v, gender: v.gender || 'পুরুষ', villageName: vName })));
+              list.push(
+                ...males.map((v) => ({ ...v, gender: v.gender || 'পুরুষ', villageName: vName }))
+              );
             }
           }
-        } catch (e) {}
+        } catch {}
 
         try {
           const fRes = await fetch(getStaticUrl(`villages/${folder}/female.json`));
@@ -295,15 +392,17 @@ export const App: React.FC = () => {
           if (fRes.ok && fCt.includes('application/json')) {
             const females = await fRes.json();
             if (Array.isArray(females)) {
-              list.push(...females.map((v) => ({ ...v, gender: v.gender || 'মহিলা', villageName: vName })));
+              list.push(
+                ...females.map((v) => ({ ...v, gender: v.gender || 'মহিলা', villageName: vName }))
+              );
             }
           }
-        } catch (e) {}
+        } catch {}
 
         if (list.length > 0) {
           fallbackData[vName] = list.map((v) => prepareVoter(v, vName));
         }
-      } catch (e) {}
+      } catch {}
     }
 
     if (hasValidVillagesData(fallbackData)) {
@@ -312,7 +411,6 @@ export const App: React.FC = () => {
       return fallbackData;
     }
 
-    // Final offline IndexedDB fallback (guarantees full PWA/Web offline availability after initial login)
     const cachedData = await loadVillagesFromOfflineCache();
     if (cachedData && hasValidVillagesData(cachedData)) {
       setVillagesData(cachedData);
@@ -323,11 +421,6 @@ export const App: React.FC = () => {
     return fallbackData;
   }, [getStaticUrl]);
 
-  const isDevUserActiveRef = useRef(Boolean(initialDevEmail));
-  const villagesDataRef = useRef(villagesData);
-  villagesDataRef.current = villagesData;
-
-  // Browser testing helper to verify UI flows
   useEffect(() => {
     if (initialDevEmail) {
       loadVillages();
@@ -344,9 +437,7 @@ export const App: React.FC = () => {
     }
   }, [initialDevEmail, loadVillages]);
 
-  // Listen for Firebase Auth state changes
   useEffect(() => {
-    // Safety fallback timeout to prevent infinite spinner
     const authSafetyTimer = setTimeout(() => {
       setIsAuthChecking((prev) => {
         if (prev) {
@@ -381,7 +472,6 @@ export const App: React.FC = () => {
         setCurrentUser(user);
         setAuthStatusText('ভোটার ডাটা লোড হচ্ছে...');
 
-        // Register / validate device session
         let mySessionId = localStorage.getItem('voter_device_session_id');
         if (!mySessionId) {
           mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
@@ -396,7 +486,6 @@ export const App: React.FC = () => {
           else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
           else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
 
-          // Clean up any existing listeners before setting up new ones
           if (sessionListenerUnsubRef.current) {
             sessionListenerUnsubRef.current();
             sessionListenerUnsubRef.current = null;
@@ -406,17 +495,15 @@ export const App: React.FC = () => {
             sessionIntervalRef.current = null;
           }
 
-          // 1. Client store backup for offline resilience (instant, synchronous)
           clientRegisterSession(user.email, mySessionId, detectedDevice);
 
-          // 2. Central Firebase Cloud Session Registration asynchronously (never blocks offline app open)
           cloudRegisterSession(user.email, mySessionId, detectedDevice)
             .then(async (res) => {
               if (res.isBlocked) {
                 await signOut(auth).catch(() => {});
                 setCurrentUser(null);
                 setLoginAlert({
-                  text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
+                  text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
                   isError: true,
                 });
                 return;
@@ -425,7 +512,7 @@ export const App: React.FC = () => {
                 await signOut(auth).catch(() => {});
                 setCurrentUser(null);
                 setLoginAlert({
-                  text: `🔧 ${res.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে।'}`,
+                  text: `${res.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে।'}`,
                   isError: true,
                 });
               }
@@ -434,16 +521,18 @@ export const App: React.FC = () => {
               console.warn('Notice: cloudRegisterSession background fallback:', err);
             });
 
-          // 3. Server API registration if backend dev server is running
           if (!isDeviceOffline()) {
             fetch('/api/session/register', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: user.email, sessionId: mySessionId, deviceName: detectedDevice }),
+              body: JSON.stringify({
+                email: user.email,
+                sessionId: mySessionId,
+                deviceName: detectedDevice,
+              }),
             }).catch(() => null);
           }
 
-          // 4. Set up periodic heartbeat (every 8 seconds) and session validation
           sessionIntervalRef.current = setInterval(async () => {
             const currentSid = localStorage.getItem('voter_device_session_id');
             if (!currentSid || !user.email) return;
@@ -455,7 +544,9 @@ export const App: React.FC = () => {
 
             try {
               const valRes = await fetch(
-                `/api/session/validate?email=${encodeURIComponent(user.email)}&sessionId=${encodeURIComponent(currentSid)}`
+                `/api/session/validate?email=${encodeURIComponent(
+                  user.email
+                )}&sessionId=${encodeURIComponent(currentSid)}`
               );
               const vct = valRes.headers.get('content-type') || '';
               if (valRes.ok && vct.includes('application/json')) {
@@ -474,7 +565,6 @@ export const App: React.FC = () => {
             } catch {}
           }, 8000);
 
-          // 5. Real-time Firebase Cloud listener for remote kicks, another device login, or live admin block
           try {
             sessionListenerUnsubRef.current = listenForSessionTermination(
               mySessionId,
@@ -489,7 +579,7 @@ export const App: React.FC = () => {
                   signOut(auth).catch(() => {});
                   setCurrentUser(null);
                   setLoginAlert({
-                    text: '🚫 আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
+                    text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক ব্লক করা হয়েছে।',
                     isError: true,
                   });
                   return;
@@ -509,7 +599,6 @@ export const App: React.FC = () => {
 
         const data = await loadVillages();
 
-        // Restore saved app state if available
         const savedRaw = localStorage.getItem('voterAppSavedState');
         if (savedRaw) {
           try {
@@ -520,19 +609,19 @@ export const App: React.FC = () => {
                 setSearchTitle('সকল গ্রাম');
                 setActiveVillageKey('all');
                 setCurrentVoters(allList);
-                setSavedSearch(state.search);
-                setSavedSettings(state.settings);
+                setSavedSearch({ ...EMPTY_FILTERS, ...state.search });
+                setSavedSettings((prev) => ({ ...prev, ...state.settings }));
                 setActiveScreen('search');
               } else if (data[state.activeVillage]) {
                 setSearchTitle(state.activeVillage);
                 setActiveVillageKey(state.activeVillage);
                 setCurrentVoters(data[state.activeVillage]);
-                setSavedSearch(state.search);
-                setSavedSettings(state.settings);
+                setSavedSearch({ ...EMPTY_FILTERS, ...state.search });
+                setSavedSettings((prev) => ({ ...prev, ...state.settings }));
                 setActiveScreen('search');
               }
             }
-          } catch (e) {}
+          } catch {}
         }
 
         setIsAuthChecking(false);
@@ -549,7 +638,6 @@ export const App: React.FC = () => {
     };
   }, [loadVillages, perform24HourAutoLogout]);
 
-  // Continuous 24-hour login enforcement while app is open or resumed from background
   useEffect(() => {
     if (!currentUser?.email) return;
 
@@ -583,10 +671,13 @@ export const App: React.FC = () => {
     };
   }, [currentUser, perform24HourAutoLogout]);
 
-  // Handle browser popstate for back button
   useEffect(() => {
     const handlePopState = () => {
-      if (activeScreen === 'search' || activeScreen === 'analytics') {
+      if (detailVoter) {
+        setDetailVoter(null);
+        return;
+      }
+      if (activeScreen !== 'home') {
         setActiveScreen('home');
         setActiveVillageKey('');
         localStorage.removeItem('voterAppSavedState');
@@ -594,78 +685,112 @@ export const App: React.FC = () => {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [activeScreen]);
+  }, [activeScreen, detailVoter]);
 
-  const handleSelectVillage = (village: string) => {
+  const handleSelectVillage = (
+    village: string,
+    preset?: { ageGroup?: AgeGroupFilter; profession?: string }
+  ) => {
     const list = villagesData[village] || [];
+    const nextSearch: AppSearchFilters = {
+      ...EMPTY_FILTERS,
+      ageGroup: preset?.ageGroup || '',
+      profession: preset?.profession || '',
+    };
     setSearchTitle(village);
     setActiveVillageKey(village);
     setCurrentVoters(list);
-    setSavedSearch({
-      serial: '',
-      name: '',
-      father: '',
-      mother: '',
-      dob: '',
-      profession: '',
-      gender: '',
-    });
+    setSavedSearch(nextSearch);
     setActiveScreen('search');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     window.history.pushState({ screen: 'search', village }, 'Search', '#search');
 
     const state: SavedAppState = {
       activeVillage: village,
-      search: { serial: '', name: '', father: '', mother: '', dob: '', profession: '', gender: '' },
+      search: nextSearch,
       settings: savedSettings,
     };
     localStorage.setItem('voterAppSavedState', JSON.stringify(state));
   };
 
-  const handleOpenGlobalSearch = () => {
+  const handleOpenGlobalSearch = (preset?: {
+    omni?: string;
+    ageGroup?: AgeGroupFilter;
+    campaignFilter?: CampaignStatusFilter;
+    profession?: string;
+    fullList?: boolean;
+  }) => {
     const allList = Object.values(villagesData).flat();
     if (allList.length === 0) {
       showToast('দুঃখিত, এখনো কোনো গ্রামের তথ্য যুক্ত করা হয়নি!');
       return;
     }
+    const nextSearch: AppSearchFilters = {
+      ...EMPTY_FILTERS,
+      omni: preset?.omni || '',
+      ageGroup: preset?.ageGroup || '',
+      campaignFilter: preset?.campaignFilter || '',
+      profession: preset?.profession || '',
+    };
+    const nextSettings: AppSettings = {
+      ...savedSettings,
+      fullList: preset?.fullList ?? savedSettings.fullList,
+      migrated: false,
+    };
     setSearchTitle('সকল গ্রাম');
     setActiveVillageKey('all');
     setCurrentVoters(allList);
-    setSavedSearch({
-      serial: '',
-      name: '',
-      father: '',
-      mother: '',
-      dob: '',
-      profession: '',
-      gender: '',
-    });
+    setSavedSearch(nextSearch);
+    setSavedSettings(nextSettings);
     setActiveScreen('search');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     window.history.pushState({ screen: 'search', village: 'all' }, 'Search', '#search');
 
     const state: SavedAppState = {
       activeVillage: 'all',
-      search: { serial: '', name: '', father: '', mother: '', dob: '', profession: '', gender: '' },
-      settings: savedSettings,
+      search: nextSearch,
+      settings: nextSettings,
     };
     localStorage.setItem('voterAppSavedState', JSON.stringify(state));
+  };
+
+  const handleSwitchVillageInSearch = (targetKey: string) => {
+    if (targetKey === 'all') {
+      const allList = Object.values(villagesData).flat();
+      setSearchTitle('সকল গ্রাম');
+      setActiveVillageKey('all');
+      setCurrentVoters(allList);
+    } else if (villagesData[targetKey]) {
+      setSearchTitle(targetKey);
+      setActiveVillageKey(targetKey);
+      setCurrentVoters(villagesData[targetKey]);
+    }
   };
 
   const handleOpenAnalytics = (village?: string) => {
     setAnalyticsVillage(village || 'all');
     setActiveScreen('analytics');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     window.history.pushState({ screen: 'analytics', village: village || 'all' }, 'Analytics', '#analytics');
+  };
+
+  const handleOpenSavedHub = () => {
+    setActiveScreen('saved');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.history.pushState({ screen: 'saved' }, 'Saved', '#saved');
   };
 
   const handleBackToHome = () => {
     setActiveScreen('home');
     setActiveVillageKey('');
     localStorage.removeItem('voterAppSavedState');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (window.location.hash) {
       window.history.replaceState({ screen: 'home' }, 'Home', window.location.pathname);
     }
   };
 
-  const handleDockNavigate = (screen: 'home' | 'search' | 'analytics') => {
+  const handleDockNavigate = (screen: AppScreenType) => {
     if (screen === 'home') {
       handleBackToHome();
     } else if (screen === 'search') {
@@ -674,27 +799,31 @@ export const App: React.FC = () => {
       } else {
         handleOpenGlobalSearch();
       }
+    } else if (screen === 'saved') {
+      handleOpenSavedHub();
     } else if (screen === 'analytics') {
       handleOpenAnalytics(activeVillageKey || 'all');
     }
   };
 
-  const handleStateChange = (search: AppSearchFilters, settings: AppSettings) => {
-    setSavedSearch(search);
-    setSavedSettings(settings);
-    if (activeVillageKey) {
-      const state: SavedAppState = {
-        activeVillage: activeVillageKey,
-        search,
-        settings,
-      };
-      localStorage.setItem('voterAppSavedState', JSON.stringify(state));
-    }
-  };
+  const handleStateChange = useCallback(
+    (search: AppSearchFilters, settings: AppSettings) => {
+      setSavedSearch(search);
+      setSavedSettings(settings);
+      if (activeVillageKey) {
+        const state: SavedAppState = {
+          activeVillage: activeVillageKey,
+          search,
+          settings,
+        };
+        localStorage.setItem('voterAppSavedState', JSON.stringify(state));
+      }
+    },
+    [activeVillageKey]
+  );
 
   const executeLogout = async () => {
     setIsLoggingOut(true);
-    // Unsubscribe from session listener and stop heartbeat
     if (sessionListenerUnsubRef.current) {
       sessionListenerUnsubRef.current();
       sessionListenerUnsubRef.current = null;
@@ -714,11 +843,11 @@ export const App: React.FC = () => {
     if (email && sessionId) {
       try {
         await cloudEndSession(sessionId, email, 'logout');
-      } catch (e) {}
+      } catch {}
 
       try {
         clientEndSession(sessionId, email, 'logout');
-      } catch (e) {}
+      } catch {}
 
       try {
         await fetch('/api/session/logout', {
@@ -726,7 +855,7 @@ export const App: React.FC = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, sessionId }),
         });
-      } catch (e) {}
+      } catch {}
     }
 
     try {
@@ -738,7 +867,7 @@ export const App: React.FC = () => {
     setIsLoggingOut(false);
     setIsLogoutOpen(false);
     setIsAnotherDeviceOpen(false);
-    setLoginAlert(null); // Clear any old login alerts
+    setLoginAlert(null);
     setCurrentUser(null);
     setActiveScreen('home');
   };
@@ -760,17 +889,15 @@ export const App: React.FC = () => {
     setCurrentUser(null);
     setActiveScreen('home');
     setLoginAlert({
-      text: '⚠️ আপনার অ্যাকাউন্টটি অন্য একটি মোবাইলে লগইন করা হয়েছে! এক সাথে কেবল একটি মোবাইলেই ব্যবহার করা যাবে, তাই এই ডিভাইসটি স্বয়ংক্রিয়ভাবে লগআউট করা হয়েছে।',
+      text: 'আপনার অ্যাকাউন্টটি অন্য একটি মোবাইলে লগইন করা হয়েছে! এক সাথে কেবল একটি মোবাইলেই ব্যবহার করা যাবে, তাই এই ডিভাইসটি স্বয়ংক্রিয়ভাবে লগআউট করা হয়েছে।',
       isError: true,
     });
   };
 
-  // Auth checking loading screen
   if (isAuthChecking) {
     return <LoadingScreen statusText={authStatusText} />;
   }
 
-  // Login view if not authenticated
   if (!currentUser) {
     return (
       <>
@@ -790,33 +917,37 @@ export const App: React.FC = () => {
     );
   }
 
-  // Maintenance lock screen for non-admin users when enabled remotely by admin
   if (appConfig.maintenanceMode && !isAdmin) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="bg-white max-w-md w-full rounded-3xl shadow-xl border border-amber-200 p-7 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-3xl mx-auto">
-            🔧
+      <div className="min-h-screen m3-surface flex items-center justify-center p-4">
+        <div className="m3-card-elevated max-w-md w-full rounded-[28px] p-7 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+            <Wrench className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-black text-slate-900">অ্যাপ রক্ষণাবেক্ষণ মোড চালু</h2>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            {appConfig.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'}
+          <h2 className="text-xl font-black">অ্যাপ রক্ষণাবেক্ষণ মোড চালু</h2>
+          <p className="text-sm text-[var(--md-on-surface-variant)] leading-relaxed">
+            {appConfig.maintenanceMessage ||
+              'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'}
           </p>
-          <div className="text-xs text-slate-400">লগইন: {currentUser.email}</div>
+          <div className="text-xs text-[var(--md-on-surface-variant)]">
+            লগইন: {currentUser.email}
+          </div>
           <button
             type="button"
             onClick={executeLogout}
-            className="w-full py-3 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer transition"
+            className="w-full m3-btn-filled py-3 text-xs"
           >
-            🚪 লগআউট করুন
+            লগআউট করুন
           </button>
         </div>
       </div>
     );
   }
 
+  const savedBadgeCount = trackerSummary.starredCount + trackerSummary.notesCount;
+
   return (
-    <div className="min-h-screen w-full bg-[#F0F3F8] flex flex-col justify-start text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen w-full m3-surface flex flex-col justify-start antialiased">
       {/* In-App APK Auto Update Notification Banner */}
       <AppUpdateBanner globalAutoUpdateEnabled={appConfig.autoUpdateEnabled !== false} />
 
@@ -825,29 +956,32 @@ export const App: React.FC = () => {
         <div
           role="region"
           aria-label="অ্যাডমিন ঘোষণা"
-          className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white px-4 py-2 text-xs font-bold text-center shadow-sm flex items-center justify-center gap-2"
+          className="bg-amber-600 text-white px-4 py-2 text-xs font-bold text-center shadow-xs flex items-center justify-center gap-2"
         >
-          <span>📢</span>
+          <Megaphone className="w-4 h-4 shrink-0" />
           <span>{appConfig.announcementText}</span>
         </div>
       )}
 
-      {/* Responsive Viewport Container: Fits mobile perfectly & expands beautifully on PC */}
-      <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 flex flex-col">
-        {/* Main Content Viewport */}
-        <main className="flex-1 pb-20 sm:pb-24">
+      {/* Responsive Mobile-First Viewport Container */}
+      <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-5 flex-1 flex flex-col">
+        <main className="flex-1 pb-safe-nav">
           {activeScreen === 'home' && (
             <HomeScreen
               userEmail={currentUser.email}
               villagesData={villagesData}
-              onSelectVillage={handleSelectVillage}
+              annotationsMap={annotationsMap}
+              onSelectVillage={(v) => handleSelectVillage(v)}
               onOpenGlobalSearch={handleOpenGlobalSearch}
+              onOpenSavedHub={handleOpenSavedHub}
               onOpenAnalytics={handleOpenAnalytics}
               onOpenSlipModal={handleOpenSlipModal}
+              onOpenThemeSettings={() => setIsThemeSheetOpen(true)}
               isAdmin={isAdmin}
               onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
               onOpenUpdateModal={() => window.dispatchEvent(new Event('voter_open_update_modal'))}
               onLogoutClick={() => setIsLogoutOpen(true)}
+              showToast={showToast}
             />
           )}
 
@@ -856,6 +990,11 @@ export const App: React.FC = () => {
               villageTitle={searchTitle}
               villageKey={activeVillageKey}
               voters={currentVoters}
+              villageNames={Object.keys(villagesData)}
+              onSwitchVillage={handleSwitchVillageInSearch}
+              annotationsMap={annotationsMap}
+              onAnnotationsChanged={refreshAnnotations}
+              onOpenVoterDetail={handleOpenVoterDetail}
               initialSearch={savedSearch}
               initialSettings={savedSettings}
               onBack={handleBackToHome}
@@ -867,16 +1006,35 @@ export const App: React.FC = () => {
             />
           )}
 
+          {activeScreen === 'saved' && (
+            <SavedVotersScreen
+              villagesData={villagesData}
+              annotationsMap={annotationsMap}
+              slipQueue={slipQueue}
+              onAnnotationsChanged={refreshAnnotations}
+              onSlipQueueChanged={refreshSlipQueue}
+              onBackHome={handleBackToHome}
+              onOpenSlipModal={handleOpenSlipModal}
+              onOpenVoterDetail={handleOpenVoterDetail}
+              showToast={showToast}
+            />
+          )}
+
           {activeScreen === 'analytics' && (
             <AnalyticsScreen
               villagesData={villagesData}
+              annotationsMap={annotationsMap}
               initialVillage={analyticsVillage}
               onNavigateHome={handleBackToHome}
-              onNavigateSearch={(village) => {
+              onNavigateSearch={(village, preset) => {
                 if (village && villagesData[village]) {
-                  handleSelectVillage(village);
+                  handleSelectVillage(village, preset);
                 } else {
-                  handleOpenGlobalSearch();
+                  handleOpenGlobalSearch({
+                    ageGroup: preset?.ageGroup,
+                    profession: preset?.profession,
+                    fullList: !preset?.ageGroup && !preset?.profession,
+                  });
                 }
               }}
             />
@@ -884,7 +1042,7 @@ export const App: React.FC = () => {
         </main>
       </div>
 
-      {/* Floating Bottom Navigation Bar */}
+      {/* Material Design 3 Bottom Navigation Bar */}
       <NavigationDock
         activeScreen={activeScreen}
         onNavigate={handleDockNavigate}
@@ -892,44 +1050,84 @@ export const App: React.FC = () => {
         isAdmin={isAdmin}
         onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
         onLogoutClick={() => setIsLogoutOpen(true)}
+        savedCount={savedBadgeCount}
+        slipQueueCount={slipQueue.length}
       />
 
-      {/* Logout Confirmation Modal */}
+      {/* Material You Theme & Backup Settings Sheet */}
+      <ThemeSettingsSheet
+        isOpen={isThemeSheetOpen}
+        onClose={() => setIsThemeSheetOpen(false)}
+        prefs={themePrefs}
+        onChangePrefs={handleUpdateThemePrefs}
+        trackerStats={{
+          starredCount: trackerSummary.starredCount,
+          votedCount: trackerSummary.votedCount,
+          notesCount: trackerSummary.notesCount,
+        }}
+        onTrackerChanged={refreshAnnotations}
+        showToast={showToast}
+        onOpenUpdateModal={() => window.dispatchEvent(new Event('voter_open_update_modal'))}
+        onLogoutClick={() => setIsLogoutOpen(true)}
+        userEmail={currentUser.email}
+      />
+
+      {/* Voter Detail, Family Members, Campaign Note & Offline QR Bottom Sheet */}
+      <VoterDetailSheet
+        voter={detailVoter}
+        initialTab={detailTab}
+        allVotersPool={allVotersFlat}
+        annotationsMap={annotationsMap}
+        onAnnotationsChanged={refreshAnnotations}
+        onClose={() => setDetailVoter(null)}
+        onSelectVoter={(v) => {
+          setDetailVoter(v);
+          setDetailTab('info');
+        }}
+        onOpenSlipModal={(v) => handleOpenSlipModal(v)}
+        onSlipQueueUpdated={refreshSlipQueue}
+        showToast={showToast}
+      />
+
+      {/* Logout Confirmation Dialog */}
       <LogoutModal
         isOpen={isLogoutOpen}
-          isLoading={isLoggingOut}
-          onClose={() => setIsLogoutOpen(false)}
-          onConfirm={executeLogout}
+        isLoading={isLoggingOut}
+        onClose={() => setIsLogoutOpen(false)}
+        onConfirm={executeLogout}
+      />
+
+      {/* Another Device Logged In Dialog */}
+      <AnotherDeviceModal
+        isOpen={isAnotherDeviceOpen}
+        onRedirect={handleKickedRedirect}
+      />
+
+      {/* Voter Slip Maker & Bluetooth Thermal Printer Modal */}
+      <VoterSlipModal
+        isOpen={isSlipModalOpen}
+        onClose={() => {
+          setIsSlipModalOpen(false);
+          refreshSlipQueue();
+        }}
+        voter={slipModalVoter}
+        allVillages={villagesData}
+      />
+
+      {/* Super Admin Dashboard Modal */}
+      {isAdmin && (
+        <AdminPanelModal
+          isOpen={isAdminPanelOpen}
+          onClose={() => setIsAdminPanelOpen(false)}
+          currentUserEmail={currentUser.email || ''}
         />
+      )}
 
-        {/* Another Device Logged In Modal */}
-        <AnotherDeviceModal
-          isOpen={isAnotherDeviceOpen}
-          onRedirect={handleKickedRedirect}
-        />
+      {/* Material 3 Snackbar Toast */}
+      <Toast message={toastMessage} />
 
-        {/* Voter Slip Maker & Print Modal */}
-        <VoterSlipModal
-          isOpen={isSlipModalOpen}
-          onClose={() => setIsSlipModalOpen(false)}
-          voter={slipModalVoter}
-          allVillages={villagesData}
-        />
-
-        {/* Super Admin Dashboard Modal (Protected: Only rendered/accessible for Admins) */}
-        {isAdmin && (
-          <AdminPanelModal
-            isOpen={isAdminPanelOpen}
-            onClose={() => setIsAdminPanelOpen(false)}
-            currentUserEmail={currentUser.email || ''}
-          />
-        )}
-
-        {/* Toast Notification */}
-        <Toast message={toastMessage} />
-
-        {/* PWA In-App Install Prompt Banner */}
-        <InstallPwaBanner />
-      </div>
+      {/* PWA In-App Install Prompt Banner */}
+      <InstallPwaBanner />
+    </div>
   );
 };

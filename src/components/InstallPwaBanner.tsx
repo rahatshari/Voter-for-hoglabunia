@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Download, Smartphone, X } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -12,7 +13,6 @@ export const InstallPwaBanner: React.FC = () => {
   const [showManualGuide, setShowManualGuide] = useState(false);
 
   useEffect(() => {
-    // If running in standalone mode (already installed), hide completely
     if (
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as any).standalone === true
@@ -30,10 +30,7 @@ export const InstallPwaBanner: React.FC = () => {
     };
 
     window.addEventListener('beforeinstallprompt', handler);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
-    };
+    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
   const handleInstallClick = async () => {
@@ -44,8 +41,7 @@ export const InstallPwaBanner: React.FC = () => {
         if (choice.outcome === 'accepted') {
           setIsVisible(false);
         }
-      } catch (e) {
-        console.warn('Install prompt error:', e);
+      } catch {
         setShowManualGuide(true);
       }
     } else {
@@ -61,77 +57,74 @@ export const InstallPwaBanner: React.FC = () => {
 
   if (!isVisible || isDismissed) return null;
 
-    return (
+  return (
     <>
-      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-50 w-[94%] sm:w-auto sm:max-w-md animate-slide-down">
-        <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-purple-600 text-white p-3 sm:p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-indigo-400/40">
-          <div className="flex items-center gap-2.5">
+      <div className="fixed bottom-22 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-40 w-[94%] sm:w-auto sm:max-w-md animate-slide-down">
+        <div className="m3-card-elevated p-3.5 rounded-3xl shadow-2xl flex items-center justify-between gap-3 border border-[var(--md-primary)]/30">
+          <div className="flex items-center gap-2.5 min-w-0">
             <img
               src="./icon-192.png"
               alt="App Icon"
-              className="w-10 h-10 rounded-xl shadow-md border-2 border-white/80 object-cover shrink-0 bg-white"
+              className="w-10 h-10 rounded-2xl border border-[var(--md-outline-variant)] object-cover shrink-0 bg-white"
               onError={(e) => {
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold leading-tight">
-                ইউনিয়ন ভোটার তালিকা অ্যাপ
+            <div className="min-w-0">
+              <h4 className="text-xs sm:text-sm font-extrabold leading-tight truncate">
+                ইউনিয়ন ভোটার অ্যাপ ইনস্টল করুন
               </h4>
-              <p className="text-[11px] text-indigo-100 mt-0.5 leading-snug">
-                হোমস্ক্রিনে ইনস্টল করে সরাসরি অ্যাপ হিসেবে ব্যবহার করুন
+              <p className="text-[11px] text-[var(--md-on-surface-variant)] mt-0.5 truncate">
+                অফলাইনে দ্রুত ব্যবহারের জন্য হোমস্ক্রিনে রাখুন
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={handleInstallClick}
-              className="bg-white text-indigo-700 hover:bg-indigo-50 font-bold px-3 py-1.5 rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1"
+              className="m3-btn-filled h-8 px-3.5 text-xs inline-flex items-center gap-1"
             >
-              <span>📲</span> ইনস্টল
+              <Download className="w-3.5 h-3.5" />
+              <span>ইনস্টল</span>
             </button>
             <button
               type="button"
               onClick={handleDismiss}
-              className="text-indigo-200 hover:text-white p-1 text-base leading-none cursor-pointer"
+              className="m3-icon-btn !w-8 !h-8"
               title="বন্ধ করুন"
             >
-              ✕
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Manual Install Instruction Modal for Chrome */}
       {showManualGuide && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-2xl p-5 shadow-2xl border border-slate-200 text-center animate-slide-down">
-            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl">
-              📲
+        <div
+          className="fixed inset-0 z-50 m3-sheet-backdrop flex items-center justify-center p-4"
+          onClick={() => setShowManualGuide(false)}
+        >
+          <div
+            className="m3-card-elevated w-full max-w-sm rounded-[28px] p-6 shadow-2xl text-center animate-m3-scale"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 m3-tonal-container rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <Smartphone className="w-6 h-6" />
             </div>
-            <h3 className="font-extrabold text-base text-slate-800 mb-2">
+            <h3 className="font-extrabold text-base mb-2">
               গুগল ক্রোমে ইনস্টল করার নিয়ম
             </h3>
-            <div className="text-left bg-slate-50 p-3.5 rounded-xl text-xs text-slate-700 space-y-2 border border-slate-200 mb-4 leading-relaxed">
-              <p className="flex items-start gap-2">
-                <span className="font-bold text-indigo-600 shrink-0">১.</span>
-                <span>ক্রোম ব্রাউজারের উপরে ডানদিকের <b>তিনটি ডট (⋮)</b> মেনুতে ট্যাপ করুন।</span>
-              </p>
-              <p className="flex items-start gap-2">
-                <span className="font-bold text-indigo-600 shrink-0">২.</span>
-                <span>তালিকায় <b>"Install app"</b> (অ্যাপ ইনস্টল করুন) অথবা <b>"Add to Home screen"</b> (হোম স্ক্রিনে যোগ করুন) অপশনে চাপুন।</span>
-              </p>
-              <p className="flex items-start gap-2">
-                <span className="font-bold text-indigo-600 shrink-0">৩.</span>
-                <span>এরপর <b>"Install"</b> বাটন কনফার্ম করলেই আপনার মোবাইলের হোম স্ক্রিনে অ্যাপ আইকন তৈরি হয়ে যাবে!</span>
-              </p>
+            <div className="text-left m3-card-filled p-3.5 rounded-2xl text-xs space-y-2 mb-4 leading-relaxed">
+              <p>১. ব্রাউজারের উপরে ডানদিকের <b>তিনটি ডট (⋮)</b> মেনুতে ট্যাপ করুন।</p>
+              <p>২. <b>"Install app"</b> অথবা <b>"Add to Home screen"</b> অপশনে চাপুন।</p>
+              <p>৩. <b>"Install"</b> কনফার্ম করলেই হোমস্ক্রিনে অ্যাপ তৈরি হয়ে যাবে!</p>
             </div>
             <button
               type="button"
               onClick={() => setShowManualGuide(false)}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs cursor-pointer transition"
+              className="w-full m3-btn-filled py-2.5 text-xs"
             >
               বুঝেছি, বন্ধ করুন
             </button>

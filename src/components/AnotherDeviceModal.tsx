@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 
 interface AnotherDeviceModalProps {
   isOpen: boolean;
@@ -32,26 +34,27 @@ export const AnotherDeviceModal: React.FC<AnotherDeviceModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl border border-slate-200 animate-slide-down">
-        <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
-          ⚠️
+    <div className="fixed inset-0 m3-sheet-backdrop z-50 flex items-center justify-center p-4">
+      <div className="m3-card-elevated w-full max-w-sm rounded-[28px] p-6 text-center shadow-2xl animate-m3-scale">
+        <div className="w-14 h-14 bg-[var(--md-error-container)] text-[var(--md-on-error-container)] rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="w-7 h-7" />
         </div>
-        <h3 className="text-lg font-bold text-red-800 mb-2.5">
+        <h3 className="text-lg font-extrabold text-[var(--md-error)] mb-2.5">
           অন্য ডিভাইসে লগইন হয়েছে!
         </h3>
-        <p className="text-xs text-slate-600 leading-relaxed mb-4">
-          আপনার এই জিমেইল অ্যাকাউন্টটি এইমাত্র অন্য একটি মোবাইলে লগইন করা হয়েছে।
-          <br /><br />
-          নিরাপত্তার কারণে <b className="text-slate-800">একটি জিমেইল দিয়ে একই সাথে একটিমাত্র মোবাইলেই</b> ব্যবহার করা যাবে।
+        <p className="text-xs text-[var(--md-on-surface-variant)] leading-relaxed mb-4">
+          আপনার এই অ্যাকাউন্টটি এইমাত্র অন্য একটি মোবাইলে লগইন করা হয়েছে।
+          <br />
+          <br />
+          নিরাপত্তার কারণে <b>একটি অ্যাকাউন্ট দিয়ে একই সাথে একটিমাত্র ডিভাইসেই</b> ব্যবহার করা যাবে।
         </p>
-        <div className="text-xs font-semibold text-slate-500 mb-3.5">
-          {countdown} সেকেন্ডের মধ্যে লগইন পেজে নেওয়া হবে...
+        <div className="text-xs font-bold text-[var(--md-on-surface-variant)] mb-4">
+          {convertToBengaliNumbers(countdown)} সেকেন্ডের মধ্যে লগইন পেজে নেওয়া হবে...
         </div>
         <button
           type="button"
           onClick={onRedirect}
-          className="w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold cursor-pointer transition shadow-md hover:shadow-lg shadow-red-500/25"
+          className="w-full py-3 rounded-full bg-[var(--md-error)] text-[var(--md-on-error)] text-sm font-bold cursor-pointer transition active:scale-95"
         >
           লগইন পেজে যান
         </button>

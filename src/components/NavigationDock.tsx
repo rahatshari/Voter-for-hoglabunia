@@ -1,13 +1,25 @@
 import React from 'react';
+import {
+  BarChart3,
+  Bookmark,
+  Home,
+  Printer,
+  Search,
+  Shield,
+} from 'lucide-react';
+import { AppScreenType } from '../types';
+import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 
 interface NavigationDockProps {
-  activeScreen: 'home' | 'search' | 'analytics';
-  onNavigate: (screen: 'home' | 'search' | 'analytics') => void;
+  activeScreen: AppScreenType;
+  onNavigate: (screen: AppScreenType) => void;
   onLogoutClick: () => void;
   onOpenSlipModal?: () => void;
   onOpenUserMonitoring?: () => void;
   isAdmin?: boolean;
   onOpenAdminPanel?: () => void;
+  savedCount?: number;
+  slipQueueCount?: number;
 }
 
 export const NavigationDock: React.FC<NavigationDockProps> = ({
@@ -16,111 +28,128 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
   onOpenSlipModal,
   isAdmin,
   onOpenAdminPanel,
+  savedCount = 0,
+  slipQueueCount = 0,
 }) => {
+  const navItems: {
+    id: string;
+    label: string;
+    icon: React.FC<{ className?: string }>;
+    isActive: boolean;
+    badge?: number;
+    onClick: () => void;
+  }[] = [
+    {
+      id: 'home',
+      label: 'হোম',
+      icon: Home,
+      isActive: activeScreen === 'home',
+      onClick: () => onNavigate('home'),
+    },
+    {
+      id: 'search',
+      label: 'অনুসন্ধান',
+      icon: Search,
+      isActive: activeScreen === 'search',
+      onClick: () => onNavigate('search'),
+    },
+    ...(onOpenSlipModal
+      ? [
+          {
+            id: 'slip',
+            label: 'ভোটার স্লিপ',
+            icon: Printer,
+            isActive: false,
+            badge: slipQueueCount > 0 ? slipQueueCount : undefined,
+            onClick: onOpenSlipModal,
+          },
+        ]
+      : []),
+    {
+      id: 'saved',
+      label: 'সংরক্ষিত',
+      icon: Bookmark,
+      isActive: activeScreen === 'saved',
+      badge: savedCount > 0 ? savedCount : undefined,
+      onClick: () => onNavigate('saved'),
+    },
+    {
+      id: 'analytics',
+      label: 'অ্যানালাইসিস',
+      icon: BarChart3,
+      isActive: activeScreen === 'analytics',
+      onClick: () => onNavigate('analytics'),
+    },
+    ...(isAdmin && onOpenAdminPanel
+      ? [
+          {
+            id: 'admin',
+            label: 'অ্যাডমিন',
+            icon: Shield,
+            isActive: false,
+            onClick: onOpenAdminPanel,
+          },
+        ]
+      : []),
+  ];
+
   return (
     <nav
       role="navigation"
-      aria-label="Bottom Navigation"
-      className="fixed bottom-0 left-0 right-0 w-full sm:bottom-4 sm:max-w-xl mx-auto z-40 bg-white/95 backdrop-blur-md border-t sm:border border-slate-200/90 sm:rounded-full shadow-[0_-4px_20px_rgba(0,0,0,0.06)] sm:shadow-2xl h-16 sm:h-14 flex items-center justify-around px-2 select-none transition-all"
+      aria-label="প্রধান নেভিগেশন"
+      className="fixed bottom-0 left-0 right-0 w-full sm:bottom-3.5 sm:max-w-2xl mx-auto z-40 bg-[var(--md-surface-container)]/95 backdrop-blur-md border-t sm:border border-[var(--md-outline-variant)]/70 sm:rounded-full shadow-[0_-2px_12px_rgba(0,0,0,0.06)] sm:shadow-xl bottom-safe select-none transition-all"
     >
-      {/* 1. Home Tab */}
-      <button
-        type="button"
-        onClick={() => onNavigate('home')}
-        className={`flex-1 flex flex-col items-center justify-center py-1.5 transition-all duration-150 cursor-pointer active:scale-90 ${
-          activeScreen === 'home'
-            ? 'text-indigo-600 font-extrabold'
-            : 'text-slate-500 hover:text-slate-800'
-        }`}
-        title="হোম পেজ"
-      >
-        <div
-          className={`w-9 h-6 flex items-center justify-center rounded-full transition-all duration-200 ${
-            activeScreen === 'home' ? 'bg-indigo-100 text-indigo-700' : ''
-          }`}
-        >
-          <span className="text-lg">🏠</span>
-        </div>
-        <span className="text-[10px] tracking-tight mt-0.5">হোম</span>
-      </button>
+      <div className="h-[68px] sm:h-16 flex items-center justify-around px-1.5 sm:px-3">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={item.onClick}
+              className="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-1.5 cursor-pointer group active:scale-95 transition-transform"
+              title={item.label}
+            >
+              {/* M3 64x32px Active Indicator Pill */}
+              <div
+                className={`relative w-14 sm:w-16 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+                  item.isActive
+                    ? 'bg-[var(--md-secondary-container)] text-[var(--md-on-secondary-container)]'
+                    : item.id === 'slip'
+                    ? 'bg-[var(--md-primary-container)]/60 text-[var(--md-on-primary-container)] group-hover:bg-[var(--md-primary-container)]'
+                    : 'text-[var(--md-on-surface-variant)] group-hover:bg-[var(--md-surface-container-highest)]/70'
+                }`}
+              >
+                <Icon
+                  className={`w-[19px] h-[19px] transition-transform ${
+                    item.isActive ? 'stroke-[2.5]' : 'stroke-[2]'
+                  }`}
+                />
 
-      {/* 2. Search Tab */}
-      <button
-        type="button"
-        onClick={() => onNavigate('search')}
-        className={`flex-1 flex flex-col items-center justify-center py-1.5 transition-all duration-150 cursor-pointer active:scale-90 ${
-          activeScreen === 'search'
-            ? 'text-indigo-600 font-extrabold'
-            : 'text-slate-500 hover:text-slate-800'
-        }`}
-        title="ভোটার অনুসন্ধান"
-      >
-        <div
-          className={`w-9 h-6 flex items-center justify-center rounded-full transition-all duration-200 ${
-            activeScreen === 'search' ? 'bg-indigo-100 text-indigo-700' : ''
-          }`}
-        >
-          <span className="text-lg">🔍</span>
-        </div>
-        <span className="text-[10px] tracking-tight mt-0.5">অনুসন্ধান</span>
-      </button>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className="absolute -top-1 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--md-error)] text-[var(--md-on-error)] text-[10px] font-black flex items-center justify-center leading-none shadow-2xs">
+                    {convertToBengaliNumbers(item.badge > 99 ? 99 : item.badge)}
+                  </span>
+                )}
 
-      {/* 3. Voter Slip Maker Tab */}
-      {onOpenSlipModal && (
-        <button
-          type="button"
-          onClick={onOpenSlipModal}
-          className="flex-1 flex flex-col items-center justify-center py-1.5 transition-all duration-150 cursor-pointer active:scale-90 text-emerald-700 hover:text-emerald-800"
-          title="ভোটার স্লিপ তৈরি ও থার্মাল প্রিন্ট"
-        >
-          <div className="w-9 h-6 flex items-center justify-center rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 shadow-xs">
-            <span className="text-base">🗳️</span>
-          </div>
-          <span className="text-[10px] font-bold tracking-tight mt-0.5 text-emerald-800">
-            ভোটার স্লিপ
-          </span>
-        </button>
-      )}
+                {item.id === 'admin' && (
+                  <span className="absolute top-1 right-3 w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                )}
+              </div>
 
-      {/* 4. Analytics Tab */}
-      <button
-        type="button"
-        onClick={() => onNavigate('analytics')}
-        className={`flex-1 flex flex-col items-center justify-center py-1.5 transition-all duration-150 cursor-pointer active:scale-90 relative ${
-          activeScreen === 'analytics'
-            ? 'text-pink-600 font-extrabold'
-            : 'text-slate-500 hover:text-slate-800'
-        }`}
-        title="ডাটা অ্যানালাইসিস"
-      >
-        <div
-          className={`w-9 h-6 flex items-center justify-center rounded-full transition-all duration-200 relative ${
-            activeScreen === 'analytics' ? 'bg-pink-100 text-pink-700' : ''
-          }`}
-        >
-          <span className="text-lg">📊</span>
-          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-pink-500 rounded-full" />
-        </div>
-        <span className="text-[10px] tracking-tight mt-0.5">অ্যানালাইসিস</span>
-      </button>
-
-      {/* 5. Admin Panel Tab (Only for authorized Admin emails) */}
-      {isAdmin && onOpenAdminPanel && (
-        <button
-          type="button"
-          onClick={onOpenAdminPanel}
-          className="flex-1 flex flex-col items-center justify-center py-1.5 transition-all duration-150 cursor-pointer active:scale-90 text-indigo-950 relative"
-          title="সুপার অ্যাডমিন ড্যাশবোর্ড"
-        >
-          <div className="w-9 h-6 flex items-center justify-center rounded-full bg-slate-900 text-white shadow-sm relative">
-            <span className="text-xs">⚙️</span>
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-          </div>
-          <span className="text-[10px] font-black tracking-tight mt-0.5 text-slate-900">
-            অ্যাডমিন
-          </span>
-        </button>
-      )}
+              <span
+                className={`text-[11px] leading-none truncate max-w-full px-0.5 transition-colors ${
+                  item.isActive
+                    ? 'font-extrabold text-[var(--md-on-surface)]'
+                    : 'font-semibold text-[var(--md-on-surface-variant)]'
+                }`}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 };

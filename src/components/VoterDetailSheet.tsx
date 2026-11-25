@@ -652,14 +652,20 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 </p>
               </div>
               {qrDataUrl && (
-                <a
-                  href={qrDataUrl}
-                  download={`voter_qr_${voter.serialNo || 'card'}.png`}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fileName = `voter_qr_${voter.serialNo || 'card'}.png`;
+                    import('../lib/nativeBridge').then(({ saveDataUrlFileCrossPlatform }) => {
+                      saveDataUrlFileCrossPlatform(qrDataUrl, fileName, 'image/png');
+                      showToast('QR কোড ইমেজ ডাউনলোড হয়েছে!');
+                    });
+                  }}
                   className="m3-btn-primary-tonal px-5 py-2.5 text-xs flex items-center gap-2"
                 >
                   <Download className="w-4 h-4" />
                   <span>QR ইমেজ ডাউনলোড করুন</span>
-                </a>
+                </button>
               )}
             </div>
           )}

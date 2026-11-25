@@ -146,7 +146,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
               versionName: updateInfo.versionName,
               apkUrl: updateInfo.apkUrl,
               percent: 100,
-              fileName: `Union-Voter-App-v${updateInfo.versionName}.apk`,
+              fileName: `Hoglabunia-Voter-App-v${updateInfo.versionName}.apk`,
             };
           });
         }
@@ -338,7 +338,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     const controller = new AbortController();
     webDownloadAbortRef.current = controller;
 
-    const fileName = `Union-Voter-App-v${updateInfo.versionName}.apk`;
+    const fileName = `Hoglabunia-Voter-App-v${updateInfo.versionName}.apk`;
     setUpdateStatusText('⬇️ অ্যাপের ভেতরেই APK ডাউনলোড শুরু হচ্ছে...');
     setDownloadState({
       ...createInitialDownloadState(updateInfo.versionName, updateInfo.apkUrl),
@@ -491,12 +491,12 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     if (downloadState.blobUrl) {
       triggerBlobSave(
         downloadState.blobUrl,
-        downloadState.fileName || `Union-Voter-App-v${updateInfo.versionName}.apk`
+        downloadState.fileName || `Hoglabunia-Voter-App-v${updateInfo.versionName}.apk`
       );
     } else {
       const a = document.createElement('a');
       a.href = updateInfo.apkUrl;
-      a.download = `Union-Voter-App-v${updateInfo.versionName}.apk`;
+      a.download = `Hoglabunia-Voter-App-v${updateInfo.versionName}.apk`;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       document.body.appendChild(a);

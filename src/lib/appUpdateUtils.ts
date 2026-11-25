@@ -280,23 +280,26 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
       import('firebase/database'),
       import('./firebase'),
     ]);
+    const TIMED_OUT = Symbol('timeout');
     const snap = await Promise.race([
       get(ref(database, 'app_release')),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+      new Promise<typeof TIMED_OUT>((resolve) => setTimeout(() => resolve(TIMED_OUT), 3500)),
     ]);
-    if (snap && typeof (snap as any).exists === 'function' && (snap as any).exists()) {
+    if (snap !== TIMED_OUT) {
       anyNetworkSucceeded = true;
-      const parsed = normalizeVersionJson((snap as any).val(), installed.repo);
-      if (
-        parsed &&
-        isRemoteVersionNewer(
-          parsed.versionCode,
-          parsed.versionName,
-          installed.versionCode,
-          installed.versionName
-        )
-      ) {
-        detectedRemote = parsed;
+      if (snap && typeof (snap as any).exists === 'function' && (snap as any).exists()) {
+        const parsed = normalizeVersionJson((snap as any).val(), installed.repo);
+        if (
+          parsed &&
+          isRemoteVersionNewer(
+            parsed.versionCode,
+            parsed.versionName,
+            installed.versionCode,
+            installed.versionName
+          )
+        ) {
+          detectedRemote = parsed;
+        }
       }
     }
   } catch {

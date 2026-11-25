@@ -585,16 +585,23 @@ export function buildVotersCsvContent(
 }
 
 export function downloadVotersCsv(voters: Voter[], titleLabel = 'voter-list'): void {
-  if (typeof document === 'undefined') return;
   const csv = buildVotersCsvContent(voters);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
   const safeTitle = titleLabel.replace(/[^\u0980-\u09FFa-zA-Z0-9_-]+/g, '_');
-  link.href = url;
-  link.download = `${safeTitle}_${voters.length}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const fileName = `${safeTitle}_${voters.length}.csv`;
+  import('./nativeBridge')
+    .then(({ saveTextFileCrossPlatform }) => {
+      saveTextFileCrossPlatform(csv, fileName, 'text/csv;charset=utf-8;');
+    })
+    .catch(() => {
+      if (typeof document === 'undefined') return;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
 }

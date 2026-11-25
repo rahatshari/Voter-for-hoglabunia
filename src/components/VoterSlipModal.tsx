@@ -1372,7 +1372,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-end sm:items-center justify-center p-0 sm:p-3 overflow-y-auto">
       <canvas ref={canvasRef} className="hidden" />
 
-      <div className="bg-white w-full max-w-4xl rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]">
+      <div className="bg-white text-slate-900 w-full max-w-4xl rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]">
         {/* =====================================================================
             TOP HEADER BAR
             ===================================================================== */}

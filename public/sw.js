@@ -1,4 +1,4 @@
-const CACHE_NAME = 'union-voter-cache-v3';
+const CACHE_NAME = 'hoglabunia-voter-cache-v5';
 
 const CORE_PRECACHE_URLS = [
   './',

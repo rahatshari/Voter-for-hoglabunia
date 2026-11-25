@@ -134,19 +134,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     ...(initialSearch || {}),
   }));
 
-  // Sync if parent updates initialSearch / initialSettings (e.g. from Home preset chips or Analytics drilldown)
-  useEffect(() => {
-    if (initialSearch) {
-      setSearch((prev) => ({ ...EMPTY_SEARCH, ...prev, ...initialSearch }));
-    }
-  }, [initialSearch]);
-
-  useEffect(() => {
-    if (initialSettings) {
-      setSettings((prev) => ({ ...prev, ...initialSettings }));
-    }
-  }, [initialSettings]);
-
   const [slipQueue, setSlipQueue] = useState<Voter[]>(() => getSlipQueue());
   const [renderedCount, setRenderedCount] = useState(RENDER_BATCH_SIZE);
   const observerRef = useRef<HTMLDivElement | null>(null);
@@ -281,37 +268,20 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   const handleVoiceSearch = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      showToast('এই ব্রাউজারে ভয়েস সার্চ সাপোর্ট নেই');
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'bn-BD';
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results?.[0]?.[0]?.transcript || '';
-        setIsListening(false);
-        if (transcript.trim()) {
-          setSearch((prev) => ({ ...prev, omni: transcript.trim() }));
-          setRecentSearches(addRecentSearch(transcript.trim()));
-        }
-      };
-      recognition.onerror = () => {
-        setIsListening(false);
-        showToast('ভয়েস বুঝতে সমস্যা হয়েছে, আবার চেষ্টা করুন');
-      };
-      recognition.onend = () => setIsListening(false);
-      recognition.start();
-    } catch {
-      setIsListening(false);
-    }
+    import('../lib/nativeBridge').then(({ startBengaliVoiceInput }) => {
+      startBengaliVoiceInput({
+        onStart: () => setIsListening(true),
+        onEnd: () => setIsListening(false),
+        onResult: (transcript) => {
+          setSearch((prev) => ({ ...prev, omni: transcript }));
+          setRecentSearches(addRecentSearch(transcript));
+        },
+        onError: (msg) => {
+          setIsListening(false);
+          showToast(msg);
+        },
+      });
+    });
   };
 
   const copyToClipboard = (txt: string, successMsg: string) => {

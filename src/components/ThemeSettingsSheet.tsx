@@ -75,16 +75,15 @@ export const ThemeSettingsSheet: React.FC<ThemeSettingsSheetProps> = ({
 
   const handleExportBackup = () => {
     const json = exportTrackerBackupJson();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `voter_campaign_backup_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showToast('ক্যাম্পেইন ডাটা ব্যাকআপ ডাউনলোড হয়েছে');
+    const fileName = `voter_campaign_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    import('../lib/nativeBridge')
+      .then(({ saveTextFileCrossPlatform }) => {
+        saveTextFileCrossPlatform(json, fileName, 'application/json;charset=utf-8;');
+        showToast('ক্যাম্পেইন ডাটা ব্যাকআপ ডাউনলোড হয়েছে');
+      })
+      .catch(() => {
+        showToast('ব্যাকআপ সংরক্ষণে ত্রুটি হয়েছে');
+      });
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {

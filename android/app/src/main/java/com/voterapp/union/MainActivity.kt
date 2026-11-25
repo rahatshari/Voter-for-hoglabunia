@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -23,7 +24,9 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.MediaStore
 import android.provider.Settings
+import android.speech.RecognizerIntent
 import android.util.Base64
 import android.util.Log
 import android.view.View
@@ -119,6 +122,39 @@ class MainActivity : AppCompatActivity() {
             fileChooserCallback?.onReceiveValue(null)
         }
         fileChooserCallback = null
+    }
+
+    // Native Android Voice Search Launcher (works reliably inside WebView for Bengali bn-BD)
+    private val voiceRecognitionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        try {
+            if (result.resultCode == RESULT_OK) {
+                val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                val spokenText = matches?.firstOrNull()?.trim() ?: ""
+                if (spokenText.isNotEmpty()) {
+                    val payload = JSONObject().put("text", spokenText).toString()
+                    val quoted = JSONObject.quote(payload)
+                    webView.post {
+                        webView.evaluateJavascript(
+                            "window.dispatchEvent(new CustomEvent('voter_native_voice_result', { detail: JSON.parse($quoted) }));",
+                            null
+                        )
+                    }
+                    return@registerForActivityResult
+                }
+            }
+            val errPayload = JSONObject().put("message", "কোনো কথা শোনা যায়নি, আবার চেষ্টা করুন").toString()
+            val quotedErr = JSONObject.quote(errPayload)
+            webView.post {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('voter_native_voice_error', { detail: JSON.parse($quotedErr) }));",
+                    null
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("VoterApp", "voiceRecognitionLauncher error", e)
+        }
     }
 
     // Bluetooth, Location & Notification Permissions Launcher
@@ -297,7 +333,7 @@ class MainActivity : AppCompatActivity() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
 
-                if (url.startsWith("tel:") || url.startsWith("mailto:") || url.startsWith("sms:")) {
+                if (url.startsWith("tel:") || url.startsWith("mailto:") || url.startsWith("sms:") || url.startsWith("whatsapp:")) {
                     try {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                         return true
@@ -311,7 +347,7 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
-                if (url.contains("console.firebase.google.com") || url.contains("accounts.google.com")) {
+                if (url.contains("wa.me") || url.contains("api.whatsapp.com") || url.contains("console.firebase.google.com") || url.contains("accounts.google.com")) {
                     try {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                         return true
@@ -1042,7 +1078,7 @@ class MainActivity : AppCompatActivity() {
         val safeVer = versionName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "latest" }
         val dir: File = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "Union-Voter-App-v$safeVer.apk")
+        return File(dir, "Hoglabunia-Voter-App-v$safeVer.apk")
     }
 
     private fun hasExistingApkForVersion(versionName: String): Boolean {
@@ -1446,6 +1482,96 @@ class MainActivity : AppCompatActivity() {
         fun openInstallPermissionSettings() {
             runOnUiThread {
                 openUnknownAppInstallSettings()
+            }
+        }
+
+        @JavascriptInterface
+        fun openExternalUrl(url: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("VoterApp", "openExternalUrl error: $url", e)
+                    Toast.makeText(context, "লিংকটি ওপেন করা যায়নি", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun shareText(title: String, text: String) {
+            runOnUiThread {
+                try {
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, title)
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    startActivity(Intent.createChooser(sendIntent, title))
+                } catch (e: Exception) {
+                    Log.e("VoterApp", "shareText error", e)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun startVoiceRecognition(lang: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (lang.isNotBlank()) lang else "bn-BD")
+                        putExtra(RecognizerIntent.EXTRA_PROMPT, "ভোটারের নাম, পিতা বা ক্রমিক বলুন...")
+                    }
+                    voiceRecognitionLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Log.e("VoterApp", "startVoiceRecognition error", e)
+                    val errPayload = JSONObject().put("message", "এই ফোনে গুগল ভয়েস সার্চ পাওয়া যায়নি").toString()
+                    val quotedErr = JSONObject.quote(errPayload)
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('voter_native_voice_error', { detail: JSON.parse($quotedErr) }));",
+                        null
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun saveBase64File(base64Data: String, fileName: String, mimeType: String): Boolean {
+            return try {
+                val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                val safeName = fileName.replace(Regex("[^\\u0980-\\u09FFa-zA-Z0-9._-]"), "_").ifBlank { "export.dat" }
+                val cleanMime = mimeType.substringBefore(";").ifBlank { "application/octet-stream" }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, safeName)
+                        put(MediaStore.Downloads.MIME_TYPE, cleanMime)
+                        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        runOnUiThread {
+                            Toast.makeText(context, "ডাউনলোড ফোল্ডারে সেভ হয়েছে: $safeName", Toast.LENGTH_LONG).show()
+                        }
+                        return true
+                    }
+                }
+
+                val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+                if (!dir.exists()) dir.mkdirs()
+                val outFile = File(dir, safeName)
+                FileOutputStream(outFile).use { it.write(bytes) }
+                runOnUiThread {
+                    Toast.makeText(context, "ফাইল সেভ হয়েছে: $safeName", Toast.LENGTH_LONG).show()
+                }
+                true
+            } catch (e: Exception) {
+                Log.e("VoterApp", "saveBase64File error", e)
+                false
             }
         }
     }

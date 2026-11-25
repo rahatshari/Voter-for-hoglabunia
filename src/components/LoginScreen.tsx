@@ -82,6 +82,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         console.warn('Block check bypassed due to network:', checkErr);
       }
 
+      // Prepare session ID BEFORE signInWithEmailAndPassword so App.tsx onAuthStateChanged registers the exact same sessionId
+      const preSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('voter_device_session_id', preSessionId);
+
       const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const loggedEmail = userCredential.user.email || cleanEmail;
 
@@ -89,6 +93,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         const { checkCloudAccessForUser } = await import('../lib/cloudStore');
         const cloudCheck = await checkCloudAccessForUser(loggedEmail);
         if (cloudCheck.isBlocked) {
+          localStorage.removeItem('voter_device_session_id');
           await signOut(auth);
           setLoading(false);
           setStatusMessage({
@@ -98,6 +103,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           return;
         }
         if (cloudCheck.maintenanceBlocked) {
+          localStorage.removeItem('voter_device_session_id');
           await signOut(auth);
           setLoading(false);
           setStatusMessage({
@@ -110,8 +116,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         console.warn('Cloud access check notice:', cloudCheckErr);
       }
 
-      const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
-      localStorage.setItem('voter_device_session_id', newSessionId);
+      const activeSessionId = localStorage.getItem('voter_device_session_id') || preSessionId;
 
       const ua = navigator.userAgent;
       let detectedDevice = 'Mobile Web';
@@ -126,12 +131,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email: loggedEmail,
-            sessionId: newSessionId,
+            sessionId: activeSessionId,
             deviceName: detectedDevice,
           }),
         });
 
         if (regRes.status === 403) {
+          localStorage.removeItem('voter_device_session_id');
           await signOut(auth);
           setLoading(false);
           setStatusMessage({

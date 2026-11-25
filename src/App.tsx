@@ -281,20 +281,27 @@ export const App: React.FC = () => {
   }, [currentUser]);
 
   useEffect(() => {
-    const unsubCfg = subscribeAppGlobalConfig((cfg) => {
-      setAppConfig(cfg || DEFAULT_APP_CONFIG);
-    });
     const onLocalCfgUpdate = () => {
       setAppConfig(loadStoredAppConfig());
     };
     window.addEventListener('voter_app_config_changed', onLocalCfgUpdate);
+
+    if (!currentUser?.email) {
+      return () => {
+        window.removeEventListener('voter_app_config_changed', onLocalCfgUpdate);
+      };
+    }
+
+    const unsubCfg = subscribeAppGlobalConfig((cfg) => {
+      setAppConfig(cfg || DEFAULT_APP_CONFIG);
+    });
     return () => {
       try {
         unsubCfg();
       } catch {}
       window.removeEventListener('voter_app_config_changed', onLocalCfgUpdate);
     };
-  }, []);
+  }, [currentUser?.email]);
 
   const getStaticUrl = useCallback((path: string) => {
     const clean = path.replace(/^\.?\//, '');
@@ -987,6 +994,7 @@ export const App: React.FC = () => {
 
           {activeScreen === 'search' && (
             <SearchScreen
+              key={activeVillageKey || 'all'}
               villageTitle={searchTitle}
               villageKey={activeVillageKey}
               voters={currentVoters}

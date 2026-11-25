@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import {
   ApkDownloadState,
   AppUpdatePreferences,
   RemoteReleaseInfo,
 } from '../types';
+import { auth } from '../lib/firebase';
+import { subscribeCloudAppRelease } from '../lib/cloudStore';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
 import {
   checkForAppUpdates,
@@ -17,12 +20,14 @@ import {
   isRemoteVersionNewer,
   loadPendingUpdateCache,
   loadUpdatePrefs,
+  normalizeVersionJson,
   refreshWebAppCachesAndReload,
   saveUpdatePrefs,
   setSessionDismissedVersion,
   shouldShowAutoUpdatePopup,
   triggerUpdateNotifications,
 } from '../lib/appUpdateUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 import { AppUpdateSettingsModal } from './AppUpdateSettingsModal';
 import { InAppDownloadManagerPanel } from './InAppDownloadManagerPanel';
 
@@ -60,7 +65,6 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
       setCurrentVersionCode(info.versionCode);
       setIsAndroidNative(info.isAndroidNative);
 
-      // Restore cached update if still newer than installed (prevents offline/restart bypass of 3-hour deadline)
       const cachedPending = loadPendingUpdateCache();
       if (cachedPending) {
         if (
@@ -73,7 +77,6 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
         ) {
           setUpdateInfo((prev) => prev || cachedPending);
         } else {
-          // User already updated to >= cached version
           clearUpdateGraceRecord();
         }
       }
@@ -99,6 +102,86 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
       }
     });
   }, []);
+
+  // Real-time Firebase RTDB `/app_release` stream whenever authenticated!
+  useEffect(() => {
+    let unsubRelease: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubRelease) {
+        unsubRelease();
+        unsubRelease = null;
+      }
+      if (!user) return;
+
+      unsubRelease = subscribeCloudAppRelease(async (rawRel) => {
+        if (!rawRel) return;
+        const installed = await getInstalledAppVersion();
+        const normalized = normalizeVersionJson(rawRel, installed.repo);
+        if (!normalized) return;
+
+        setCurrentVersionCode(installed.versionCode);
+        setCurrentVersionName(installed.versionName);
+        setIsAndroidNative(installed.isAndroidNative);
+
+        if (
+          isRemoteVersionNewer(
+            normalized.versionCode,
+            normalized.versionName,
+            installed.versionCode,
+            installed.versionName
+          )
+        ) {
+          setUpdateInfo(normalized);
+          setNowTick(Date.now());
+          const latestPrefs = loadUpdatePrefs();
+          setPrefs(latestPrefs);
+
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('voter_update_availability', {
+                detail: { hasUpdate: true, versionName: normalized.versionName },
+              })
+            );
+          }
+
+          const grace = getUpdateGraceStatus({
+            remote: normalized,
+            installedCode: installed.versionCode,
+            installedName: installed.versionName,
+            now: Date.now(),
+          });
+
+          if (
+            grace.isMandatory ||
+            shouldShowAutoUpdatePopup({
+              remote: normalized,
+              prefs: latestPrefs,
+              globalAutoUpdateEnabled,
+              sessionDismissedVersion: getSessionDismissedVersion(),
+            })
+          ) {
+            triggerUpdateNotifications(normalized, latestPrefs);
+          }
+        } else {
+          clearUpdateGraceRecord();
+          setUpdateInfo(null);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('voter_update_availability', {
+                detail: { hasUpdate: false, versionName: installed.versionName },
+              })
+            );
+          }
+        }
+      });
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubRelease) unsubRelease();
+    };
+  }, [globalAutoUpdateEnabled]);
 
   // Live 15-second clock ticker to update 3-hour grace countdown & enforce mandatory lock smoothly
   useEffect(() => {
@@ -206,7 +289,6 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
             triggerUpdateNotifications(res.updateInfo, latestPrefs);
           }
         } else if (!res.networkFailed) {
-          // Online check confirmed no newer release exists -> clear any old grace records
           clearUpdateGraceRecord();
           if (manual) {
             setUpdateInfo(null);
@@ -226,7 +308,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     [globalAutoUpdateEnabled]
   );
 
-  // Automatic check lifecycle (checks release silently so 3-hour mandatory deadline is tracked accurately)
+  // Automatic check lifecycle
   useEffect(() => {
     const initialTimer = setTimeout(() => {
       runUpdateCheck(false);
@@ -267,7 +349,6 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     window.addEventListener('voter_open_update_modal', onOpenModal);
     window.addEventListener('voter_manual_check_update', onManualCheckEvent);
 
-    // Helper for verification or manual release injection
     (window as any).__CHECK_APP_UPDATE__ = (mockInfo?: RemoteReleaseInfo) => {
       if (mockInfo) {
         setUpdateInfo(mockInfo);
@@ -532,6 +613,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
   });
 
   const showMandatoryLock = Boolean(updateInfo && graceStatus.hasUpdate && graceStatus.isMandatory);
+  useLockBodyScroll(showMandatoryLock);
 
   const showFloatingBanner =
     !showMandatoryLock &&
@@ -553,7 +635,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
           aria-modal="true"
           aria-labelledby="mandatory-update-title"
           data-testid="mandatory-update-lock"
-          className="fixed inset-0 z-[300] bg-slate-950/90 flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-[300] bg-slate-950/90 flex items-center justify-center p-4 overflow-y-auto overscroll-contain"
         >
           <div className="w-full max-w-md bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl shadow-2xl border-2 border-red-400/60 p-5 sm:p-6 space-y-4">
             <div className="flex items-start gap-3">

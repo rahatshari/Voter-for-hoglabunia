@@ -637,7 +637,10 @@ export function createTestPrintEscPosBytes(printerName = 'Thermal Printer'): Uin
 }
 
 // Convert an HTML Canvas to ESC/POS Raster bit image (GS v 0) bytes
-export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
+export function canvasToEscPosBytes(
+  canvas: HTMLCanvasElement,
+  darknessThreshold = 145
+): Uint8Array {
   const ctx = canvas.getContext('2d');
   if (!ctx) return new Uint8Array();
 
@@ -646,7 +649,7 @@ export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = imgData.data;
 
-  // Bytes per line (width must be multiple of 8, for 384 width -> 48 bytes)
+  // Bytes per line (width must be multiple of 8, for 384 width -> 48 bytes, for 576 width -> 72 bytes)
   const bytesWidth = Math.ceil(width / 8);
   const xL = bytesWidth % 256;
   const xH = Math.floor(bytesWidth / 256);
@@ -681,7 +684,7 @@ export function canvasToEscPosBytes(canvas: HTMLCanvasElement): Uint8Array {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       const oldVal = gray[i];
-      const newVal = oldVal < 145 ? 0 : 255;
+      const newVal = oldVal < darknessThreshold ? 0 : 255;
       gray[i] = newVal;
       const err = oldVal - newVal;
 

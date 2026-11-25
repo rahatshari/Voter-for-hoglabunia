@@ -179,3 +179,38 @@ test('getDefaultPrintPrefs and saveDefaultPrintPrefs persist default print page 
   assert.strictEqual(updated.pageLayoutMode, 'sheet6');
   assert.strictEqual(updated.colorMode, 'color');
 });
+
+test('Slip customSettings supports Portrait/Landscape orientation, border styles, and field visibility toggles', async () => {
+  const { getSlipCardStylesheet } = await import('./voterSlipUtils');
+  const { resolveSlipCustomSettings, getThermalDarknessThreshold } = await import('./thermalSlipRenderer');
+
+  const defaults = resetDefaultCandidates();
+  const baseCand = defaults[0];
+  const voter = sampleFamilyVoters[0];
+
+  const resolvedDefault = resolveSlipCustomSettings(baseCand);
+  assert.strictEqual(resolvedDefault.orientation, 'portrait');
+  assert.strictEqual(resolvedDefault.paperWidthMm, 58);
+  assert.strictEqual(getThermalDarknessThreshold('dark'), 178);
+  assert.strictEqual(getThermalDarknessThreshold('light'), 118);
+
+  const customizedCand = {
+    ...baseCand,
+    customSettings: {
+      orientation: 'landscape' as const,
+      paperWidthMm: 80 as const,
+      borderStyle: 'double' as const,
+      swapPhotoSymbol: true,
+      showFather: false,
+      showVoterId: false,
+    },
+  };
+
+  const htmlHidden = renderSlipCardByStyleHTML(voter, customizedCand, 'bw');
+  assert.ok(!htmlHidden.includes('পিতা/স্বামীর নাম:'));
+  assert.ok(!htmlHidden.includes('ভোটার আইডি:'));
+
+  const cssLandscape = getSlipCardStylesheet(customizedCand, 'single', false);
+  assert.ok(cssLandscape.includes('border: 4px double #000'));
+  assert.ok(cssLandscape.includes('row-reverse'));
+});

@@ -1,49 +1,68 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Voter, CandidateProfile, SlipDesignStyle, VoterInfoFillMode } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getAllCandidates,
-  getActiveCandidate,
-  setActiveCandidateId,
-  saveCandidateProfile,
+  CandidateProfile,
+  SlipBorderStyle,
+  SlipCustomSettings,
+  SlipDesignStyle,
+  SlipOrientation,
+  ThermalPaperWidthMm,
+  Voter,
+  VoterInfoFillMode,
+} from '../types';
+import {
+  DEFAULT_SLIP_FOOTER_TEXT,
+  ELECTION_SYMBOLS_GALLERY,
+  PrintLayoutMode,
+  SLIP_DESIGN_STYLES,
+  addToSlipQueue,
+  clearSlipQueue,
   createNewCandidateTemplate,
   deleteCandidateProfile,
-  resetDefaultCandidates,
-  printVoterSlips,
-  PrintLayoutMode,
+  getActiveCandidate,
+  getAllCandidates,
   getDefaultPrintPrefs,
-  saveDefaultPrintPrefs,
+  getSlipCardStylesheet,
   getSlipQueue,
-  addToSlipQueue,
-  removeFromSlipQueue,
-  clearSlipQueue,
-  isVoterInSlipQueue,
-  findFamilyMembers,
-  searchVotersForSlipQueue,
   getVoterUniqueKey,
-  ELECTION_SYMBOLS_GALLERY,
-  SLIP_DESIGN_STYLES,
-  DEFAULT_SLIP_FOOTER_TEXT,
+  isVoterInSlipQueue,
+  printVoterSlips,
+  removeFromSlipQueue,
+  renderSlipCardByStyleHTML,
+  resetDefaultCandidates,
+  saveCandidateProfile,
+  saveDefaultPrintPrefs,
+  searchVotersForSlipQueue,
+  setActiveCandidateId,
 } from '../lib/voterSlipUtils';
 import {
-  connectBluetoothPrinter,
-  disconnectBluetoothPrinter,
-  getConnectedPrinter,
-  autoConnectBluetoothPrinter,
-  canvasToEscPosBytes,
-  sendEscPosToPrinter,
+  DEFAULT_SLIP_CUSTOM_SETTINGS,
+  ThermalSlipMetrics,
+  drawThermalSlipToCanvas,
+  getThermalDarknessThreshold,
+  prepareCanvasForThermalPrinter,
+  resolveSlipCustomSettings,
+} from '../lib/thermalSlipRenderer';
+import {
   BluetoothPrinterDevice,
   BluetoothPrinterError,
-  PairedBluetoothDevice,
   NativeBluetoothListResult,
+  PairedBluetoothDevice,
+  autoConnectBluetoothPrinter,
+  canvasToEscPosBytes,
+  connectBluetoothPrinter,
+  connectNativePrinterByAddress,
+  createTestPrintEscPosBytes,
+  disconnectBluetoothPrinter,
+  getConnectedPrinter,
   isAndroidNativeBluetooth,
   isBluetoothSupported,
   listNativePairedPrinters,
-  connectNativePrinterByAddress,
   openAndroidBluetoothSettings,
   requestAndroidBluetoothPermissions,
-  createTestPrintEscPosBytes,
+  sendEscPosToPrinter,
 } from '../lib/bluetoothPrinter';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface VoterSlipModalProps {
   isOpen: boolean;
@@ -52,197 +71,26 @@ interface VoterSlipModalProps {
   allVillages?: Record<string, Voter[]>;
 }
 
-/**
- * Helper to load an image for Canvas drawing
- */
-function loadImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    if (!src) return resolve(null);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = src;
-  });
-}
+type SidePanelMode = 'none' | 'customize' | 'voter_edit';
+type CustomizeSubTab = 'layout' | 'sizes' | 'fields' | 'content';
 
-function drawImageContain(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  x: number,
-  y: number,
-  w: number,
-  h: number
-) {
-  const scale = Math.min(w / img.width, h / img.height);
-  const dw = img.width * scale;
-  const dh = img.height * scale;
-  const dx = x + (w - dw) / 2;
-  const dy = y + (h - dh) / 2;
-  ctx.drawImage(img, dx, dy, dw, dh);
-}
-
-function drawImageCoverTop(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  x: number,
-  y: number,
-  w: number,
-  h: number
-) {
-  const imgRatio = img.width / img.height;
-  const boxRatio = w / h;
-  let sx = 0;
-  let sy = 0;
-  let sw = img.width;
-  let sh = img.height;
-  if (imgRatio > boxRatio) {
-    sw = img.height * boxRatio;
-    sx = (img.width - sw) / 2;
-  } else {
-    sh = img.width / boxRatio;
-    sy = 0; // Keep top aligned so candidate head/face is never cropped
-  }
-  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
-}
-
-/**
- * Draw Voter Slip onto a 384px wide canvas (Standard 58mm POS thermal printer width)
- * NO QR CODE — clean, high-contrast thermal layout with prominent Candidate Photo & Symbol
- */
-async function drawThermalSlipToCanvas(
-  canvas: HTMLCanvasElement,
-  voter: Voter,
-  config: CandidateProfile
-): Promise<void> {
-  const width = 384;
-  const height = 510;
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = '#000000';
-  ctx.textBaseline = 'top';
-
-  const [candImg, symImg] = await Promise.all([
-    loadImage(config.candidatePhotoUrl || './candidate-ataur.jpg'),
-    loadImage(config.symbolPhotoUrl || './symbol-horse.png'),
-  ]);
-
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 13px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(config.religiousHeader || 'বিসমিল্লাহির রাহমানির রাহিম', width / 2, 8);
-
-  if (config.electionTitle) {
-    ctx.font = '900 15px "Noto Sans Bengali", sans-serif';
-    ctx.fillText(config.electionTitle.slice(0, 34), width / 2, 28);
-  }
-
-  ctx.font = 'bold 11px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(
-    (config.constituencyText || config.electionSubtitle || '').slice(0, 42),
-    width / 2,
-    49
-  );
-
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('------------------------------------------------', width / 2, 66);
-
-  // Left: Symbol (large & clear, 84x80)
-  if (symImg) {
-    drawImageContain(ctx, symImg, 8, 78, 84, 80);
-  }
-  ctx.font = 'bold 11.5px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`মার্কা: ${config.symbolName || 'ঘোড়া'}`, 50, 162, 92);
-  ctx.strokeRect(6, 179, 88, 19);
-  ctx.font = 'bold 10px "Noto Sans Bengali", sans-serif';
-  ctx.fillText((config.symbolCallout || 'ভোট দিন').slice(0, 16), 50, 183, 84);
-
-  // Right: Candidate Photo (maximally sized 116x138 — noticeably larger than symbol!)
-  if (candImg) {
-    drawImageCoverTop(ctx, candImg, width - 124, 76, 116, 138);
-  }
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(width - 124, 76, 116, 138);
-  ctx.lineWidth = 1;
-  ctx.font = 'bold 10.5px "Noto Sans Bengali", sans-serif';
-  ctx.fillText('প্রার্থী', width - 66, 217);
-
-  // Center text column (x: 98..254, center 176)
-  const centerX = 176;
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(102, 86, 148, 22);
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 11.5px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(config.candidateBadge || config.postTitle || 'পদপ্রার্থী', centerX, 91, 140);
-
-  ctx.fillStyle = '#000000';
-  ctx.font = '900 16px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(
-    `${config.candidateName || config.name} ${config.candidateSuffix || 'কে'}`.slice(0, 22),
-    centerX,
-    118,
-    152
-  );
-
-  ctx.font = 'bold 10.5px "Noto Sans Bengali", sans-serif';
-  ctx.fillText((config.electionSubtitle || '').slice(0, 26), centerX, 145, 152);
-
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('================================================', width / 2, 232);
-
-  ctx.textAlign = 'left';
-  ctx.font = 'bold 13px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ভোট কেন্দ্র: ${config.pollingCenter || '-'}`, 12, 250);
-  ctx.fillText(`এলাকা: ${voter.villageName || config.voterArea || '-'}`, 12, 270);
-  ctx.textAlign = 'right';
-  ctx.fillText(`ওয়ার্ড নং: ${config.wardNo || '-'}`, width - 12, 270);
-
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('------------------------------------------------', width / 2, 288);
-
-  ctx.textAlign = 'left';
-  ctx.font = '900 16px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ক্রমিক: ${voter.serialNo || '-'} | ${voter.name || '-'}`, 14, 308);
-
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText(`ভোটার আইডি: ${voter.voterId || '-'}`, 14, 334);
-
-  ctx.font = 'bold 13px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`পিতা/স্বামী: ${voter.fatherName || '-'}`, 14, 357);
-  ctx.fillText(`মাতা: ${voter.motherName || '-'}`, 14, 380);
-
-  const extraLine = [
-    voter.dob ? `জন্ম: ${voter.dob}` : '',
-    voter.profession ? `পেশা: ${voter.profession}` : '',
-  ]
-    .filter(Boolean)
-    .join('  |  ');
-  if (extraLine) {
-    ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-    ctx.fillText(extraLine, 14, 403);
-  }
-
-  ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(`ঠিকানা: ${voter.address || voter.villageName || '-'}`, 14, 424);
-
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('------------------------------------------------', width / 2, 445);
-  ctx.font = 'bold 12px "Noto Sans Bengali", sans-serif';
-  ctx.fillText(
-    (config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT).slice(0, 44),
-    width / 2,
-    463
-  );
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('================================================', width / 2, 484);
-}
+const VISIBILITY_TOGGLES: { key: keyof SlipCustomSettings; label: string }[] = [
+  { key: 'showReligiousHeader', label: 'ধর্মীয় হেডার (বিসমিল্লাহ)' },
+  { key: 'showElectionTitle', label: 'নির্বাচনের শিরোনাম' },
+  { key: 'showCandidatePhoto', label: 'প্রার্থীর ছবি' },
+  { key: 'showSymbolPhoto', label: 'মার্কার ছবি' },
+  { key: 'showSlogan', label: 'স্লোগান / আহ্বান' },
+  { key: 'showPollingCenter', label: 'ভোটকেন্দ্রের নাম' },
+  { key: 'showWardAndArea', label: 'ওয়ার্ড নং ও এলাকা' },
+  { key: 'showSerial', label: 'ক্রমিক নং' },
+  { key: 'showVoterId', label: 'ভোটার আইডি নং' },
+  { key: 'showFather', label: 'পিতা / স্বামীর নাম' },
+  { key: 'showMother', label: 'মাতার নাম' },
+  { key: 'showDob', label: 'জন্ম তারিখ' },
+  { key: 'showProfession', label: 'পেশা' },
+  { key: 'showAddress', label: 'ঠিকানা' },
+  { key: 'showFooter', label: 'নিচের ফুটার বার্তা' },
+];
 
 export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   isOpen,
@@ -250,20 +98,19 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   voter,
   allVillages = {},
 }) => {
-  // Two separate screens:
-  // 'preview' = Front instant print preview page (Always opens first, no settings clutter!)
-  // 'settings' = Back settings page where default candidate, card layout, photos & print options are configured
-  const [activeScreen, setActiveScreen] = useState<'preview' | 'settings'>('preview');
+  useLockBodyScroll(isOpen);
 
-  // Bluetooth Print Preview is ALWAYS the default when opening voter slip print!
+  const [activeScreen, setActiveScreen] = useState<'preview' | 'settings'>('preview');
   const [activePrintOption, setActivePrintOption] = useState<'bluetooth' | 'normal'>('bluetooth');
+  const [sidePanel, setSidePanel] = useState<SidePanelMode>('none');
+  const [customizeTab, setCustomizeTab] = useState<CustomizeSubTab>('layout');
+  const [exactScalePreview, setExactScalePreview] = useState<boolean>(false);
 
   const [candidatesList, setCandidatesList] = useState<CandidateProfile[]>(() =>
     getAllCandidates()
   );
   const [candidate, setCandidate] = useState<CandidateProfile>(() => getActiveCandidate());
 
-  // Default Print Page Preferences (saved in localStorage so user sets once in Settings)
   const [pageLayoutMode, setPageLayoutMode] = useState<PrintLayoutMode>(
     () => getDefaultPrintPrefs().pageLayoutMode
   );
@@ -271,7 +118,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     () => getDefaultPrintPrefs().colorMode
   );
 
-  // Active Single Voter Data
   const [voterData, setVoterData] = useState<Voter>(() => {
     if (voter) return voter;
     const firstVillage = Object.keys(allVillages)[0];
@@ -286,21 +132,19 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
       motherName: 'মোছাঃ ফাতেমা খাতুন',
       dob: '০১/০১/১৯৭৫',
       gender: 'পুরুষ',
-      villageName: 'পাঠামারা',
+      villageName: 'হোগলাবুনিয়া',
       profession: 'কৃষি',
     };
   });
 
-  // Multi-Voter / Family Slip Queue
+  // Manual Multi-Voter Batch Print Queue (No "Family" auto-grouping)
   const [slipQueue, setSlipQueue] = useState<Voter[]>(() => getSlipQueue());
-  const [familySearchQuery, setFamilySearchQuery] = useState('');
-  const [showFamilyFinder, setShowFamilyFinder] = useState(false);
-  const [isEditingVoter, setIsEditingVoter] = useState(false);
+  const [queueSearchQuery, setQueueSearchQuery] = useState('');
+  const [showQueuePanel, setShowQueuePanel] = useState(false);
 
-  // Village selector
   const villageList = Object.keys(allVillages);
   const [selectedVillage, setSelectedVillage] = useState<string>(
-    voter?.villageName || (villageList.includes('পাঠামারা') ? 'পাঠামারা' : villageList[0] || '')
+    voter?.villageName || villageList[0] || ''
   );
 
   // Bluetooth State
@@ -318,31 +162,35 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   );
   const [notice, setNotice] = useState<string | null>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Live WYSIWYG Thermal Canvas & Metrics
+  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const printWorkCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [thermalMetrics, setThermalMetrics] = useState<ThermalSlipMetrics>({
+    orientation: 'portrait',
+    paperWidthMm: 58,
+    printableRollDots: 384,
+    viewWidthPx: 384,
+    viewHeightPx: 512,
+    viewWidthMm: 58,
+    viewHeightMm: 64,
+    rollFeedLengthMm: 64,
+  });
 
+  const customSettings = useMemo(() => resolveSlipCustomSettings(candidate), [candidate]);
   const allVotersFlat = useMemo(() => Object.values(allVillages).flat(), [allVillages]);
 
-  const suggestedFamilyMembers = useMemo(() => {
-    const pool = allVillages[selectedVillage] || allVotersFlat;
-    return findFamilyMembers(voterData, pool).slice(0, 15);
-  }, [voterData, selectedVillage, allVillages, allVotersFlat]);
-
-  const quickSearchResults = useMemo(() => {
-    if (!familySearchQuery.trim()) return [];
+  const queueSearchResults = useMemo(() => {
+    if (!queueSearchQuery.trim()) return [];
     const pool = allVotersFlat.length > 0 ? allVotersFlat : allVillages[selectedVillage] || [];
-    return searchVotersForSlipQueue(familySearchQuery, pool, 25);
-  }, [familySearchQuery, allVotersFlat, allVillages, selectedVillage]);
+    return searchVotersForSlipQueue(queueSearchQuery, pool, 25);
+  }, [queueSearchQuery, allVotersFlat, allVillages, selectedVillage]);
 
-  // Every time the modal opens for a voter:
-  // 1. Always show the clean Front Print Preview page ('preview')
-  // 2. Always default to Bluetooth Print Preview ('bluetooth')
-  // 3. Always load the user's saved Default Candidate & Default Print Preferences
   useEffect(() => {
     if (isOpen) {
       setActiveScreen('preview');
       setActivePrintOption('bluetooth');
-      setShowFamilyFinder(false);
-      setIsEditingVoter(false);
+      setShowQueuePanel(false);
+      setSidePanel('none');
       setShowBtPicker(false);
       setBtStatusError(null);
       if (voter) {
@@ -363,6 +211,22 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     window.addEventListener('slip-queue-updated', onQueueUpdate);
     return () => window.removeEventListener('slip-queue-updated', onQueueUpdate);
   }, []);
+
+  // Live Redraw of Exact WYSIWYG Thermal Canvas whenever Voter or Any Customization changes!
+  useEffect(() => {
+    if (!isOpen || activeScreen !== 'preview' || activePrintOption !== 'bluetooth') return;
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    drawThermalSlipToCanvas(canvas, voterData, candidate).then((metrics) => {
+      if (!cancelled) {
+        setThermalMetrics(metrics);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, activeScreen, activePrintOption, voterData, candidate]);
 
   // Automatic Bluetooth Printer Detection & Connection
   useEffect(() => {
@@ -422,7 +286,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     setTimeout(() => setNotice(null), 3500);
   };
 
-  // Update active candidate field & persist immediately as Default Candidate
   const updateCandidateField = (patch: Partial<CandidateProfile>) => {
     const updated: CandidateProfile = {
       ...candidate,
@@ -439,6 +302,19 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     setCandidatesList(list);
   };
 
+  const updateCustomSettings = (patch: Partial<SlipCustomSettings>) => {
+    const merged: SlipCustomSettings = {
+      ...customSettings,
+      ...patch,
+    };
+    updateCandidateField({ customSettings: merged });
+  };
+
+  const handleResetCustomSettings = () => {
+    updateCandidateField({ customSettings: { ...DEFAULT_SLIP_CUSTOM_SETTINGS } });
+    showNotice('🔄 স্লিপের মাপ ও কাস্টমাইজেশন ডিফল্ট অবস্থায় রিসেট করা হয়েছে!');
+  };
+
   const handleSelectDefaultCandidate = (selected: CandidateProfile) => {
     setCandidate(selected);
     setActiveCandidateId(selected.id);
@@ -447,10 +323,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     );
   };
 
-  const handleUpdatePrintPrefs = (
-    nextLayout: PrintLayoutMode,
-    nextColor: 'bw' | 'color'
-  ) => {
+  const handleUpdatePrintPrefs = (nextLayout: PrintLayoutMode, nextColor: 'bw' | 'color') => {
     setPageLayoutMode(nextLayout);
     setColorMode(nextColor);
     saveDefaultPrintPrefs({
@@ -480,7 +353,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     showNotice('🔄 সকল ডিফল্ট ভোটার স্লিপ টেমপ্লেট রিসেট করা হয়েছে।');
   };
 
-  // Candidate photo upload
   const handleCandidatePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -495,7 +367,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     }
   };
 
-  // Symbol photo upload
   const handleSymbolPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -511,10 +382,10 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   };
 
   const handleVoterNavigate = (direction: 'prev' | 'next') => {
-    const list = allVillages[selectedVillage] || [];
+    const list = allVillages[selectedVillage] || allVotersFlat;
     if (list.length === 0) return;
     const currentIndex = list.findIndex(
-      (v) => String(v.serialNo) === String(voterData.serialNo) || v.voterId === voterData.voterId
+      (v) => String(v.serialNo) === String(voterData.serialNo) && v.voterId === voterData.voterId
     );
     let nextIndex = 0;
     if (currentIndex !== -1) {
@@ -526,19 +397,10 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     setVoterData(list[nextIndex]);
   };
 
-  const handleAddEntireFamilyToQueue = () => {
-    addToSlipQueue([voterData, ...suggestedFamilyMembers]);
-    const updated = getSlipQueue();
-    setSlipQueue(updated);
-    showNotice(
-      `✅ পরিবারের ${convertToBengaliNumbers(suggestedFamilyMembers.length + 1)} জন ভোটার একসাথে প্রিন্ট লিস্টে যুক্ত হয়েছে!`
-    );
-  };
-
   const handleAddSingleToQueue = (v: Voter) => {
     const updated = addToSlipQueue(v);
     setSlipQueue(updated);
-    showNotice(`✅ "${v.name}" একসাথে প্রিন্ট লিস্টে যুক্ত হয়েছে!`);
+    showNotice(`✅ "${v.name}" একসাথে প্রিন্ট কিউতে যুক্ত হয়েছে!`);
   };
 
   const handleRemoveFromQueue = (v: Voter) => {
@@ -549,7 +411,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   const handleClearQueue = () => {
     const updated = clearSlipQueue();
     setSlipQueue(updated);
-    showNotice('একসাথে প্রিন্ট লিস্ট খালি করা হয়েছে।');
+    showNotice('একসাথে প্রিন্ট কিউ খালি করা হয়েছে।');
   };
 
   const refreshNativeBluetoothList = (): NativeBluetoothListResult | null => {
@@ -584,7 +446,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   };
 
   const handleConnectBluetooth = async () => {
-    // Inside Android APK: open the Paired Bluetooth Printer Picker so user can pick ANY paired printer
     if (isAndroidNativeBluetooth()) {
       const listRes = refreshNativeBluetoothList();
       setShowBtPicker(true);
@@ -594,7 +455,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
       return;
     }
 
-    // In Web Browser (Chrome / Edge / Safari)
     setIsConnectingBt(true);
     setBtStatusError(null);
     try {
@@ -682,7 +542,8 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
       }
       setBluetoothDevice(printer);
 
-      const canvas = canvasRef.current || document.createElement('canvas');
+      const workCanvas = printWorkCanvasRef.current || document.createElement('canvas');
+      const threshold = getThermalDarknessThreshold(customSettings.thermalDarkness);
 
       for (let i = 0; i < votersToPrint.length; i++) {
         const v = votersToPrint[i];
@@ -691,8 +552,9 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
             ? `"${printer.name}"-এ প্রিন্ট হচ্ছে (${convertToBengaliNumbers(i + 1)}/${convertToBengaliNumbers(votersToPrint.length)}): ${v.name}`
             : `"${printer.name}"-এ পাঠানো হচ্ছে...`
         );
-        await drawThermalSlipToCanvas(canvas, v, candidate);
-        const escPosBytes = canvasToEscPosBytes(canvas);
+        const metrics = await drawThermalSlipToCanvas(workCanvas, v, candidate);
+        const rollReadyCanvas = prepareCanvasForThermalPrinter(workCanvas, metrics.orientation);
+        const escPosBytes = canvasToEscPosBytes(rollReadyCanvas, threshold);
 
         await sendEscPosToPrinter(printer, escPosBytes, (percent) => {
           const overall = Math.round(((i + percent / 100) / votersToPrint.length) * 100);
@@ -734,14 +596,33 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   };
 
   const handleDownloadImage = async () => {
-    const canvas = canvasRef.current || document.createElement('canvas');
-    await drawThermalSlipToCanvas(canvas, voterData, candidate);
-    const link = document.createElement('a');
-    link.download = `voter_slip_${voterData.serialNo || 'card'}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-    showNotice('✅ স্লিপ ইমেজ ডাউনলোড হয়েছে!');
+    const workCanvas = printWorkCanvasRef.current || document.createElement('canvas');
+    await drawThermalSlipToCanvas(workCanvas, voterData, candidate);
+    const dataUrl = workCanvas.toDataURL('image/png');
+    const fileName = `voter_slip_${voterData.serialNo || 'card'}.png`;
+    import('../lib/nativeBridge')
+      .then(({ saveDataUrlFileCrossPlatform }) => {
+        saveDataUrlFileCrossPlatform(dataUrl, fileName, 'image/png');
+        showNotice('✅ স্লিপ ইমেজ গ্যালারি/ডাউনলোডে সেভ হয়েছে!');
+      })
+      .catch(() => {
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = dataUrl;
+        link.click();
+        showNotice('✅ স্লিপ ইমেজ ডাউনলোড হয়েছে!');
+      });
   };
+
+  // True WYSIWYG Normal Card HTML & Stylesheet memo
+  const normalPreviewHtml = useMemo(
+    () => renderSlipCardByStyleHTML(voterData, candidate, colorMode),
+    [voterData, candidate, colorMode]
+  );
+  const normalPreviewCss = useMemo(
+    () => getSlipCardStylesheet(candidate, 'single', false),
+    [candidate]
+  );
 
   if (!isOpen) return null;
 
@@ -750,408 +631,18 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
   const currentStyle: SlipDesignStyle = candidate.designStyle || 'classic_voter_card';
   const fillMode: VoterInfoFillMode = candidate.voterInfoMode || 'auto';
 
-  // Helper to render voter info inside Normal Card live preview
-  const renderLiveVoterBlock = () => {
-    if (fillMode === 'blank') {
-      return (
-        <div className="space-y-1.5 py-1 text-[11px] font-bold text-slate-900">
-          <div className="flex items-baseline gap-1">
-            <span>ভোটারের নাম :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 h-3.5" />
-            <span>ক্রমিক :</span>
-            <span className="w-12 border-b border-dotted border-slate-900 h-3.5" />
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span>পিতা / স্বামীর নাম :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 h-3.5" />
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span>মাতার নাম :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 h-3.5" />
-            <span>জন্ম :</span>
-            <span className="w-16 border-b border-dotted border-slate-900 h-3.5" />
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span>ভোটার আইডি নং :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 h-3.5" />
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span>ভোট কেন্দ্র :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 px-1 font-extrabold">
-              {candidate.pollingCenter}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span>গ্রাম / ঠিকানা :</span>
-            <span className="flex-1 border-b border-dotted border-slate-900 px-1">
-              {voterData.villageName || candidate.voterArea} (ওয়ার্ড: {candidate.wardNo})
-            </span>
-          </div>
-        </div>
-      );
-    }
-
-    const rowBorder = fillMode === 'lined' ? 'border-b border-dotted border-slate-400 pb-0.5' : '';
-
-    return (
-      <div className="space-y-1 text-[11px] text-slate-950">
-        <div className="flex items-center justify-between bg-slate-100 border border-slate-800 px-2 py-0.5 text-[10px] font-extrabold">
-          <span>ক্রমিক নং: {voterData.serialNo || '-'}</span>
-          <span>ওয়ার্ড নং: {candidate.wardNo || '-'}</span>
-          <span>এলাকা: {voterData.villageName || candidate.voterArea || '-'}</span>
-        </div>
-        <div className={`text-xs font-black text-slate-950 ${rowBorder}`}>
-          ভোটারের নাম: <span className="text-[13px]">{voterData.name || '-'}</span>
-        </div>
-        <div className={`font-bold ${rowBorder}`}>
-          পিতা/স্বামীর নাম: <span className="font-semibold">{voterData.fatherName || '-'}</span>
-        </div>
-        <div className={`font-bold ${rowBorder}`}>
-          মাতার নাম: <span className="font-semibold">{voterData.motherName || '-'}</span>
-        </div>
-        <div className={`flex justify-between gap-2 font-bold ${rowBorder}`}>
-          <span>
-            ভোটার আইডি: <span className="font-mono font-extrabold">{voterData.voterId || '-'}</span>
-          </span>
-          <span>জন্ম: {voterData.dob || '-'}</span>
-        </div>
-        <div className={`font-bold ${rowBorder}`}>
-          ভোট কেন্দ্র: <span className="font-extrabold">{candidate.pollingCenter || '-'}</span>
-        </div>
-        <div className={`font-bold ${rowBorder}`}>
-          ঠিকানা: <span className="font-semibold">{voterData.address || voterData.villageName || '-'}</span>
-        </div>
-      </div>
-    );
-  };
-
-  // Helper to render the Normal Print Card Preview (used in Normal Print Preview & Settings Live Preview)
-  const renderNormalCardPreview = () => {
-    if (currentStyle === 'classic_voter_card') {
-      return (
-        <div
-          className={`w-full max-w-2xl mx-auto bg-white border-[2.5px] border-slate-950 shadow-xl text-slate-950 select-none overflow-hidden ${
-            colorMode === 'bw' ? 'grayscale contrast-125' : ''
-          }`}
-        >
-          <div className="flex items-stretch">
-            {/* Left Column: Candidate Photo + Symbol + Callout + Slogan */}
-            <div className="w-[38%] sm:w-[37%] border-r-2 border-dashed border-slate-800 p-2 sm:p-2.5 flex flex-col items-center justify-between text-center bg-white shrink-0">
-              <div className="w-full flex justify-center">
-                <img
-                  src={candidate.candidatePhotoUrl || './candidate-ataur.jpg'}
-                  alt={candidate.name}
-                  className="w-full max-w-[196px] h-44 sm:h-52 object-cover object-top border-b-2 border-slate-950"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = './candidate-default.jpg';
-                  }}
-                />
-              </div>
-
-              <div className="w-full flex justify-center py-1.5">
-                <img
-                  src={candidate.symbolPhotoUrl || './symbol-horse.png'}
-                  alt={candidate.symbolName}
-                  className="w-full max-w-[132px] h-24 sm:h-28 object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = './symbol-default.png';
-                  }}
-                />
-              </div>
-
-              <div className="w-full">
-                <div className="text-sm sm:text-base font-black text-slate-950 leading-tight">
-                  {candidate.symbolCallout || `${candidate.symbolName} মার্কায় ভোট দিন`}
-                </div>
-                {candidate.sloganText && (
-                  <div className="text-[10px] sm:text-[11px] font-bold text-slate-900 leading-snug mt-1">
-                    {candidate.sloganText}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right Column: Header + Candidate Name + Dashed Line + Voter Info */}
-            <div className="flex-1 p-3 sm:p-4 flex flex-col justify-between relative min-w-0">
-              {candidate.cardBadgeText && (
-                <div
-                  className="absolute right-1.5 top-0 bg-slate-200 border border-slate-900 px-1.5 py-2 text-[11px] font-black text-slate-950 tracking-tight shadow-2xs"
-                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                >
-                  {candidate.cardBadgeText}
-                </div>
-              )}
-
-              <div>
-                <div className="text-center text-xs font-bold text-slate-950 mb-1.5">
-                  {candidate.religiousHeader || 'আল্লাহ্ সর্বশক্তিমান'}
-                </div>
-
-                <div className="border-l-[4px] border-slate-950 pl-2.5 pr-7 mb-2 space-y-0.5">
-                  <div className="text-sm sm:text-base font-extrabold text-slate-950 leading-tight">
-                    {candidate.electionTitle}
-                  </div>
-                  {candidate.constituencyText && (
-                    <div className="text-sm sm:text-[15px] font-extrabold text-slate-950 leading-tight">
-                      {candidate.constituencyText}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-baseline gap-2 flex-wrap mb-2">
-                  <span className="bg-slate-950 text-white text-sm sm:text-base font-black px-2.5 py-0.5 inline-block">
-                    {candidate.candidateBadge || candidate.postTitle || 'চেয়ারম্যান পদপ্রার্থী'}
-                  </span>
-                  <span className="text-[11px] sm:text-xs font-bold text-slate-900">
-                    {candidate.electionSubtitle}
-                  </span>
-                </div>
-
-                <div className="border-l-[4px] border-slate-950 pl-2.5 mb-2 flex items-baseline gap-1.5 flex-wrap">
-                  <span className="text-lg sm:text-2xl font-black text-slate-950 leading-none tracking-tight">
-                    {candidate.candidateName || candidate.name}
-                  </span>
-                  <span className="text-xs sm:text-sm font-extrabold text-slate-950">
-                    {candidate.candidateSuffix ?? 'কে'}
-                  </span>
-                </div>
-
-                <div className="border-b-2 border-dashed border-slate-700 my-2" />
-              </div>
-
-              <div className="flex-1 flex flex-col justify-center">{renderLiveVoterBlock()}</div>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 text-white grid grid-cols-12 text-[10px] sm:text-[11px] font-extrabold border-t-2 border-slate-950">
-            <div className="col-span-4 px-2 py-1.5 truncate">
-              {candidate.footerLeftText || 'প্রচারে: সর্বস্তরের জনসাধারণ'}
-            </div>
-            <div className="col-span-4 px-2 py-1.5 border-x border-white text-center truncate">
-              {candidate.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}
-            </div>
-            <div className="col-span-4 px-2 py-1.5 text-right truncate">
-              {candidate.footerRightText || `ওয়ার্ড নং: ${candidate.wardNo}`}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (currentStyle === 'upazila_horizontal') {
-      return (
-        <div
-          className={`w-full max-w-2xl mx-auto bg-white border-2 border-slate-950 shadow-xl text-slate-950 select-none overflow-hidden ${
-            colorMode === 'bw' ? 'grayscale contrast-125' : ''
-          }`}
-        >
-          <div className="text-center text-xs font-bold py-1 border-b border-dotted border-slate-400">
-            {candidate.religiousHeader}
-          </div>
-          <div className="flex items-center justify-between px-3 py-1.5">
-            <div>
-              <div className="text-sm font-extrabold">{candidate.electionTitle}</div>
-              <div className="text-[11px] text-slate-700">{candidate.electionSubtitle}</div>
-            </div>
-            <span className="bg-slate-950 text-white text-xs font-black px-2.5 py-0.5">
-              {candidate.candidateBadge}
-            </span>
-          </div>
-          <div className="text-center text-lg font-black border-y-2 border-slate-950 bg-slate-50 py-1">
-            {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
-          </div>
-          <div className="flex items-stretch p-3 gap-2.5">
-            <div className="w-24 sm:w-28 border-r border-dashed border-slate-400 pr-2 flex flex-col items-center justify-center text-center shrink-0">
-              <img
-                src={candidate.symbolPhotoUrl || './symbol-default.png'}
-                alt="মার্কা"
-                className="w-20 h-20 object-contain"
-              />
-              <div className="text-xs font-black mt-1">মার্কা: {candidate.symbolName}</div>
-              <div className="text-[10px] font-bold border border-slate-900 px-1.5 py-0.5 mt-1">
-                {candidate.symbolCallout}
-              </div>
-            </div>
-            <div className="flex-1 min-w-0">{renderLiveVoterBlock()}</div>
-            <div className="w-32 sm:w-36 border border-slate-900 flex flex-col justify-between shrink-0">
-              <img
-                src={candidate.candidatePhotoUrl || './candidate-default.jpg'}
-                alt="প্রার্থী"
-                className="w-full h-36 sm:h-40 object-cover object-top"
-              />
-              <div className="bg-slate-950 text-white text-[10px] font-bold text-center py-0.5">
-                {candidate.postTitle || 'প্রার্থী'}
-              </div>
-            </div>
-          </div>
-          <div className="bg-slate-950 text-white grid grid-cols-3 text-[10px] font-bold">
-            <div className="px-2 py-1 truncate">{candidate.footerLeftText}</div>
-            <div className="px-2 py-1 border-x border-white text-center truncate">
-              {candidate.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}
-            </div>
-            <div className="px-2 py-1 text-right truncate">{candidate.footerRightText}</div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div
-        className={`w-full max-w-2xl mx-auto bg-white border-2 border-slate-950 shadow-xl text-slate-950 select-none overflow-hidden ${
-          colorMode === 'bw' ? 'grayscale contrast-125' : ''
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2.5 p-3 border-b-2 border-slate-950 bg-slate-50">
-          <img
-            src={candidate.candidatePhotoUrl || './candidate-default.jpg'}
-            alt="প্রার্থী"
-            className="w-28 sm:w-32 h-36 sm:h-40 object-cover object-top border-2 border-slate-900 shrink-0"
-          />
-          <div className="flex-1 text-center min-w-0">
-            <div className="text-[11px] font-bold">{candidate.religiousHeader}</div>
-            <div className="text-xs sm:text-sm font-extrabold">{candidate.electionTitle}</div>
-            {candidate.constituencyText && (
-              <div className="text-xs font-bold text-slate-700">{candidate.constituencyText}</div>
-            )}
-            <div className="inline-block border border-slate-900 px-2 py-0.5 text-[11px] font-black mt-1">
-              {candidate.candidateBadge}
-            </div>
-            <div className="bg-slate-950 text-white text-base sm:text-lg font-black py-1 px-3 mt-1">
-              {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
-            </div>
-          </div>
-          <div className="w-24 sm:w-28 text-center shrink-0">
-            <img
-              src={candidate.symbolPhotoUrl || './symbol-horse.png'}
-              alt="মার্কা"
-              className="w-20 h-20 object-contain mx-auto"
-            />
-            <div className="text-[10px] font-black border border-slate-900 px-1 py-0.5 mt-1">
-              {candidate.symbolCallout}
-            </div>
-          </div>
-        </div>
-        <div className="p-3">{renderLiveVoterBlock()}</div>
-        <div className="bg-slate-950 text-white grid grid-cols-3 text-[10px] font-bold">
-          <div className="px-2 py-1 truncate">{candidate.footerLeftText}</div>
-          <div className="px-2 py-1 border-x border-white text-center truncate">
-            {candidate.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}
-          </div>
-          <div className="px-2 py-1 text-right truncate">{candidate.footerRightText}</div>
-        </div>
-      </div>
-    );
-  };
-
-  // Helper to render the 58mm Bluetooth Thermal Receipt Preview
-  const renderBluetoothThermalPreview = () => {
-    return (
-      <div className="w-full max-w-[360px] mx-auto bg-white border-2 border-slate-900 shadow-xl p-4 text-slate-950 font-sans select-none grayscale contrast-125">
-        <div className="text-center border-b-2 border-dashed border-slate-900 pb-2">
-          <div className="text-xs font-bold">
-            {candidate.religiousHeader || 'বিসমিল্লাহির রাহমানির রাহিম'}
-          </div>
-          {candidate.electionTitle && (
-            <div className="text-sm font-black mt-0.5 leading-snug">{candidate.electionTitle}</div>
-          )}
-          {(candidate.constituencyText || candidate.electionSubtitle) && (
-            <div className="text-[11px] font-bold text-slate-800 mt-0.5">
-              {candidate.constituencyText || candidate.electionSubtitle}
-            </div>
-          )}
-        </div>
-
-        {/* Candidate Photo + Symbol + Name block */}
-        <div className="flex items-center justify-between gap-2 py-2.5 border-b-2 border-double border-slate-950">
-          <div className="w-[84px] shrink-0 flex flex-col items-center text-center">
-            <img
-              src={candidate.symbolPhotoUrl || './symbol-horse.png'}
-              alt={candidate.symbolName}
-              className="w-[74px] h-[70px] object-contain"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = './symbol-default.png';
-              }}
-            />
-            <span className="text-[10.5px] font-black mt-0.5 leading-tight">মার্কা: {candidate.symbolName}</span>
-          </div>
-
-          <div className="flex-1 min-w-0 text-center space-y-1">
-            <span className="inline-block bg-slate-950 text-white text-[10.5px] font-black px-2 py-0.5">
-              {candidate.candidateBadge || candidate.postTitle || 'পদপ্রার্থী'}
-            </span>
-            <div className="text-[15px] font-black leading-tight break-words">
-              {candidate.candidateName || candidate.name} {candidate.candidateSuffix ?? 'কে'}
-            </div>
-            <div className="inline-block border border-slate-950 text-[9.5px] font-black px-1.5 py-0.5 leading-tight">
-              {candidate.symbolCallout || `${candidate.symbolName} মার্কায় ভোট দিন`}
-            </div>
-          </div>
-
-          <div className="w-[114px] shrink-0 flex flex-col items-center text-center">
-            <img
-              src={candidate.candidatePhotoUrl || './candidate-ataur.jpg'}
-              alt={candidate.name}
-              className="w-[110px] h-[130px] object-cover object-top border-[1.5px] border-slate-950"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = './candidate-default.jpg';
-              }}
-            />
-            <span className="text-[10px] font-bold mt-0.5">প্রার্থী</span>
-          </div>
-        </div>
-
-        {/* Center & Ward */}
-        <div className="py-1.5 border-b border-dashed border-slate-800 text-xs font-bold space-y-0.5">
-          <div>
-            ভোট কেন্দ্র: <span className="font-black">{candidate.pollingCenter || '-'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>এলাকা: {voterData.villageName || candidate.voterArea || '-'}</span>
-            <span>ওয়ার্ড নং: {candidate.wardNo || '-'}</span>
-          </div>
-        </div>
-
-        {/* Voter Details */}
-        <div className="py-2 space-y-1 text-xs">
-          <div className="text-sm font-black bg-slate-100 border border-slate-900 px-2 py-1">
-            ক্রমিক: {voterData.serialNo || '-'} | {voterData.name || '-'}
-          </div>
-          <div className="font-mono font-black text-[13px] pt-0.5">
-            ভোটার আইডি: {voterData.voterId || '-'}
-          </div>
-          <div className="font-bold">পিতা/স্বামী: {voterData.fatherName || '-'}</div>
-          <div className="font-bold">মাতা: {voterData.motherName || '-'}</div>
-          {(voterData.dob || voterData.profession) && (
-            <div className="font-bold text-[11px]">
-              {voterData.dob ? `জন্ম: ${voterData.dob}` : ''}{' '}
-              {voterData.profession ? `| পেশা: ${voterData.profession}` : ''}
-            </div>
-          )}
-          <div className="font-bold">
-            ঠিকানা: {voterData.address || voterData.villageName || '-'}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t-2 border-dashed border-slate-900 pt-1.5 text-center text-[11px] font-extrabold">
-          {candidate.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}
-        </div>
-      </div>
-    );
-  };
-
-  // Inline Bluetooth Printer Picker & Diagnostics Panel (Android Native SPP + Web BLE)
   const renderBluetoothManagerPanel = () => {
     if (!showBtPicker) return null;
     const isNative = isAndroidNativeBluetooth();
     const devices = nativeBtList?.devices || [];
     const errorCode = btStatusError?.code || nativeBtList?.errorCode || '';
-    const errorMessage = btStatusError?.message || (!nativeBtList?.success ? nativeBtList?.error : '');
+    const errorMessage =
+      btStatusError?.message || (!nativeBtList?.success ? nativeBtList?.error : '');
 
     return (
       <div
         data-testid="bluetooth-picker-panel"
-        className="w-full max-w-[380px] bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm space-y-2.5 text-xs"
+        className="w-full max-w-[420px] bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm space-y-2.5 text-xs"
       >
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
           <div className="font-black text-slate-900 flex items-center gap-1.5">
@@ -1168,7 +659,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           </button>
         </div>
 
-        {/* Active connected printer banner */}
         {bluetoothDevice && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -1212,7 +702,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           </div>
         )}
 
-        {/* Clear error notice + one-tap Android recovery buttons */}
         {errorMessage && (
           <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-2.5 space-y-2">
             <p className="font-bold leading-snug">⚠️ {errorMessage}</p>
@@ -1254,7 +743,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           </div>
         )}
 
-        {/* Android Native Paired Devices List */}
         {isNative ? (
           <div className="space-y-1.5">
             {devices.length > 0 && (
@@ -1263,7 +751,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                   ফোনে পেয়ার করা ব্লুটুথ ডিভাইস ({convertToBengaliNumbers(devices.length)}টি) — আপনার
                   প্রিন্টারটিতে ট্যাপ করুন:
                 </div>
-                <div className="max-h-44 overflow-y-auto space-y-1.5 pr-0.5">
+                <div className="max-h-44 overflow-y-auto overscroll-contain space-y-1.5 pr-0.5">
                   {devices.map((dev) => {
                     const isCurrent =
                       bluetoothDevice?.address &&
@@ -1295,11 +783,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                           </div>
                         </div>
                         <span className="text-[11px] font-extrabold text-emerald-700 shrink-0">
-                          {isConnectingBt
-                            ? '...'
-                            : isCurrent
-                            ? '✓ সংযুক্ত'
-                            : 'কানেক্ট'}
+                          {isConnectingBt ? '...' : isCurrent ? '✓ সংযুক্ত' : 'কানেক্ট'}
                         </span>
                       </button>
                     );
@@ -1326,7 +810,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
             </div>
           </div>
         ) : (
-          /* Web Browser (Chrome/Edge/Safari) Bluetooth Controls */
           <div className="space-y-2">
             {isBluetoothSupported() ? (
               <button
@@ -1357,7 +840,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
               </button>
             ) : (
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-700 font-semibold leading-relaxed">
-                ℹ️ এই ব্রাউজার সরাসরি ব্লুটুথ সাপোর্ট করে না। ৫৮মিমি থার্মাল প্রিন্টারের জন্য{' '}
+                ℹ️ এই ব্রাউজার সরাসরি ব্লুটুথ সাপোর্ট করে না। থার্মাল প্রিন্টারের জন্য{' '}
                 <span className="font-extrabold text-slate-900">অ্যান্ড্রয়েড APK অ্যাপ</span> অথবা{' '}
                 <span className="font-extrabold text-slate-900">Google Chrome</span> ব্যবহার করুন।
               </div>
@@ -1368,14 +851,441 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
     );
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-end sm:items-center justify-center p-0 sm:p-3 overflow-y-auto">
-      <canvas ref={canvasRef} className="hidden" />
+  // Live Customizer Studio Panel (used side-by-side next to preview)
+  const renderLiveCustomizerStudio = () => (
+    <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm p-3.5 space-y-3 text-xs">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2 gap-2">
+        <h4 className="font-black text-slate-900 text-xs sm:text-sm">
+          🎨 স্লিপ কাস্টমাইজেশন স্টুডিও (লাইভ)
+        </h4>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleResetCustomSettings}
+            className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] cursor-pointer"
+            title="ডিফল্ট মাপে ফিরুন"
+          >
+            🔄 রিসেট
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidePanel('none')}
+            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+          >
+            ✓ সম্পন্ন
+          </button>
+        </div>
+      </div>
 
-      <div className="bg-white text-slate-900 w-full max-w-4xl rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]">
-        {/* =====================================================================
-            TOP HEADER BAR
-            ===================================================================== */}
+      {/* 4 Sub-tabs */}
+      <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1 rounded-xl">
+        {[
+          { id: 'layout' as CustomizeSubTab, label: 'মাপ ও স্টাইল' },
+          { id: 'sizes' as CustomizeSubTab, label: 'ফন্ট ও সাইজ' },
+          { id: 'fields' as CustomizeSubTab, label: 'তথ্য অন/অফ' },
+          { id: 'content' as CustomizeSubTab, label: 'লেখা ও ছবি' },
+        ].map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => setCustomizeTab(tb.id)}
+            className={`py-1.5 px-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer ${
+              customizeTab === tb.id
+                ? 'bg-white text-indigo-700 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sub-tab 1: Orientation, Paper Width, Borders, Swap, Fill Mode */}
+      {customizeTab === 'layout' && (
+        <div className="space-y-3">
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              ১. প্রিন্ট ও প্রিভিউ অরিয়েন্টেশন (Portrait / Landscape):
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(
+                [
+                  { id: 'portrait', label: '📱 প্রোর্ট্রেট (লম্বালম্বি)' },
+                  { id: 'landscape', label: '🖼️ ল্যান্ডস্কেপ (আড়াআড়ি)' },
+                ] as { id: SlipOrientation; label: string }[]
+              ).map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => updateCustomSettings({ orientation: o.id })}
+                  className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                    customSettings.orientation === o.id
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-slate-50 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              ২. থার্মাল পেপার রোলের প্রস্থ (Breadth):
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(
+                [
+                  { id: 58, label: '৫৮ মিমি (৩৮৪ px) রোল' },
+                  { id: 80, label: '৮০ মিমি (৫৭৬ px) রোল' },
+                ] as { id: ThermalPaperWidthMm; label: string }[]
+              ).map((pw) => (
+                <button
+                  key={pw.id}
+                  type="button"
+                  onClick={() => updateCustomSettings({ paperWidthMm: pw.id })}
+                  className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                    customSettings.paperWidthMm === pw.id
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-slate-50 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  {pw.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              ৩. চারপাশের বর্ডার স্টাইল:
+            </label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(
+                [
+                  { id: 'solid', label: 'সলিড' },
+                  { id: 'double', label: 'ডাবল' },
+                  { id: 'dashed', label: 'ড্যাশড' },
+                  { id: 'none', label: 'বর্ডারহীন' },
+                ] as { id: SlipBorderStyle; label: string }[]
+              ).map((bs) => (
+                <button
+                  key={bs.id}
+                  type="button"
+                  onClick={() => updateCustomSettings({ borderStyle: bs.id })}
+                  className={`py-1.5 rounded-lg border font-bold cursor-pointer ${
+                    customSettings.borderStyle === bs.id
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-slate-50 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  {bs.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                updateCustomSettings({ swapPhotoSymbol: !customSettings.swapPhotoSymbol })
+              }
+              className={`py-2 px-2.5 rounded-xl border font-bold cursor-pointer ${
+                customSettings.swapPhotoSymbol
+                  ? 'bg-amber-100 border-amber-400 text-amber-950'
+                  : 'bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+            >
+              ⇄ ছবি ও মার্কা সাইড বদলান
+            </button>
+
+            <select
+              value={fillMode}
+              onChange={(e) =>
+                updateCandidateField({ voterInfoMode: e.target.value as VoterInfoFillMode })
+              }
+              className="py-2 px-2 rounded-xl border border-slate-300 bg-white font-bold text-slate-800"
+              aria-label="ভোটার তথ্য ফরম্যাট"
+            >
+              <option value="auto">ভোটার তথ্য: অটো পূরণ</option>
+              <option value="lined">ভোটার তথ্য: দাগযুক্ত</option>
+              <option value="blank">ভোটার তথ্য: খালি ফর্ম</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              ৪. থার্মাল কালির গাঢ়ত্ব (Print Darkness):
+            </label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  { id: 'light', label: 'হালকা' },
+                  { id: 'normal', label: 'স্বাভাবিক' },
+                  { id: 'dark', label: 'গাঢ় কালো' },
+                ] as const
+              ).map((dk) => (
+                <button
+                  key={dk.id}
+                  type="button"
+                  onClick={() => updateCustomSettings({ thermalDarkness: dk.id })}
+                  className={`py-1.5 rounded-lg border font-bold cursor-pointer ${
+                    customSettings.thermalDarkness === dk.id
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-slate-50 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  {dk.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-tab 2: Granular Font, Photo, Symbol, Length/Spacing Sliders */}
+      {customizeTab === 'sizes' && (
+        <div className="space-y-2.5">
+          {[
+            {
+              key: 'headerFontScale' as const,
+              label: 'শিরোনাম ফন্ট আকার',
+              min: 0.7,
+              max: 1.4,
+              step: 0.05,
+              val: customSettings.headerFontScale,
+            },
+            {
+              key: 'candidateFontScale' as const,
+              label: 'প্রার্থীর নাম ফন্ট আকার',
+              min: 0.7,
+              max: 1.45,
+              step: 0.05,
+              val: customSettings.candidateFontScale,
+            },
+            {
+              key: 'voterFontScale' as const,
+              label: 'ভোটার তথ্যের ফন্ট আকার',
+              min: 0.75,
+              max: 1.45,
+              step: 0.05,
+              val: customSettings.voterFontScale,
+            },
+            {
+              key: 'photoScale' as const,
+              label: 'প্রার্থীর ছবির আকার',
+              min: 0.6,
+              max: 1.4,
+              step: 0.05,
+              val: customSettings.photoScale,
+            },
+            {
+              key: 'symbolScale' as const,
+              label: 'মার্কার ছবির আকার',
+              min: 0.6,
+              max: 1.4,
+              step: 0.05,
+              val: customSettings.symbolScale,
+            },
+            {
+              key: 'lineSpacingScale' as const,
+              label: 'লাইনের ফাঁকা / স্লিপের দৈর্ঘ্য',
+              min: 0.75,
+              max: 1.4,
+              step: 0.05,
+              val: customSettings.lineSpacingScale,
+            },
+          ].map((sl) => (
+            <div key={sl.key} className="space-y-0.5">
+              <div className="flex justify-between font-bold text-slate-700">
+                <span>{sl.label}</span>
+                <span className="text-indigo-700">
+                  {convertToBengaliNumbers(Math.round(sl.val * 100))}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={sl.min}
+                max={sl.max}
+                step={sl.step}
+                value={sl.val}
+                onChange={(e) =>
+                  updateCustomSettings({ [sl.key]: parseFloat(e.target.value) })
+                }
+                className="w-full accent-indigo-600 cursor-pointer"
+              />
+            </div>
+          ))}
+
+          <div className="space-y-0.5">
+            <div className="flex justify-between font-bold text-slate-700">
+              <span>চারপাশের মার্জিন (Padding)</span>
+              <span className="text-indigo-700">
+                {convertToBengaliNumbers(customSettings.paddingMm)} মিমি
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={5}
+              step={0.5}
+              value={customSettings.paddingMm}
+              onChange={(e) =>
+                updateCustomSettings({ paddingMm: parseFloat(e.target.value) })
+              }
+              className="w-full accent-indigo-600 cursor-pointer"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Sub-tab 3: Show/Hide Every Individual Field */}
+      {customizeTab === 'fields' && (
+        <div className="space-y-1.5 max-h-80 overflow-y-auto overscroll-contain pr-1">
+          <p className="text-[11px] text-slate-500 font-semibold mb-1">
+            যেসব তথ্য স্লিপে রাখতে চান সেগুলোতে টিক (✓) দিন:
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {VISIBILITY_TOGGLES.map((item) => {
+              const checked = Boolean(customSettings[item.key]);
+              return (
+                <label
+                  key={item.key}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border cursor-pointer transition ${
+                    checked
+                      ? 'bg-emerald-50/70 border-emerald-300 text-slate-900 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-500'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) =>
+                      updateCustomSettings({ [item.key]: e.target.checked })
+                    }
+                    className="accent-emerald-600 w-4 h-4"
+                  />
+                  <span className="truncate">{item.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Sub-tab 4: Quick Candidate Texts & Photos */}
+      {customizeTab === 'content' && (
+        <div className="space-y-2.5 max-h-80 overflow-y-auto overscroll-contain pr-1">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-xl p-2 text-center font-extrabold cursor-pointer">
+              📷 প্রার্থীর ছবি বদলান
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleCandidatePhotoUpload}
+                className="hidden"
+              />
+            </label>
+            <label className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl p-2 text-center font-extrabold cursor-pointer">
+              🖼️ মার্কার ছবি বদলান
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleSymbolPhotoUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-2">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600">প্রার্থীর নাম</label>
+              <input
+                type="text"
+                value={candidate.name || ''}
+                onChange={(e) =>
+                  updateCandidateField({ name: e.target.value, candidateName: e.target.value })
+                }
+                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">পদবী</label>
+                <input
+                  type="text"
+                  value={candidate.candidateBadge || ''}
+                  onChange={(e) =>
+                    updateCandidateField({
+                      candidateBadge: e.target.value,
+                      postTitle: e.target.value,
+                    })
+                  }
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">মার্কার নাম</label>
+                <input
+                  type="text"
+                  value={candidate.symbolName || ''}
+                  onChange={(e) => updateCandidateField({ symbolName: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600">ভোটকেন্দ্রের নাম</label>
+              <input
+                type="text"
+                value={candidate.pollingCenter || ''}
+                onChange={(e) => updateCandidateField({ pollingCenter: e.target.value })}
+                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">ওয়ার্ড নং</label>
+                <input
+                  type="text"
+                  value={candidate.wardNo || ''}
+                  onChange={(e) => updateCandidateField({ wardNo: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">মার্কার আহ্বান</label>
+                <input
+                  type="text"
+                  value={candidate.symbolCallout || ''}
+                  onChange={(e) => updateCandidateField({ symbolCallout: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600">ফুটার বার্তা</label>
+              <input
+                type="text"
+                value={candidate.footerCenterText || ''}
+                onChange={(e) => updateCandidateField({ footerCenterText: e.target.value })}
+                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-end sm:items-center justify-center p-0 sm:p-3 overscroll-contain">
+      <canvas ref={printWorkCanvasRef} className="hidden" />
+
+      <div className="bg-white text-slate-900 w-full max-w-5xl rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]">
+        {/* TOP HEADER BAR */}
         <div className="bg-slate-900 text-white px-4 py-3 sm:px-6 flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="text-2xl shrink-0">{activeScreen === 'preview' ? '🗳️' : '⚙️'}</span>
@@ -1383,17 +1293,17 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                   {activeScreen === 'preview'
-                    ? 'ভোটার স্লিপ প্রিন্ট প্রিভিউ'
-                    : 'স্লিপ সেটিং ও ডিফল্ট প্রার্থী সেটআপ পেজ'}
+                    ? 'ভোটার স্লিপ প্রিন্ট প্রিভিউ ও কাস্টমাইজার'
+                    : 'স্লিপ সেটিং ও ডিফল্ট প্রার্থী সেটআপ'}
                 </h3>
                 <span className="text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-md font-bold truncate">
-                  ডিফল্ট: {candidate.candidateName || candidate.name} ({candidate.symbolName})
+                  {candidate.candidateName || candidate.name} ({candidate.symbolName})
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 mt-0.5 truncate">
                 {activeScreen === 'preview'
-                  ? 'ডিফল্ট প্রার্থীর স্লিপ প্রস্তুত — প্রিভিউ দেখে সরাসরি প্রিন্ট বাটনে চাপ দিন'
-                  : 'এখানে যা সেটআপ করে রাখবেন, যেকোনো ভোটার স্লিপ প্রিন্টে ক্লিক করলে সেটিই সবসময় সামনে আসবে'}
+                  ? 'স্ক্রিনে দৈর্ঘ্য ও প্রস্থ যেভাবে দেখাচ্ছে, প্রিন্টারে ঠিক সেই মাপেই প্রিন্ট হবে'
+                  : 'ডিফল্ট প্রার্থী, ৬টি কার্ড টেমপ্লেট ও সকল লেখা সংরক্ষণ করুন'}
               </p>
             </div>
           </div>
@@ -1404,10 +1314,9 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 type="button"
                 onClick={() => setActiveScreen('settings')}
                 className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-amber-300 border border-amber-400/30 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition"
-                title="ডিফল্ট প্রার্থী ও প্রিন্ট সেটিং পরিবর্তন করুন"
               >
                 <span>⚙️</span>
-                <span>সেটিং</span>
+                <span>ফুল সেটিং</span>
               </button>
             ) : (
               <button
@@ -1419,7 +1328,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition"
               >
                 <span>⬅️</span>
-                <span>প্রিন্ট প্রিভিউতে ফিরুন</span>
+                <span>প্রিভিউতে ফিরুন</span>
               </button>
             )}
 
@@ -1434,7 +1343,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
           </div>
         </div>
 
-        {/* Notice Banner */}
         {notice && (
           <div className="bg-indigo-600 text-white text-xs font-bold py-2 px-4 text-center shrink-0">
             {notice}
@@ -1442,58 +1350,112 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         )}
 
         {/* =====================================================================
-            SCREEN 1: CLEAN FRONT PRINT PREVIEW PAGE (NO SETTINGS CLUTTER!)
+            SCREEN 1: LIVE WYSIWYG PREVIEW + PORTRAIT/LANDSCAPE + CUSTOMIZER
             ===================================================================== */}
         {activeScreen === 'preview' && (
           <>
-            {/* Top Mode Switcher Bar: Bluetooth Print Preview (Default) vs Normal Print Preview */}
-            <div className="bg-slate-100 px-3 sm:px-6 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+            {/* Top Mode & Orientation Switcher Bar */}
+            <div className="bg-slate-100 px-3 sm:px-5 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setActivePrintOption('bluetooth')}
-                  className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1 cursor-pointer transition ${
                     activePrintOption === 'bluetooth'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 border border-slate-200'
                   }`}
                 >
                   <span>📶</span>
-                  <span>ব্লুটুথ প্রিন্ট প্রিভিউ (ডিফল্ট)</span>
+                  <span>থার্মাল প্রিন্ট</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setActivePrintOption('normal')}
-                  className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1 cursor-pointer transition ${
                     activePrintOption === 'normal'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 border border-slate-200'
                   }`}
                 >
                   <span>🖨️</span>
-                  <span>সাধারণ প্রিন্ট প্রিভিউ</span>
+                  <span>পেজ/কার্ড প্রিন্ট</span>
                 </button>
+
+                {/* Instant Portrait vs Landscape Switcher */}
+                <div className="inline-flex rounded-xl bg-white border border-slate-200 p-0.5 text-xs font-extrabold">
+                  <button
+                    type="button"
+                    onClick={() => updateCustomSettings({ orientation: 'portrait' })}
+                    className={`px-2.5 py-1 rounded-lg cursor-pointer transition ${
+                      customSettings.orientation === 'portrait'
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📱 প্রোর্ট্রেট
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateCustomSettings({ orientation: 'landscape' })}
+                    className={`px-2.5 py-1 rounded-lg cursor-pointer transition ${
+                      customSettings.orientation === 'landscape'
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🖼️ ল্যান্ডস্কেপ
+                  </button>
+                </div>
+
+                {/* Instant 58mm vs 80mm Switcher when in Bluetooth mode */}
+                {activePrintOption === 'bluetooth' && (
+                  <div className="inline-flex rounded-xl bg-white border border-slate-200 p-0.5 text-xs font-extrabold">
+                    <button
+                      type="button"
+                      onClick={() => updateCustomSettings({ paperWidthMm: 58 })}
+                      className={`px-2 py-1 rounded-lg cursor-pointer ${
+                        customSettings.paperWidthMm === 58
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      ৫৮ মিমি
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateCustomSettings({ paperWidthMm: 80 })}
+                      className={`px-2 py-1 rounded-lg cursor-pointer ${
+                        customSettings.paperWidthMm === 80
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      ৮০ মিমি
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                {/* Compact Voter Switcher */}
+              {/* Right Quick Controls */}
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-xl border border-slate-200 text-xs font-bold">
                   <button
                     type="button"
                     onClick={() => handleVoterNavigate('prev')}
-                    className="px-2 py-0.5 hover:bg-slate-100 rounded-md text-slate-700 cursor-pointer"
+                    className="px-1.5 py-0.5 hover:bg-slate-100 rounded text-slate-700 cursor-pointer"
                     title="আগের ভোটার"
                   >
                     ◀
                   </button>
-                  <span className="px-1.5 text-slate-800 truncate max-w-[150px]">
+                  <span className="px-1 text-slate-800 truncate max-w-[120px]">
                     #{voterData.serialNo} {voterData.name}
                   </span>
                   <button
                     type="button"
                     onClick={() => handleVoterNavigate('next')}
-                    className="px-2 py-0.5 hover:bg-slate-100 rounded-md text-slate-700 cursor-pointer"
+                    className="px-1.5 py-0.5 hover:bg-slate-100 rounded text-slate-700 cursor-pointer"
                     title="পরের ভোটার"
                   >
                     ▶
@@ -1502,27 +1464,54 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setShowFamilyFinder(!showFamilyFinder)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1 cursor-pointer transition border whitespace-nowrap ${
-                    showFamilyFinder || slipQueue.length > 0
-                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                      : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50'
+                  onClick={() =>
+                    setSidePanel((p) => (p === 'customize' ? 'none' : 'customize'))
+                  }
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border cursor-pointer transition ${
+                    sidePanel === 'customize'
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white text-indigo-700 border-indigo-300 hover:bg-indigo-50'
                   }`}
                 >
-                  <span>👨‍👩‍👧‍👦</span>
-                  <span>একসাথে ({convertToBengaliNumbers(slipQueue.length)})</span>
+                  🎨 কাস্টমাইজ
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSidePanel((p) => (p === 'voter_edit' ? 'none' : 'voter_edit'))
+                  }
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border cursor-pointer transition ${
+                    sidePanel === 'voter_edit'
+                      ? 'bg-amber-500 text-slate-950 border-amber-500'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  ✏️ ভোটার এডিট
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQueuePanel((v) => !v)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border cursor-pointer transition ${
+                    showQueuePanel || slipQueue.length > 0
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                      : 'bg-white text-slate-700 border-slate-300'
+                  }`}
+                >
+                  📋 কিউ ({convertToBengaliNumbers(slipQueue.length)})
                 </button>
               </div>
             </div>
 
-            {/* Center Preview Workspace */}
-            <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-50 flex flex-col items-center justify-start space-y-4">
-              {/* Optional Expandable Family / Multi-Voter Queue Box */}
-              {(showFamilyFinder || slipQueue.length > 0) && (
-                <div className="w-full max-w-2xl bg-white rounded-2xl p-3.5 border border-indigo-200 space-y-2.5">
+            {/* Center Scrollable Preview Workspace */}
+            <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5 bg-slate-100/80 flex flex-col items-center justify-start space-y-4">
+              {/* Optional Multi-Voter Batch Queue Panel */}
+              {(showQueuePanel || slipQueue.length > 0) && (
+                <div className="w-full max-w-3xl bg-white rounded-2xl p-3.5 border border-indigo-200 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-extrabold text-slate-900">
-                      👨‍👩‍👧‍👦 এক পরিবারের বা একাধিক ভোটার একসাথে প্রিন্ট ({convertToBengaliNumbers(slipQueue.length)} জন)
+                      📋 একসাথে একাধিক ভোটার স্লিপ প্রিন্ট কিউ ({convertToBengaliNumbers(slipQueue.length)} জন)
                     </span>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <button
@@ -1541,16 +1530,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                         {isCurrentInQueue ? '✓ বর্তমান ভোটার যুক্ত' : '➕ বর্তমান ভোটার যোগ করুন'}
                       </button>
 
-                      {suggestedFamilyMembers.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleAddEntireFamilyToQueue}
-                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-[11px] font-extrabold cursor-pointer"
-                        >
-                          👨‍👩‍👧‍👦 পরিবারের সবাইকে নিন (+{convertToBengaliNumbers(suggestedFamilyMembers.length)})
-                        </button>
-                      )}
-
                       {slipQueue.length > 0 && (
                         <button
                           type="button"
@@ -1563,23 +1542,23 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                     </div>
                   </div>
 
-                  {showFamilyFinder && (
+                  {showQueuePanel && (
                     <div className="space-y-2">
                       <input
                         type="text"
-                        value={familySearchQuery}
-                        onChange={(e) => setFamilySearchQuery(e.target.value)}
-                        placeholder="🔍 অন্য ভোটারের নাম, পিতার নাম বা ক্রমিক নং লিখে খুঁজুন..."
+                        value={queueSearchQuery}
+                        onChange={(e) => setQueueSearchQuery(e.target.value)}
+                        placeholder="🔍 অন্য ভোটারের নাম, পিতার নাম বা ক্রমিক নং লিখে কিউতে যোগ করুন..."
                         className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-600"
                       />
-                      {familySearchQuery.trim() !== '' && (
-                        <div className="bg-slate-50 rounded-xl border border-slate-200 p-2 max-h-36 overflow-y-auto space-y-1">
-                          {quickSearchResults.length === 0 ? (
+                      {queueSearchQuery.trim() !== '' && (
+                        <div className="bg-slate-50 rounded-xl border border-slate-200 p-2 max-h-36 overflow-y-auto overscroll-contain space-y-1">
+                          {queueSearchResults.length === 0 ? (
                             <div className="text-xs text-red-500 py-1 text-center font-semibold">
                               কোনো ভোটার পাওয়া যায়নি
                             </div>
                           ) : (
-                            quickSearchResults.map((v) => {
+                            queueSearchResults.map((v) => {
                               const inQ = isVoterInSlipQueue(v, slipQueue);
                               return (
                                 <div
@@ -1642,33 +1621,44 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 </div>
               )}
 
-              {/* LIVE PREVIEW DISPLAY + OPTIONAL INLINE VOTER INFO EDITOR */}
+              {/* MAIN PREVIEW + SIDE STUDIO GRID */}
               <div
                 className={`w-full ${
-                  isEditingVoter
-                    ? 'max-w-4xl grid grid-cols-1 lg:grid-cols-12 gap-4 items-start'
+                  sidePanel !== 'none'
+                    ? 'max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-4 items-start'
                     : 'flex flex-col items-center'
                 }`}
               >
-                <div className={isEditingVoter ? 'lg:col-span-7 w-full' : 'w-full'}>
+                <div className={sidePanel !== 'none' ? 'lg:col-span-7 w-full' : 'w-full'}>
                   {activePrintOption === 'bluetooth' ? (
-                    <div className="w-full flex flex-col items-center space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2 w-full max-w-[360px] text-xs">
-                        <span className="font-extrabold text-slate-700">
-                          📶 থার্মাল প্রিন্ট প্রিভিউ (৫৮মিমি)
-                        </span>
+                    <div className="w-full flex flex-col items-center space-y-2.5">
+                      {/* Exact Physical Length x Breadth Ruler Header */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 w-full max-w-xl bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs shadow-2xs">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-black text-slate-900">
+                            📐 আসল প্রিন্ট মাপ:
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-extrabold">
+                            প্রস্থ {convertToBengaliNumbers(thermalMetrics.viewWidthMm)} মিমি × উচ্চতা{' '}
+                            {convertToBengaliNumbers(thermalMetrics.viewHeightMm)} মিমি
+                          </span>
+                          <span className="text-[11px] text-slate-500 font-mono">
+                            ({thermalMetrics.viewWidthPx}×{thermalMetrics.viewHeightPx} px)
+                          </span>
+                        </div>
+
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setIsEditingVoter((prev) => !prev)}
-                            className={`px-2.5 py-1 rounded-lg font-extrabold text-[11px] border cursor-pointer transition flex items-center gap-1 ${
-                              isEditingVoter
-                                ? 'bg-indigo-600 text-white border-indigo-600'
-                                : 'bg-white text-indigo-700 border-indigo-300 hover:bg-indigo-50'
+                            onClick={() => setExactScalePreview((v) => !v)}
+                            className={`px-2 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                              exactScalePreview
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-700 border-slate-200'
                             }`}
+                            title="১:১ পিক্সেল মাপ বনাম ফিট টু স্ক্রিন"
                           >
-                            <span>{isEditingVoter ? '✅' : '✏️'}</span>
-                            <span>{isEditingVoter ? 'এডিট বন্ধ' : 'ভোটারের তথ্য এডিট'}</span>
+                            {exactScalePreview ? '🔍 ১:১ আসল মাপ' : '📱 স্ক্রিন ফিট'}
                           </button>
 
                           {bluetoothDevice ? (
@@ -1679,10 +1669,9 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                                 setShowBtPicker((prev) => !prev);
                               }}
                               className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg font-bold text-[11px] cursor-pointer flex items-center gap-1"
-                              title="প্রিন্টার ম্যানেজ বা পরিবর্তন করুন"
                             >
                               <span>🟢</span>
-                              <span className="max-w-[110px] truncate">{bluetoothDevice.name}</span>
+                              <span className="max-w-[95px] truncate">{bluetoothDevice.name}</span>
                             </button>
                           ) : (
                             <button
@@ -1699,49 +1688,124 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
 
                       {renderBluetoothManagerPanel()}
 
-                      {renderBluetoothThermalPreview()}
-                    </div>
-                  ) : (
-                    <div className="w-full flex flex-col items-center space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2 w-full max-w-2xl text-xs">
-                        <span className="font-extrabold text-slate-700">
-                          🖨️ সাধারণ প্রিন্ট প্রিভিউ (
-                          {SLIP_DESIGN_STYLES.find((s) => s.id === currentStyle)?.title})
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-500 font-semibold text-[11px] hidden sm:inline">
-                            {pageLayoutMode === 'sheet4'
-                              ? 'এক পেজে ৪টি'
-                              : pageLayoutMode === 'sheet6'
-                              ? 'এক পেজে ৬টি'
-                              : pageLayoutMode === 'sheet8'
-                              ? 'এক পেজে ৮টি'
-                              : '১টি বড় কার্ড'}{' '}
-                            · {colorMode === 'bw' ? 'সাদাকালো' : 'রঙিন'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setIsEditingVoter((prev) => !prev)}
-                            className={`px-2.5 py-1 rounded-lg font-extrabold text-[11px] border cursor-pointer transition flex items-center gap-1 ${
-                              isEditingVoter
-                                ? 'bg-indigo-600 text-white border-indigo-600'
-                                : 'bg-white text-indigo-700 border-indigo-300 hover:bg-indigo-50'
-                            }`}
-                          >
-                            <span>{isEditingVoter ? '✅' : '✏️'}</span>
-                            <span>{isEditingVoter ? 'এডিট বন্ধ' : 'ভোটারের তথ্য এডিট'}</span>
-                          </button>
+                      {/* Physical Thermal Roll Paper Simulation Frame with Exact Canvas */}
+                      <div className="w-full overflow-x-auto flex flex-col items-center py-1">
+                        <div className="inline-flex flex-col items-center">
+                          {/* Top Breadth Dimension Indicator */}
+                          <div className="w-full flex items-center gap-1.5 text-[10px] font-extrabold text-slate-600 mb-1 px-1">
+                            <span className="h-px flex-1 bg-slate-400" />
+                            <span>
+                              প্রস্থ (Breadth): {convertToBengaliNumbers(thermalMetrics.viewWidthMm)} মিমি (
+                              {thermalMetrics.orientation === 'landscape'
+                                ? `${convertToBengaliNumbers(customSettings.paperWidthMm)}মিমি রোলে আড়াআড়ি`
+                                : `${convertToBengaliNumbers(customSettings.paperWidthMm)}মিমি রোল`}
+                              )
+                            </span>
+                            <span className="h-px flex-1 bg-slate-400" />
+                          </div>
+
+                          <div className="flex items-stretch gap-1.5">
+                            {/* Paper Ticket Sheet */}
+                            <div
+                              className="bg-white p-2 sm:p-3 shadow-lg border border-slate-300 relative"
+                              style={{
+                                filter:
+                                  customSettings.thermalDarkness === 'dark'
+                                    ? 'contrast(135%)'
+                                    : customSettings.thermalDarkness === 'light'
+                                    ? 'contrast(92%) opacity(0.92)'
+                                    : 'contrast(115%)',
+                              }}
+                            >
+                              <canvas
+                                ref={previewCanvasRef}
+                                style={
+                                  exactScalePreview
+                                    ? {
+                                        width: `${thermalMetrics.viewWidthPx}px`,
+                                        height: `${thermalMetrics.viewHeightPx}px`,
+                                      }
+                                    : {
+                                        width: '100%',
+                                        maxWidth:
+                                          thermalMetrics.orientation === 'landscape'
+                                            ? '560px'
+                                            : customSettings.paperWidthMm === 80
+                                            ? '430px'
+                                            : '330px',
+                                        height: 'auto',
+                                        aspectRatio: `${thermalMetrics.viewWidthPx} / ${thermalMetrics.viewHeightPx}`,
+                                      }
+                                }
+                                className="block bg-white"
+                              />
+                            </div>
+
+                            {/* Side Length Dimension Indicator */}
+                            <div className="flex flex-col items-center justify-between text-[10px] font-extrabold text-slate-600 py-1">
+                              <span className="w-px flex-1 bg-slate-400" />
+                              <span
+                                className="py-1.5 whitespace-nowrap"
+                                style={{ writingMode: 'vertical-rl' }}
+                              >
+                                দৈর্ঘ্য: {convertToBengaliNumbers(thermalMetrics.viewHeightMm)} মিমি
+                              </span>
+                              <span className="w-px flex-1 bg-slate-400" />
+                            </div>
+                          </div>
                         </div>
                       </div>
+                    </div>
+                  ) : (
+                    /* TRUE WYSIWYG NORMAL CARD / PAGE PREVIEW */
+                    <div className="w-full flex flex-col items-center space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 w-full max-w-2xl bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs">
+                        <span className="font-extrabold text-slate-800">
+                          🖨️ পেজ প্রিন্ট প্রিভিউ •{' '}
+                          {customSettings.orientation === 'landscape'
+                            ? 'ল্যান্ডস্কেপ (আড়াআড়ি)'
+                            : 'প্রোর্ট্রেট (লম্বালম্বি)'}
+                        </span>
+                        <span className="text-indigo-700 font-bold text-[11px]">
+                          {pageLayoutMode === 'sheet4'
+                            ? 'এক পেজে ৪টি কার্ড'
+                            : pageLayoutMode === 'sheet6'
+                            ? 'এক পেজে ৬টি কার্ড'
+                            : pageLayoutMode === 'sheet8'
+                            ? 'এক পেজে ৮টি কার্ড'
+                            : '১টি সিঙ্গেল কার্ড'}{' '}
+                          • {colorMode === 'bw' ? 'সাদাকালো' : 'রঙিন'}
+                        </span>
+                      </div>
 
-                      {renderNormalCardPreview()}
+                      <div className="w-full flex justify-center overflow-x-auto py-1">
+                        <div
+                          className={`bg-white p-3 shadow-lg border border-slate-300 w-full ${
+                            customSettings.orientation === 'portrait'
+                              ? 'max-w-[400px]'
+                              : 'max-w-[640px]'
+                          }`}
+                        >
+                          <style>{normalPreviewCss}</style>
+                          <div
+                            className="slips-container"
+                            dangerouslySetInnerHTML={{ __html: normalPreviewHtml }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* On-Demand Inline Voter Info Editor right beside Print Preview */}
-                {isEditingVoter && (
-                  <div className="lg:col-span-5 w-full max-w-md mx-auto bg-white rounded-2xl border border-indigo-200 shadow-sm p-3.5 space-y-2.5 text-xs">
+                {/* RIGHT COLUMN: LIVE CUSTOMIZER OR VOTER EDITOR */}
+                {sidePanel === 'customize' && (
+                  <div className="lg:col-span-5 w-full max-w-md mx-auto">
+                    {renderLiveCustomizerStudio()}
+                  </div>
+                )}
+
+                {sidePanel === 'voter_edit' && (
+                  <div className="lg:col-span-5 w-full max-w-md mx-auto bg-white rounded-2xl border border-amber-300 shadow-sm p-3.5 space-y-2.5 text-xs">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                       <h4 className="font-black text-slate-900 text-xs sm:text-sm">
                         ✏️ ভোটারের তথ্য এডিট করুন
@@ -1761,7 +1825,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                         )}
                         <button
                           type="button"
-                          onClick={() => setIsEditingVoter(false)}
+                          onClick={() => setSidePanel('none')}
                           className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
                         >
                           ✓ সম্পন্ন
@@ -1771,161 +1835,121 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div className="sm:col-span-2">
-                        <label
-                          htmlFor="edit-voter-name"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           ভোটারের নাম
                         </label>
                         <input
-                          id="edit-voter-name"
                           type="text"
                           value={voterData.name || ''}
                           onChange={(e) => setVoterData({ ...voterData, name: e.target.value })}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold text-slate-900"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold text-slate-900"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-serial"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           ক্রমিক নং
                         </label>
                         <input
-                          id="edit-voter-serial"
                           type="text"
                           value={voterData.serialNo || ''}
                           onChange={(e) => setVoterData({ ...voterData, serialNo: e.target.value })}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-id"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           ভোটার আইডি নং
                         </label>
                         <input
-                          id="edit-voter-id"
                           type="text"
                           value={voterData.voterId || ''}
                           onChange={(e) => setVoterData({ ...voterData, voterId: e.target.value })}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-mono"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-father"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           পিতা / স্বামীর নাম
                         </label>
                         <input
-                          id="edit-voter-father"
                           type="text"
                           value={voterData.fatherName || ''}
                           onChange={(e) =>
                             setVoterData({ ...voterData, fatherName: e.target.value })
                           }
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-mother"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           মাতার নাম
                         </label>
                         <input
-                          id="edit-voter-mother"
                           type="text"
                           value={voterData.motherName || ''}
                           onChange={(e) =>
                             setVoterData({ ...voterData, motherName: e.target.value })
                           }
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-dob"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           জন্ম তারিখ
                         </label>
                         <input
-                          id="edit-voter-dob"
                           type="text"
                           value={voterData.dob || ''}
                           onChange={(e) => setVoterData({ ...voterData, dob: e.target.value })}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-profession"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           পেশা
                         </label>
                         <input
-                          id="edit-voter-profession"
                           type="text"
                           value={voterData.profession || ''}
                           onChange={(e) =>
                             setVoterData({ ...voterData, profession: e.target.value })
                           }
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-village"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           এলাকা / গ্রাম
                         </label>
                         <input
-                          id="edit-voter-village"
                           type="text"
                           value={voterData.villageName || ''}
                           onChange={(e) =>
                             setVoterData({ ...voterData, villageName: e.target.value })
                           }
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label
-                          htmlFor="edit-voter-address"
-                          className="block text-[11px] font-bold text-slate-600 mb-0.5"
-                        >
+                        <label className="block text-[11px] font-bold text-slate-600 mb-0.5">
                           ঠিকানা
                         </label>
                         <input
-                          id="edit-voter-address"
                           type="text"
                           value={voterData.address || ''}
                           onChange={(e) => setVoterData({ ...voterData, address: e.target.value })}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                         />
                       </div>
                     </div>
-
-                    <p className="text-[10px] text-slate-500 pt-0.5">
-                      💡 এখানে যেকোনো তথ্য পরিবর্তন করলে সাথে সাথে প্রিভিউ ও প্রিন্ট স্লিপে আপডেট হবে।
-                    </p>
                   </div>
                 )}
               </div>
@@ -1935,18 +1959,18 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
             <div className="bg-white border-t border-slate-200 px-4 py-3 sm:px-6 flex flex-wrap items-center justify-between gap-3 shrink-0">
               {activePrintOption === 'bluetooth' ? (
                 <>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
                       onClick={() => handlePrintBluetooth([voterData])}
                       disabled={isPrintingBt}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-6 py-3 rounded-xl text-sm sm:text-base shadow-md cursor-pointer transition flex items-center gap-2"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl text-xs sm:text-base shadow-md cursor-pointer transition flex items-center gap-2"
                     >
                       <span>⚡</span>
                       <span>
                         {isPrintingBt
                           ? `প্রিন্ট হচ্ছে ${btProgress}%...`
-                          : 'এখনই ব্লুটুথ প্রিন্ট করুন'}
+                          : 'এখনই থার্মাল প্রিন্ট করুন'}
                       </span>
                     </button>
 
@@ -1955,9 +1979,9 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                         type="button"
                         onClick={() => handlePrintBluetooth(slipQueue)}
                         disabled={isPrintingBt}
-                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-4 py-3 rounded-xl text-xs sm:text-sm cursor-pointer transition"
+                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-4 py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm cursor-pointer transition"
                       >
-                        👨‍👩‍👧‍👦 সব প্রিন্ট ({convertToBengaliNumbers(slipQueue.length)} জন)
+                        📋 কিউয়ের সব প্রিন্ট ({convertToBengaliNumbers(slipQueue.length)} জন)
                       </button>
                     )}
                   </div>
@@ -1968,7 +1992,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                       onClick={() => handleNormalPrint(effectiveBatchVoters, pageLayoutMode)}
                       className="px-3.5 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-extrabold text-xs cursor-pointer transition"
                     >
-                      🖨️ সাধারণ প্রিন্ট
+                      🖨️ পেজ প্রিন্ট
                     </button>
 
                     <button
@@ -1986,29 +2010,15 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleNormalPrint(effectiveBatchVoters, pageLayoutMode)}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-black px-6 py-3 rounded-xl text-sm sm:text-base shadow-md cursor-pointer transition flex items-center gap-2"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-black px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl text-xs sm:text-base shadow-md cursor-pointer transition flex items-center gap-2"
                     >
                       <span>🖨️</span>
                       <span>
                         {slipQueue.length > 1
-                          ? `এখনই এক পেজে প্রিন্ট করুন (${convertToBengaliNumbers(slipQueue.length)} জন)`
+                          ? `একসাথে প্রিন্ট করুন (${convertToBengaliNumbers(slipQueue.length)} জন)`
                           : 'এখনই প্রিন্ট করুন'}
                       </span>
                     </button>
-
-                    {slipQueue.length === 0 && suggestedFamilyMembers.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const famAll = [voterData, ...suggestedFamilyMembers];
-                          handleNormalPrint(famAll, pageLayoutMode);
-                        }}
-                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-4 py-3 rounded-xl text-xs sm:text-sm cursor-pointer transition"
-                      >
-                        👨‍👩‍👧‍👦 পরিবারের সবাইকে এক পেজে প্রিন্ট (
-                        {convertToBengaliNumbers(suggestedFamilyMembers.length + 1)} জন)
-                      </button>
-                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -2018,7 +2028,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                       disabled={isPrintingBt}
                       className="px-3.5 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-extrabold text-xs cursor-pointer transition"
                     >
-                      📶 ব্লুটুথ প্রিন্ট
+                      📶 থার্মাল প্রিন্ট
                     </button>
 
                     <button
@@ -2036,20 +2046,20 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         )}
 
         {/* =====================================================================
-            SCREEN 2: SEPARATE BEHIND-THE-SCENES SETTINGS & DEFAULT SETUP PAGE
+            SCREEN 2: FULL TEMPLATE & CANDIDATE SETTINGS PAGE
             ===================================================================== */}
         {activeScreen === 'settings' && (
           <>
-            <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4 bg-slate-50">
+            <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-4 bg-slate-50">
               {/* 1. DEFAULT CANDIDATE & TEMPLATE SELECTOR */}
               <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                      📌 ১. আপনার ডিফল্ট প্রার্থী ও ভোটার স্লিপ টেমপ্লেট সিলেক্ট করুন ({convertToBengaliNumbers(candidatesList.length)}টি)
+                      📌 ১. ডিফল্ট প্রার্থী ও স্লিপ টেমপ্লেট সিলেক্ট করুন ({convertToBengaliNumbers(candidatesList.length)}টি)
                     </h4>
                     <p className="text-[11px] text-slate-500">
-                      এখানে যে প্রার্থী ও স্লিপটি সিলেক্ট করে রাখবেন, যেকোনো ভোটার স্লিপ প্রিন্টে ক্লিক করলে সেটিই সরাসরি সামনে আসবে
+                      এখানে যা সিলেক্ট করে রাখবেন, স্লিপ প্রিন্টে ক্লিক করলে সেটিই সরাসরি সামনে আসবে
                     </p>
                   </div>
 
@@ -2057,14 +2067,14 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                     <button
                       type="button"
                       onClick={handleCreateCustomTemplate}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold cursor-pointer transition whitespace-nowrap"
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold cursor-pointer transition"
                     >
-                      ➕ নতুন কাস্টম স্লিপ যোগ করুন
+                      ➕ নতুন কাস্টম স্লিপ
                     </button>
                     <button
                       type="button"
                       onClick={handleResetTemplates}
-                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold cursor-pointer transition whitespace-nowrap"
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold cursor-pointer transition"
                     >
                       🔄 রিসেট
                     </button>
@@ -2102,7 +2112,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                             </div>
                             {isSelected && (
                               <span className="inline-block text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded-xs mt-0.5">
-                                ✓ ডিফল্ট সেট করা আছে
+                                ✓ ডিফল্ট
                               </span>
                             )}
                           </div>
@@ -2125,7 +2135,6 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                                 handleDeleteTemplate(item.id);
                               }}
                               className="w-6 h-6 rounded-full bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer"
-                              title="কাস্টম স্লিপ মুছুন"
                             >
                               ✕
                             </button>
@@ -2171,7 +2180,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-200">
                   <div>
                     <label className="block text-xs font-extrabold text-slate-800 mb-1.5">
-                      📄 সাধারণ প্রিন্টে এক পেজে কয়টি কার্ড থাকবে (ডিফল্ট):
+                      📄 পেজ প্রিন্টে এক পেজে কয়টি কার্ড থাকবে:
                     </label>
                     <div className="grid grid-cols-2 gap-1.5">
                       {[
@@ -2201,7 +2210,7 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                   <div className="space-y-2.5">
                     <div>
                       <label className="block text-xs font-extrabold text-slate-800 mb-1.5">
-                        🎨 ডিফল্ট প্রিন্ট কালার মোড:
+                        🎨 প্রিন্ট কালার মোড:
                       </label>
                       <div className="flex gap-2">
                         <button
@@ -2282,13 +2291,12 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                 </div>
               </div>
 
-              {/* 3. CANDIDATE DETAILS, PHOTOS & SYMBOL CUSTOMIZER */}
+              {/* 3. CANDIDATE DETAILS, PHOTOS & ALL TEXT FIELDS */}
               <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-4">
                 <h4 className="font-black text-slate-900 text-xs sm:text-sm">
-                  ✏️ ৩. ডিফল্ট প্রার্থীর নাম, ছবি, মার্কা ও কার্ডের সব লেখা কাস্টমাইজ করুন:
+                  ✏️ ৩. প্রার্থীর নাম, ছবি, মার্কা ও কার্ডের সব লেখা পরিবর্তন করুন:
                 </h4>
 
-                {/* Quick Symbol Gallery + Uploads */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2.5">
                   <label className="block text-xs font-extrabold text-slate-800">
                     নির্বাচনী মার্কা গ্যালারি (অথবা নিজের ছবি আপলোড করুন):
@@ -2350,72 +2358,54 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                   </div>
                 </div>
 
-                {/* All Editable Text Fields */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 text-xs">
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      টেমপ্লেটের নাম
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">টেমপ্লেটের নাম</label>
                     <input
                       type="text"
                       value={candidate.templateTitle || ''}
                       onChange={(e) => updateCandidateField({ templateTitle: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      উপরের ধর্মীয় লেখা
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">উপরের ধর্মীয় লেখা</label>
                     <input
                       type="text"
                       value={candidate.religiousHeader || ''}
                       onChange={(e) => updateCandidateField({ religiousHeader: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      ডান কোণার ব্যাজ লেখা
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ডান কোণার ব্যাজ লেখা</label>
                     <input
                       type="text"
                       value={candidate.cardBadgeText ?? ''}
                       onChange={(e) => updateCandidateField({ cardBadgeText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      নির্বাচনের শিরোনাম (১ম লাইন)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">নির্বাচনের শিরোনাম (১ম লাইন)</label>
                     <input
                       type="text"
                       value={candidate.electionTitle || ''}
                       onChange={(e) => updateCandidateField({ electionTitle: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-semibold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      আসন / উপজেলা / ইউনিয়ন (২য় লাইন)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">আসন / ইউনিয়ন (২য় লাইন)</label>
                     <input
                       type="text"
                       value={candidate.constituencyText || ''}
                       onChange={(e) => updateCandidateField({ constituencyText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-semibold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      কালো বক্সের পদবী (চেয়ারম্যান/মেম্বার পদপ্রার্থী)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">কালো বক্সের পদবী</label>
                     <input
                       type="text"
                       value={candidate.candidateBadge || ''}
@@ -2425,205 +2415,133 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                           postTitle: e.target.value,
                         })
                       }
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      প্রার্থীর বিশেষণ / উপাধি
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">প্রার্থীর বিশেষণ / উপাধি</label>
                     <input
                       type="text"
                       value={candidate.electionSubtitle || ''}
                       onChange={(e) => updateCandidateField({ electionSubtitle: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      প্রার্থীর মূল নাম (বড় অক্ষরে)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">প্রার্থীর মূল নাম</label>
                     <input
                       type="text"
                       value={candidate.name || ''}
                       onChange={(e) =>
-                        updateCandidateField({
-                          name: e.target.value,
-                          candidateName: e.target.value,
-                        })
+                        updateCandidateField({ name: e.target.value, candidateName: e.target.value })
                       }
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-black text-indigo-900"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-black text-indigo-900"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      নামের পরের শব্দ (যেমন: কে)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">নামের পরের শব্দ (কে)</label>
                     <input
                       type="text"
                       value={candidate.candidateSuffix ?? 'কে'}
                       onChange={(e) => updateCandidateField({ candidateSuffix: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
                     <label className="block text-slate-600 font-bold mb-0.5">মার্কার নাম</label>
                     <input
                       type="text"
                       value={candidate.symbolName || ''}
                       onChange={(e) => updateCandidateField({ symbolName: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      মার্কার ভোটের আহ্বান লেখা
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">মার্কার আহ্বান লেখা</label>
                     <input
                       type="text"
                       value={candidate.symbolCallout || ''}
                       onChange={(e) => updateCandidateField({ symbolCallout: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none font-bold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-bold"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      মার্কার নিচের স্লোগান / অঙ্গীকার
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">স্লোগান / অঙ্গীকার</label>
                     <input
                       type="text"
                       value={candidate.sloganText || ''}
                       onChange={(e) => updateCandidateField({ sloganText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">ভোট কেন্দ্রের নাম</label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ভোটকেন্দ্রের নাম</label>
                     <input
                       type="text"
                       value={candidate.pollingCenter || ''}
                       onChange={(e) => updateCandidateField({ pollingCenter: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-semibold"
                     />
                   </div>
-
                   <div>
                     <label className="block text-slate-600 font-bold mb-0.5">ওয়ার্ড নং</label>
                     <input
                       type="text"
                       value={candidate.wardNo || ''}
                       onChange={(e) => updateCandidateField({ wardNo: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">ভোটার এলাকা / গ্রাম</label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ভোটার এলাকা</label>
                     <input
                       type="text"
                       value={candidate.voterArea || ''}
                       onChange={(e) => updateCandidateField({ voterArea: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      নিচের কালো বক্স (বাম: প্রচারে)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ফুটার বাম পাশ</label>
                     <input
                       type="text"
                       value={candidate.footerLeftText || ''}
                       onChange={(e) => updateCandidateField({ footerLeftText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      নিচের কালো বক্স (মাঝে: নির্দেশনা)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ফুটার মাঝখান</label>
                     <input
                       type="text"
                       value={candidate.footerCenterText || ''}
                       onChange={(e) => updateCandidateField({ footerCenterText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-slate-600 font-bold mb-0.5">
-                      নিচের কালো বক্স (ডান: মুদ্রণে)
-                    </label>
+                    <label className="block text-slate-600 font-bold mb-0.5">ফুটার ডান পাশ</label>
                     <input
                       type="text"
                       value={candidate.footerRightText || ''}
                       onChange={(e) => updateCandidateField({ footerRightText: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:border-indigo-600 outline-none"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
                     />
                   </div>
                 </div>
-
-                {/* Voter Info Fill Mode */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
-                  <span className="text-xs font-extrabold text-slate-800">
-                    কার্ডের ভেতরে ভোটারের তথ্য যেভাবে থাকবে:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { id: 'auto', label: '✅ অটোমেটিক ভোটারের তথ্য বসবে' },
-                      { id: 'lined', label: '📝 ভোটার তথ্যের নিচে ডট লাইন' },
-                      { id: 'blank', label: '📄 ফাঁকা কার্ড (হাতে লেখার জন্য খালি)' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() =>
-                          updateCandidateField({ voterInfoMode: m.id as VoterInfoFillMode })
-                        }
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer border transition ${
-                          fillMode === m.id
-                            ? 'bg-indigo-600 text-white border-indigo-600'
-                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-white'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* 4. LIVE MINI PREVIEW INSIDE SETTINGS */}
-              <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-2.5">
-                <span className="text-xs font-extrabold text-slate-700 block">
-                  👁️ আপনার সেটআপকৃত ডিফল্ট কার্ডের প্রিভিউ:
-                </span>
-                {renderNormalCardPreview()}
               </div>
             </div>
 
-            {/* Settings Bottom Bar */}
-            <div className="bg-white border-t border-slate-200 px-4 py-3 sm:px-6 flex items-center justify-between gap-3 shrink-0">
-              <span className="text-xs font-bold text-slate-600">
-                আপনার সকল পরিবর্তন স্বয়ংক্রিয়ভাবে ডিফল্ট হিসেবে সংরক্ষিত হয়েছে
+            <div className="bg-white border-t border-slate-200 px-4 py-3 sm:px-6 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">
+                ✅ সকল পরিবর্তন স্বয়ংক্রিয়ভাবে সেভ হয়েছে
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  setActiveScreen('preview');
-                  showNotice('✅ ডিফল্ট সেটিং সংরক্ষিত হয়েছে!');
-                }}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl text-xs sm:text-sm cursor-pointer transition"
+                onClick={() => setActiveScreen('preview')}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-black cursor-pointer"
               >
-                ✅ সেভ করে প্রিন্ট প্রিভিউতে যান
+                ✓ প্রিভিউ ও প্রিন্ট পেজে ফিরুন
               </button>
             </div>
           </>

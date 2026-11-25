@@ -27,6 +27,7 @@ import {
   importTrackerBackupJson,
 } from '../lib/voterTrackerStore';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface ThemeSettingsSheetProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ export const ThemeSettingsSheet: React.FC<ThemeSettingsSheetProps> = ({
   userEmail,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  useLockBodyScroll(isOpen);
 
   if (!isOpen) return null;
 
@@ -118,11 +120,11 @@ export const ThemeSettingsSheet: React.FC<ThemeSettingsSheetProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 m3-sheet-backdrop flex items-end sm:items-center justify-center sm:p-4"
+      className="fixed inset-0 z-50 m3-sheet-backdrop flex items-end sm:items-center justify-center sm:p-4 overscroll-contain"
       onClick={onClose}
     >
       <div
-        className="m3-sheet w-full sm:max-w-lg max-h-[90vh] overflow-y-auto animate-sheet-up bottom-safe"
+        className="m3-sheet w-full sm:max-w-lg max-h-[90vh] overflow-y-auto overscroll-contain animate-sheet-up bottom-safe"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sm:hidden m3-drag-handle" />

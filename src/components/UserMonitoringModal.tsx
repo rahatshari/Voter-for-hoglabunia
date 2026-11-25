@@ -7,6 +7,7 @@ import {
   getDeviceDetails,
 } from '../lib/sessionUtils';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface UserMonitoringModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export const UserMonitoringModal: React.FC<UserMonitoringModalProps> = ({
   onClose,
   currentUserEmail,
 }) => {
+  useLockBodyScroll(isOpen);
   const [data, setData] = useState<AdminSessionsResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);

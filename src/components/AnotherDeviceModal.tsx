@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { convertToBengaliNumbers } from '../lib/bengaliUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface AnotherDeviceModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ export const AnotherDeviceModal: React.FC<AnotherDeviceModalProps> = ({
   onRedirect,
 }) => {
   const [countdown, setCountdown] = useState(4);
+  useLockBodyScroll(isOpen);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -34,7 +36,7 @@ export const AnotherDeviceModal: React.FC<AnotherDeviceModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 m3-sheet-backdrop z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 m3-sheet-backdrop z-50 flex items-center justify-center p-4 overscroll-contain">
       <div className="m3-card-elevated w-full max-w-sm rounded-[28px] p-6 text-center shadow-2xl animate-m3-scale">
         <div className="w-14 h-14 bg-[var(--md-error-container)] text-[var(--md-on-error-container)] rounded-2xl flex items-center justify-center mx-auto mb-4">
           <AlertTriangle className="w-7 h-7" />

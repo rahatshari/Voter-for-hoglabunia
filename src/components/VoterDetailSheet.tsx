@@ -14,18 +14,15 @@ import {
   Save,
   Share2,
   UserCheck,
-  Users,
   X,
 } from 'lucide-react';
 import { SupportTagType, Voter, VoterAnnotation } from '../types';
 import {
   calculateAge,
-  convertToBengaliNumbers,
   convertToEnglishNumbers,
   isMigrated,
-  normalizeBengaliText,
 } from '../lib/bengaliUtils';
-import { addToSlipQueue, findFamilyMembers, getVoterUniqueKey } from '../lib/voterSlipUtils';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 import {
   SUPPORT_TAGS_META,
   formatVoterShareText,
@@ -35,53 +32,31 @@ import {
   upsertVoterAnnotation,
 } from '../lib/voterTrackerStore';
 
-export type VoterDetailTab = 'info' | 'family' | 'campaign' | 'qr';
+export type VoterDetailTab = 'info' | 'campaign' | 'qr';
 
 interface VoterDetailSheetProps {
   voter: Voter | null;
   initialTab?: VoterDetailTab;
-  allVotersPool: Voter[];
   annotationsMap: Record<string, VoterAnnotation>;
+  allowSlipPrint?: boolean;
   onAnnotationsChanged: () => void;
   onClose: () => void;
-  onSelectVoter: (voter: Voter) => void;
   onOpenSlipModal?: (voter: Voter) => void;
-  onSlipQueueUpdated?: () => void;
   showToast: (msg: string) => void;
-}
-
-function getFamilyRelationLabel(target: Voter, member: Voter): string {
-  const tName = normalizeBengaliText((target.name || '').trim().toLowerCase());
-  const tFather = normalizeBengaliText((target.fatherName || '').trim().toLowerCase());
-  const tMother = normalizeBengaliText((target.motherName || '').trim().toLowerCase());
-
-  const mName = normalizeBengaliText((member.name || '').trim().toLowerCase());
-  const mFather = normalizeBengaliText((member.fatherName || '').trim().toLowerCase());
-  const mMother = normalizeBengaliText((member.motherName || '').trim().toLowerCase());
-
-  if (tFather && mName === tFather) return 'পিতা / অভিভাবক';
-  if (tMother && mName === tMother) return 'মাতা';
-  if (tName && (mFather === tName || mMother === tName)) {
-    return member.gender === 'মহিলা' ? 'কন্যা / স্ত্রী' : 'পুত্র';
-  }
-  if ((tFather && mFather === tFather) || (tMother && mMother === tMother)) {
-    return member.gender === 'মহিলা' ? 'বোন / পরিবার' : 'ভাই / পরিবার';
-  }
-  return 'পরিবারের সদস্য';
 }
 
 export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
   voter,
   initialTab = 'info',
-  allVotersPool,
   annotationsMap,
+  allowSlipPrint = true,
   onAnnotationsChanged,
   onClose,
-  onSelectVoter,
   onOpenSlipModal,
-  onSlipQueueUpdated,
   showToast,
 }) => {
+  useLockBodyScroll(Boolean(voter));
+
   const [activeTab, setActiveTab] = useState<VoterDetailTab>(initialTab);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [phoneInput, setPhoneInput] = useState<string>('');
@@ -104,7 +79,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
     setTagInput(annotation?.supportTag || '');
   }, [voter, annotation]);
 
-  // Generate QR code when QR tab or voter changes
   useEffect(() => {
     if (!voter) return;
     const qrPayload = [
@@ -125,16 +99,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
       .then((url) => setQrDataUrl(url))
       .catch(() => setQrDataUrl(''));
   }, [voter]);
-
-  const familyMembers = useMemo(() => {
-    if (!voter) return [];
-    // Prefer searching within same village first for speed & accuracy, fallback to full pool
-    const sameVillage = voter.villageName
-      ? allVotersPool.filter((v) => v.villageName === voter.villageName)
-      : allVotersPool;
-    const pool = sameVillage.length > 0 ? sameVillage : allVotersPool;
-    return findFamilyMembers(voter, pool);
-  }, [voter, allVotersPool]);
 
   if (!voter) return null;
 
@@ -173,7 +137,9 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
     const url = waPhone
       ? `https://wa.me/${waPhone}?text=${encodeURIComponent(shareText)}`
       : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    import('../lib/nativeBridge').then(({ openExternalLink }) => {
+      openExternalLink(url);
+    });
   };
 
   const handleSmsShare = () => {
@@ -181,20 +147,16 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
     const smsUrl = cleanPhone
       ? `sms:${cleanPhone}?body=${encodeURIComponent(shareText)}`
       : `sms:?body=${encodeURIComponent(shareText)}`;
-    window.location.href = smsUrl;
+    import('../lib/nativeBridge').then(({ openExternalLink }) => {
+      openExternalLink(smsUrl);
+    });
   };
 
   const handleSystemShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `ভোটার তথ্য - ${voter.name || ''}`,
-          text: shareText,
-        });
-      } catch {}
-    } else {
-      copyText(shareText, 'ভোটার তথ্য');
-    }
+    const { shareTextCrossPlatform } = await import('../lib/nativeBridge');
+    await shareTextCrossPlatform(`ভোটার তথ্য - ${voter.name || ''}`, shareText, () =>
+      copyText(shareText, 'ভোটার তথ্য')
+    );
   };
 
   const handleSaveCampaignDetails = () => {
@@ -207,31 +169,18 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
     showToast('ভোটার নোট ও ক্যাম্পেইন তথ্য সংরক্ষিত হয়েছে!');
   };
 
-  const handleAddEntireFamilyToSlip = () => {
-    const familyGroup = [voter, ...familyMembers];
-    const updated = addToSlipQueue(familyGroup);
-    if (onSlipQueueUpdated) onSlipQueueUpdated();
-    showToast(
-      `পরিবারের ${convertToBengaliNumbers(familyGroup.length)} জন একসাথে প্রিন্ট কিউতে যুক্ত হয়েছে! (মোট ${convertToBengaliNumbers(updated.length)} জন)`
-    );
-    if (onOpenSlipModal) {
-      onClose();
-      onOpenSlipModal(voter);
-    }
-  };
-
   return (
     <div
-      className="fixed inset-0 z-50 m3-sheet-backdrop flex items-end sm:items-center justify-center sm:p-4"
+      className="fixed inset-0 z-50 m3-sheet-backdrop flex items-end sm:items-center justify-center sm:p-4 touch-none"
       onClick={onClose}
     >
       <div
-        className="m3-sheet w-full sm:max-w-xl max-h-[92vh] flex flex-col overflow-hidden animate-sheet-up bottom-safe"
+        className="m3-sheet w-full sm:max-w-xl max-h-[92vh] flex flex-col overflow-hidden animate-sheet-up bottom-safe touch-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sm:hidden m3-drag-handle shrink-0" />
 
-        {/* Top Header */}
+        {/* Header */}
         <div className="px-5 pt-3.5 pb-3 border-b border-[var(--md-outline-variant)]/50 flex items-start justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -306,15 +255,10 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
           </div>
         </div>
 
-        {/* M3 Primary Tabs */}
-        <div className="grid grid-cols-4 border-b border-[var(--md-outline-variant)]/50 bg-[var(--md-surface-container-low)] px-2 shrink-0">
+        {/* 3 Clean M3 Tabs (Family tab removed) */}
+        <div className="grid grid-cols-3 border-b border-[var(--md-outline-variant)]/50 bg-[var(--md-surface-container-low)] px-2 shrink-0">
           {[
             { id: 'info' as VoterDetailTab, label: 'তথ্য ও শেয়ার', icon: FileText },
-            {
-              id: 'family' as VoterDetailTab,
-              label: `পরিবার (${convertToBengaliNumbers(familyMembers.length)})`,
-              icon: Users,
-            },
             { id: 'campaign' as VoterDetailTab, label: 'নোট ও ট্র্যাকার', icon: UserCheck },
             { id: 'qr' as VoterDetailTab, label: 'QR কোড', icon: QrCode },
           ].map((t) => {
@@ -334,19 +278,17 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 <Icon className="w-4 h-4" />
                 <span className="truncate max-w-full">{t.label}</span>
                 {active && (
-                  <span className="absolute bottom-0 left-3 right-3 h-[3px] rounded-t-full bg-[var(--md-primary)]" />
+                  <span className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-[var(--md-primary)]" />
                 )}
               </button>
             );
           })}
         </div>
 
-        {/* Scrollable Sheet Body */}
-        <div className="p-5 overflow-y-auto space-y-4 flex-1">
-          {/* TAB 1: INFO & SHARE */}
+        {/* Scrollable Sheet Body with overscroll-contain */}
+        <div className="p-5 overflow-y-auto overscroll-contain space-y-4 flex-1">
           {activeTab === 'info' && (
             <div className="space-y-4">
-              {/* Highlighted Voter ID Box */}
               <div className="m3-card-filled p-3.5 flex items-center justify-between gap-2">
                 <div>
                   <span className="text-[11px] font-semibold text-[var(--md-on-surface-variant)] block">
@@ -368,7 +310,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 )}
               </div>
 
-              {/* Structured Info Table */}
               <div className="m3-card-outlined divide-y divide-[var(--md-outline-variant)]/50 text-xs sm:text-sm overflow-hidden">
                 {[
                   { label: 'পিতার নাম', value: voter.fatherName || '-' },
@@ -393,7 +334,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 ))}
               </div>
 
-              {/* Quick Toggle Voted Status */}
               <div className="flex items-center justify-between gap-3 p-3.5 rounded-2xl border border-[var(--md-outline-variant)] bg-[var(--md-surface-container-low)]">
                 <div>
                   <span className="text-xs font-extrabold block">পোলিং ডে ভোট স্ট্যাটাস</span>
@@ -425,7 +365,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 </button>
               </div>
 
-              {/* Share & Print Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <button
                   type="button"
@@ -464,7 +403,7 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
                 </button>
               </div>
 
-              {onOpenSlipModal && (
+              {allowSlipPrint && onOpenSlipModal && (
                 <button
                   type="button"
                   onClick={() => {
@@ -480,78 +419,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
             </div>
           )}
 
-          {/* TAB 2: FAMILY MEMBERS */}
-          {activeTab === 'family' && (
-            <div className="space-y-3.5">
-              <div className="m3-card-filled p-3.5 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h4 className="text-xs sm:text-sm font-extrabold">
-                    সম্ভাব্য পরিবারের সদস্যবৃন্দ ({convertToBengaliNumbers(familyMembers.length)} জন)
-                  </h4>
-                  <p className="text-[11px] text-[var(--md-on-surface-variant)]">
-                    পিতা, মাতা ও অভিভাবকের নামের মিলের ভিত্তিতে স্বয়ংক্রিয়ভাবে খুঁজে বের করা হয়েছে
-                  </p>
-                </div>
-                {familyMembers.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleAddEntireFamilyToSlip}
-                    className="m3-btn-filled px-3.5 py-2 text-xs flex items-center gap-1.5"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>পুরো পরিবার একসাথে প্রিন্ট</span>
-                  </button>
-                )}
-              </div>
-
-              {familyMembers.length === 0 ? (
-                <div className="m3-card-outlined p-8 text-center space-y-2">
-                  <Users className="w-9 h-9 mx-auto text-[var(--md-outline)]" />
-                  <p className="text-xs font-bold text-[var(--md-on-surface-variant)]">
-                    এই গ্রামে একই পিতা/মাতার নামে অন্য কোনো ভোটার পাওয়া যায়নি।
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {familyMembers.map((member) => {
-                    const mKey = getVoterUniqueKey(member);
-                    const mAnn = annotationsMap[mKey];
-                    const rel = getFamilyRelationLabel(voter, member);
-                    return (
-                      <div
-                        key={mKey}
-                        onClick={() => onSelectVoter(member)}
-                        className="m3-card-outlined p-3.5 hover:border-[var(--md-primary)] transition cursor-pointer flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-extrabold text-sm">{member.name}</span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full m3-secondary-container">
-                              {rel}
-                            </span>
-                            {mAnn?.voted && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                                ভোট দিয়েছেন
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-[var(--md-on-surface-variant)]">
-                            ক্রমিক: <b>{member.serialNo || '-'}</b> • পিতা:{' '}
-                            {member.fatherName || '-'} • {member.dob || '-'}
-                          </p>
-                        </div>
-                        <span className="text-xs font-bold text-[var(--md-primary)] shrink-0">
-                          দেখুন →
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: CAMPAIGN TAGS, PHONE & NOTES */}
           {activeTab === 'campaign' && (
             <div className="space-y-4">
               <div className="space-y-2">
@@ -629,7 +496,6 @@ export const VoterDetailSheet: React.FC<VoterDetailSheetProps> = ({
             </div>
           )}
 
-          {/* TAB 4: OFFLINE QR CODE */}
           {activeTab === 'qr' && (
             <div className="flex flex-col items-center text-center space-y-4 py-2">
               <div className="bg-white p-4 rounded-3xl border border-[var(--md-outline-variant)] shadow-sm">

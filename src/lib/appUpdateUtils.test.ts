@@ -193,3 +193,19 @@ test('formatRemainingGraceBengali and formatBytesBengali render clear Bengali la
   assert.equal(formatBytesBengali(5 * 1024 * 1024), '৫.০ MB');
 });
 
+
+test('normalizeApkDownloadUrl converts Google Drive and Dropbox share links into direct binary download URLs', async () => {
+  const { normalizeApkDownloadUrl } = await import('./appUpdateUtils');
+  assert.equal(
+    normalizeApkDownloadUrl('https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUv/view?usp=sharing'),
+    'https://drive.usercontent.google.com/download?id=1AbCdEfGhIjKlMnOpQrStUv&export=download&confirm=t'
+  );
+  assert.equal(
+    normalizeApkDownloadUrl('https://drive.google.com/open?id=9XyZ12345'),
+    'https://drive.usercontent.google.com/download?id=9XyZ12345&export=download&confirm=t'
+  );
+  assert.equal(
+    normalizeApkDownloadUrl('https://www.dropbox.com/scl/fi/abc/Hoglabunia-Voter-App.apk?rlkey=xyz&dl=0'),
+    'https://www.dropbox.com/scl/fi/abc/Hoglabunia-Voter-App.apk?rlkey=xyz&dl=1'
+  );
+});

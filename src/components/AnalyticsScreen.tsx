@@ -18,6 +18,7 @@ import {
   isMigrated,
 } from '../lib/bengaliUtils';
 import { getVoterUniqueKey } from '../lib/voterSlipUtils';
+import { VillageDropdownMenu, VillageMenuOption } from './VillageDropdownMenu';
 
 interface AnalyticsScreenProps {
   villagesData: Record<string, Voter[]>;
@@ -43,6 +44,18 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   const [minAgeFilter] = useState<number>(18);
 
   const villageNames = useMemo(() => Object.keys(villagesData), [villagesData]);
+
+  const villageMenuOptions: VillageMenuOption[] = useMemo(() => {
+    let totalActive = 0;
+    const perVillage = villageNames.map((vn) => {
+      const active = (villagesData[vn] || []).filter((v) =>
+        v._isMigrated !== undefined ? !v._isMigrated : !isMigrated(v)
+      ).length;
+      totalActive += active;
+      return { key: vn, label: vn, count: active };
+    });
+    return [{ key: 'all', label: 'সকল গ্রাম (ইউনিয়ন)', count: totalActive }, ...perVillage];
+  }, [villageNames, villagesData]);
 
   const activeVotersPool = useMemo(() => {
     if (selectedVillage === 'all') {
@@ -293,21 +306,12 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
 
         {/* Village Selector & Actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="h-9 px-3 rounded-full bg-[var(--md-surface-container-high)] border border-[var(--md-outline-variant)]/60 flex items-center gap-1.5">
-            <MapPin className="w-3.5 h-3.5 text-[var(--md-primary)] shrink-0" />
-            <select
-              value={selectedVillage}
-              onChange={(e) => setSelectedVillage(e.target.value)}
-              className="bg-transparent text-xs font-bold focus:outline-none cursor-pointer"
-            >
-              <option value="all">সকল গ্রাম (ইউনিয়ন)</option>
-              {villageNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <VillageDropdownMenu
+            selectedKey={selectedVillage}
+            options={villageMenuOptions}
+            onSelect={(vk) => setSelectedVillage(vk)}
+            compact
+          />
 
           <button
             type="button"

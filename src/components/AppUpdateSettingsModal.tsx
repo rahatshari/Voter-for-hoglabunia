@@ -8,6 +8,7 @@ import {
   refreshWebAppCachesAndReload,
 } from '../lib/appUpdateUtils';
 import { InAppDownloadManagerPanel } from './InAppDownloadManagerPanel';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface AppUpdateSettingsModalProps {
   isOpen: boolean;
@@ -51,6 +52,7 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
   onCancelDownload,
   onInstallDownloadedApk,
 }) => {
+  useLockBodyScroll(isOpen);
   const [canInstallPkgs, setCanInstallPkgs] = useState<boolean>(true);
   const [webNotifPermission, setWebNotifPermission] = useState<string>('default');
   const [isRefreshingWeb, setIsRefreshingWeb] = useState(false);

@@ -15,6 +15,7 @@ interface NavigationDockProps {
   onNavigate: (screen: AppScreenType) => void;
   onLogoutClick: () => void;
   onOpenSlipModal?: () => void;
+  allowSlipPrint?: boolean;
   onOpenUserMonitoring?: () => void;
   isAdmin?: boolean;
   onOpenAdminPanel?: () => void;
@@ -26,6 +27,7 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
   activeScreen,
   onNavigate,
   onOpenSlipModal,
+  allowSlipPrint = true,
   isAdmin,
   onOpenAdminPanel,
   savedCount = 0,
@@ -53,7 +55,7 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
       isActive: activeScreen === 'search',
       onClick: () => onNavigate('search'),
     },
-    ...(onOpenSlipModal
+    ...(allowSlipPrint && onOpenSlipModal
       ? [
           {
             id: 'slip',

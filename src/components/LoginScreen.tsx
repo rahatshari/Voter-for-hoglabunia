@@ -40,6 +40,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setStatusMessage({
+        text: 'লগইন করার জন্য সক্রিয় ইন্টারনেট সংযোগ প্রয়োজন। অনুগ্রহ করে মোবাইল ডাটা বা ওয়াইফাই চালু করুন।',
+        isError: true,
+      });
+      return;
+    }
+
     const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password.trim();
 
@@ -49,7 +57,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
 
     setLoading(true);
-    setStatusMessage({ text: 'লগইন করা হচ্ছে...', isError: false });
+    setStatusMessage({ text: 'ইন্টারনেট ও অ্যাকাউন্ট যাচাই করা হচ্ছে...', isError: false });
     setUnauthorizedDomain(null);
 
     try {

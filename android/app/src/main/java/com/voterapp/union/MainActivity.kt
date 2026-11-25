@@ -410,22 +410,29 @@ class MainActivity : AppCompatActivity() {
     private fun setupBackNavigation() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    if (doubleBackToExitPressedOnce) {
-                        finish()
+                webView.evaluateJavascript(
+                    "(function(){ return typeof window.__HANDLE_ANDROID_BACK__ === 'function' ? Boolean(window.__HANDLE_ANDROID_BACK__()) : false; })();"
+                ) { result ->
+                    if (result == "true") {
+                        return@evaluateJavascript
+                    }
+                    if (webView.canGoBack()) {
+                        webView.goBack()
                     } else {
-                        doubleBackToExitPressedOnce = true
-                        Toast.makeText(
-                            this@MainActivity,
-                            getString(R.string.exit_prompt),
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        if (doubleBackToExitPressedOnce) {
+                            finish()
+                        } else {
+                            doubleBackToExitPressedOnce = true
+                            Toast.makeText(
+                                this@MainActivity,
+                                getString(R.string.exit_prompt),
+                                Toast.LENGTH_SHORT
+                            ).show()
 
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            doubleBackToExitPressedOnce = false
-                        }, 2000)
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                doubleBackToExitPressedOnce = false
+                            }, 2000)
+                        }
                     }
                 }
             }
@@ -1099,8 +1106,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun normalizeDirectApkUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        val driveFileRegex = Regex("drive\\.google\\.com/file/d/([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
+        val fileMatch = driveFileRegex.find(trimmed)
+        if (fileMatch != null) {
+            val id = fileMatch.groupValues[1]
+            return "https://drive.usercontent.google.com/download?id=$id&export=download&confirm=t"
+        }
+        val driveIdRegex = Regex("drive\\.google\\.com/(?:open|uc)\\?.*?[?&]?id=([a-zA-Z0-9_-]+)", RegexOption.IGNORE_CASE)
+        val idMatch = driveIdRegex.find(trimmed)
+        if (idMatch != null) {
+            val id = idMatch.groupValues[1]
+            return "https://drive.usercontent.google.com/download?id=$id&export=download&confirm=t"
+        }
+        if (trimmed.contains("dropbox.com/", ignoreCase = true)) {
+            if (trimmed.contains("dl=0")) return trimmed.replace("dl=0", "dl=1")
+            if (!trimmed.contains("dl=1")) return if (trimmed.contains("?")) "$trimmed&dl=1" else "$trimmed?dl=1"
+        }
+        return trimmed
+    }
+
     /**
-     * Built-in In-App APK Download Manager using HttpURLConnection (follows GitHub CDN redirects cleanly)
+     * Built-in In-App APK Download Manager using HttpURLConnection (follows GitHub / Google Drive / CDN redirects cleanly)
      */
     fun downloadApkAndPromptInstall(apkUrl: String, versionName: String) {
         if (dlStatus == "downloading" && activeDownloadThread?.isAlive == true) {
@@ -1108,6 +1136,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val effectiveUrl = normalizeDirectApkUrl(apkUrl)
         val targetFile = resolveApkFileForVersion(versionName)
         val tempFile = File(targetFile.parentFile, "${targetFile.name}.part")
         pendingApkFile = targetFile
@@ -1115,7 +1144,7 @@ class MainActivity : AppCompatActivity() {
         activeDownloadCancelled.set(false)
         dlStatus = "downloading"
         dlVersion = versionName
-        dlUrl = apkUrl
+        dlUrl = effectiveUrl
         dlBytes = 0L
         dlTotal = 0L
         dlPercent = 0
@@ -1131,7 +1160,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (tempFile.exists()) tempFile.delete()
 
-                var currentUrl = URL(apkUrl)
+                var currentUrl = URL(effectiveUrl)
                 var redirects = 0
                 var conn: HttpURLConnection
                 while (true) {
@@ -1164,6 +1193,9 @@ class MainActivity : AppCompatActivity() {
 
                 connection = conn
                 if (conn.responseCode !in 200..299) {
+                    if (conn.responseCode == 404 || conn.responseCode == 403) {
+                        throw Exception("APK ফাইলটি প্রাইভেট বা পাওয়া যায়নি (HTTP ${conn.responseCode})। অ্যাডমিন প্যানেলে পাবলিক APK লিঙ্ক দিন।")
+                    }
                     throw Exception("সার্ভার ত্রুটি (HTTP ${conn.responseCode})")
                 }
 
@@ -1175,6 +1207,9 @@ class MainActivity : AppCompatActivity() {
                 output = FileOutputStream(tempFile)
                 val buffer = ByteArray(8192)
                 var downloaded = 0L
+                var firstByte0: Byte = 0
+                var firstByte1: Byte = 0
+                var headerCaptured = false
                 var lastEmitTime = System.currentTimeMillis()
                 var lastSpeedCheckTime = lastEmitTime
                 var bytesSinceLastSpeed = 0L
@@ -1185,6 +1220,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     val read = input.read(buffer)
                     if (read == -1) break
+                    if (!headerCaptured && read >= 2) {
+                        firstByte0 = buffer[0]
+                        firstByte1 = buffer[1]
+                        headerCaptured = true
+                    }
                     output.write(buffer, 0, read)
                     downloaded += read
                     bytesSinceLastSpeed += read
@@ -1217,6 +1257,12 @@ class MainActivity : AppCompatActivity() {
                     dlSpeedBps = 0L
                     emitDownloadProgressToWeb()
                     return@Thread
+                }
+
+                // Verify APK/ZIP magic header ('P' = 0x50, 'K' = 0x4B) so HTML login/error pages are caught cleanly
+                if (headerCaptured && (firstByte0 != 0x50.toByte() || firstByte1 != 0x4B.toByte())) {
+                    if (tempFile.exists()) tempFile.delete()
+                    throw Exception("লিঙ্কটি সরাসরি APK ফাইল নয় (HTML পেজ এসেছে)। লিঙ্কটি 'Anyone with the link' করা আছে কিনা দেখুন।")
                 }
 
                 if (targetFile.exists()) targetFile.delete()

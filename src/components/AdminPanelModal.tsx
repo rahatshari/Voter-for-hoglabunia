@@ -52,11 +52,13 @@ import {
 } from '../lib/cloudStore';
 import { AdminHistoryTab } from './AdminHistoryTab';
 import { AdminControlsTab } from './AdminControlsTab';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface AdminPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserEmail: string;
+  villageNames?: string[];
 }
 
 type AdminTabId = 'users' | 'history' | 'add_user' | 'admins' | 'controls';
@@ -65,7 +67,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   isOpen,
   onClose,
   currentUserEmail,
+  villageNames = [],
 }) => {
+  useLockBodyScroll(isOpen);
   const [data, setData] = useState<AdminPanelData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -1644,6 +1648,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           {activeTab === 'controls' && !error && (
             <AdminControlsTab
               appConfig={appConfig}
+              villageNames={villageNames}
               onlineCount={summary.onlineCount}
               historyCount={history.length}
               dataSource={dataSource}

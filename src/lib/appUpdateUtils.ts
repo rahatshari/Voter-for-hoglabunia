@@ -143,6 +143,39 @@ export function isRemoteVersionNewer(
   return Number(remoteCode || 0) > Number(installedCode || 0);
 }
 
+/**
+ * Converts Google Drive / Dropbox share URLs into direct binary APK download URLs
+ * so Android's in-app downloader receives the raw .apk package instead of an HTML viewer page.
+ */
+export function normalizeApkDownloadUrl(rawUrl: string): string {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+
+  // Match Google Drive /file/d/<ID>/...
+  const driveFileMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (driveFileMatch?.[1]) {
+    return `https://drive.usercontent.google.com/download?id=${driveFileMatch[1]}&export=download&confirm=t`;
+  }
+
+  // Match Google Drive ?id=<ID>
+  const driveIdMatch = url.match(/drive\.google\.com\/(?:open|uc)\?.*?[?&]?id=([a-zA-Z0-9_-]+)/i);
+  if (driveIdMatch?.[1]) {
+    return `https://drive.usercontent.google.com/download?id=${driveIdMatch[1]}&export=download&confirm=t`;
+  }
+
+  // Match Dropbox ?dl=0 -> ?dl=1
+  if (/dropbox\.com\//i.test(url)) {
+    if (/[?&]dl=0\b/.test(url)) {
+      return url.replace(/([?&])dl=0\b/, '$1dl=1');
+    }
+    if (!/[?&]dl=1\b/.test(url)) {
+      return `${url}${url.includes('?') ? '&' : '?'}dl=1`;
+    }
+  }
+
+  return url;
+}
+
 export function normalizeGitHubRelease(
   release: any,
   repoSlug = DEFAULT_REPO
@@ -155,14 +188,14 @@ export function normalizeGitHubRelease(
   const assets = Array.isArray(release.assets) ? release.assets : [];
   const apkAsset =
     assets.find((a: any) => String(a?.name || '').toLowerCase().endsWith('.apk')) || assets[0];
-  const apkUrl =
+  const rawApkUrl =
     apkAsset?.browser_download_url ||
-    `https://github.com/${repoSlug}/releases/latest/download/Union-Voter-App.apk`;
+    `https://github.com/${repoSlug}/releases/latest/download/Hoglabunia-Voter-App.apk`;
 
   return {
     versionCode: remoteCode,
     versionName: cleanVersionName,
-    apkUrl,
+    apkUrl: normalizeApkDownloadUrl(rawApkUrl),
     releaseNotes:
       String(release.body || '').trim() ||
       'নতুন আপডেটে উন্নত পারফরম্যান্স, প্রিন্টিং ফিক্স এবং নতুন ফিচার যুক্ত করা হয়েছে।',
@@ -178,15 +211,17 @@ export function normalizeVersionJson(
   const versionCode = Number(data.versionCode || 0);
   const versionName = String(data.versionName || '').replace(/^v/i, '').trim();
   if (!versionName && versionCode <= 0) return null;
+  const rawApkUrl =
+    String(data.apkUrl || '').trim() ||
+    `https://github.com/${data.repo || repoSlug}/releases/latest/download/Hoglabunia-Voter-App.apk`;
   return {
     versionCode: versionCode || parseVersionCodeFromTag(versionName),
     versionName: versionName || `1.0.${Math.max(0, versionCode - 100)}`,
-    apkUrl:
-      String(data.apkUrl || '').trim() ||
-      `https://github.com/${data.repo || repoSlug}/releases/latest/download/Union-Voter-App.apk`,
+    apkUrl: normalizeApkDownloadUrl(rawApkUrl),
     releaseNotes:
       String(data.releaseNotes || '').trim() ||
       'অ্যাপের নতুন ভার্সন প্রকাশিত হয়েছে। নতুন ফিচার পেতে এখনই আপডেট করুন।',
+    publishedAt: data.publishedAt ? String(data.publishedAt) : undefined,
   };
 }
 

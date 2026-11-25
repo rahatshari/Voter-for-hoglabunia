@@ -1,5 +1,6 @@
 import React from 'react';
 import { LogOut } from 'lucide-react';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
 
 interface LogoutModalProps {
   isOpen: boolean;
@@ -14,11 +15,13 @@ export const LogoutModal: React.FC<LogoutModalProps> = ({
   onConfirm,
   isLoading = false,
 }) => {
+  useLockBodyScroll(isOpen);
+
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 m3-sheet-backdrop z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 m3-sheet-backdrop z-50 flex items-center justify-center p-4 overscroll-contain"
       onClick={onClose}
     >
       <div

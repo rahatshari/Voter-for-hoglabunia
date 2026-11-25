@@ -36,6 +36,7 @@ interface SavedVotersScreenProps {
   villagesData: Record<string, Voter[]>;
   annotationsMap: Record<string, VoterAnnotation>;
   slipQueue: Voter[];
+  allowSlipPrint?: boolean;
   onAnnotationsChanged: () => void;
   onSlipQueueChanged: () => void;
   onBackHome: () => void;
@@ -50,6 +51,7 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
   villagesData,
   annotationsMap,
   slipQueue,
+  allowSlipPrint = true,
   onAnnotationsChanged,
   onSlipQueueChanged,
   onBackHome,
@@ -178,8 +180,12 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
         </div>
       </div>
 
-      {/* 4 Category Summary Cards / Segmented Selector */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      {/* Category Summary Cards / Segmented Selector */}
+      <div
+        className={`grid grid-cols-2 ${
+          allowSlipPrint ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
+        } gap-2.5`}
+      >
         {[
           {
             id: 'starred' as HubSection,
@@ -202,13 +208,17 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
             icon: StickyNote,
             accent: 'text-[var(--md-primary)]',
           },
-          {
-            id: 'queue' as HubSection,
-            title: 'প্রিন্ট কিউ',
-            count: slipQueue.length,
-            icon: Users,
-            accent: 'text-sky-600',
-          },
+          ...(allowSlipPrint
+            ? [
+                {
+                  id: 'queue' as HubSection,
+                  title: 'প্রিন্ট কিউ',
+                  count: slipQueue.length,
+                  icon: Users,
+                  accent: 'text-sky-600',
+                },
+              ]
+            : []),
         ].map((item) => {
           const Icon = item.icon;
           const active = section === item.id;
@@ -280,7 +290,7 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
           )}
         </div>
 
-        {section === 'queue' && slipQueue.length > 0 && (
+        {allowSlipPrint && section === 'queue' && slipQueue.length > 0 && (
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -305,7 +315,7 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
           </div>
         )}
 
-        {section !== 'queue' && activeList.length > 0 && activeList.length <= 30 && (
+        {allowSlipPrint && section !== 'queue' && activeList.length > 0 && activeList.length <= 30 && (
           <button
             type="button"
             onClick={() => {
@@ -342,6 +352,7 @@ export const SavedVotersScreen: React.FC<SavedVotersScreenProps> = ({
                 voter={voter}
                 viewMode={viewMode}
                 annotation={annotationsMap[vKey]}
+                allowSlipPrint={allowSlipPrint}
                 onCopy={handleCopy}
                 onCopyVoterId={handleCopyVoterId}
                 onPrint={(v) => onOpenSlipModal(v)}

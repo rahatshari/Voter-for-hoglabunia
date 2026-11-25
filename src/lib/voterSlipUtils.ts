@@ -690,24 +690,36 @@ function renderVoterDetailsBlockHTML(
   config: CandidateProfile,
   fillMode: VoterInfoFillMode = 'auto'
 ): string {
+  const cs = config.customSettings || {};
   const serial = voter.serialNo || '-';
   const name = voter.name || '-';
   const voterId = voter.voterId || '-';
   const father = voter.fatherName || '-';
   const mother = voter.motherName || '-';
   const dob = voter.dob || '-';
+  const profession = voter.profession || '';
   const address = voter.address || voter.villageName || config.voterArea || '-';
   const area = voter.villageName || config.voterArea || '-';
+
+  const showSerial = cs.showSerial !== false;
+  const showWardAndArea = cs.showWardAndArea !== false;
+  const showFather = cs.showFather !== false;
+  const showMother = cs.showMother !== false;
+  const showVoterId = cs.showVoterId !== false;
+  const showDob = cs.showDob !== false;
+  const showProfession = cs.showProfession !== false;
+  const showPollingCenter = cs.showPollingCenter !== false;
+  const showAddress = cs.showAddress !== false;
 
   if (fillMode === 'blank') {
     return `
       <div class="vc-voter-blank">
-        <div class="vc-blank-row"><span>ভোটারের নাম :</span><span class="vc-dotted-line"></span><span>ক্রমিক নং :</span><span class="vc-dotted-short"></span></div>
-        <div class="vc-blank-row"><span>পিতা / স্বামীর নাম :</span><span class="vc-dotted-line"></span></div>
-        <div class="vc-blank-row"><span>মাতার নাম :</span><span class="vc-dotted-line"></span><span>জন্ম তারিখ :</span><span class="vc-dotted-short"></span></div>
-        <div class="vc-blank-row"><span>ভোটার আইডি নং :</span><span class="vc-dotted-line"></span><span>ওয়ার্ড নং :</span><span class="vc-dotted-short">${config.wardNo || ''}</span></div>
-        <div class="vc-blank-row"><span>ভোট কেন্দ্র :</span><span class="vc-dotted-line">${config.pollingCenter || ''}</span></div>
-        <div class="vc-blank-row"><span>গ্রাম / ঠিকানা :</span><span class="vc-dotted-line">${area !== '-' ? area : ''}</span></div>
+        <div class="vc-blank-row"><span>ভোটারের নাম :</span><span class="vc-dotted-line"></span>${showSerial ? '<span>ক্রমিক নং :</span><span class="vc-dotted-short"></span>' : ''}</div>
+        ${showFather ? '<div class="vc-blank-row"><span>পিতা / স্বামীর নাম :</span><span class="vc-dotted-line"></span></div>' : ''}
+        ${showMother || showDob ? `<div class="vc-blank-row">${showMother ? '<span>মাতার নাম :</span><span class="vc-dotted-line"></span>' : ''}${showDob ? '<span>জন্ম তারিখ :</span><span class="vc-dotted-short"></span>' : ''}</div>` : ''}
+        ${showVoterId || showWardAndArea ? `<div class="vc-blank-row">${showVoterId ? '<span>ভোটার আইডি নং :</span><span class="vc-dotted-line"></span>' : ''}${showWardAndArea ? `<span>ওয়ার্ড নং :</span><span class="vc-dotted-short">${config.wardNo || ''}</span>` : ''}</div>` : ''}
+        ${showPollingCenter ? `<div class="vc-blank-row"><span>ভোট কেন্দ্র :</span><span class="vc-dotted-line">${config.pollingCenter || ''}</span></div>` : ''}
+        ${showAddress ? `<div class="vc-blank-row"><span>গ্রাম / ঠিকানা :</span><span class="vc-dotted-line">${area !== '-' ? area : ''}</span></div>` : ''}
       </div>
     `;
   }
@@ -716,35 +728,66 @@ function renderVoterDetailsBlockHTML(
 
   return `
     <div class="vc-voter-filled">
-      <div class="vc-top-meta-strip">
-        <span><b>ক্রমিক নং:</b> ${serial}</span>
-        <span><b>ওয়ার্ড নং:</b> ${config.wardNo || '-'}</span>
-        <span><b>এলাকা:</b> ${area}</span>
-      </div>
+      ${
+        showSerial || showWardAndArea
+          ? `<div class="vc-top-meta-strip">
+              ${showSerial ? `<span><b>ক্রমিক নং:</b> ${serial}</span>` : ''}
+              ${showWardAndArea ? `<span><b>ওয়ার্ড নং:</b> ${config.wardNo || '-'}</span><span><b>এলাকা:</b> ${area}</span>` : ''}
+            </div>`
+          : ''
+      }
       <div class="${lineClass} vc-main-name">
         <span class="vc-lbl">ভোটারের নাম:</span>
         <span class="vc-val vc-bold-name">${name}</span>
       </div>
-      <div class="${lineClass}">
-        <span class="vc-lbl">পিতা/স্বামীর নাম:</span>
-        <span class="vc-val">${father}</span>
-      </div>
-      <div class="${lineClass}">
-        <span class="vc-lbl">মাতার নাম:</span>
-        <span class="vc-val">${mother}</span>
-      </div>
-      <div class="${lineClass} vc-two-col">
-        <div><span class="vc-lbl">ভোটার আইডি:</span> <span class="vc-val vc-mono">${voterId}</span></div>
-        <div><span class="vc-lbl">জন্ম তারিখ:</span> <span class="vc-val">${dob}</span></div>
-      </div>
-      <div class="${lineClass}">
-        <span class="vc-lbl">ভোট কেন্দ্র:</span>
-        <span class="vc-val vc-center-highlight">${config.pollingCenter || '-'}</span>
-      </div>
-      <div class="${lineClass}">
-        <span class="vc-lbl">ঠিকানা:</span>
-        <span class="vc-val">${address}</span>
-      </div>
+      ${
+        showFather
+          ? `<div class="${lineClass}">
+              <span class="vc-lbl">পিতা/স্বামীর নাম:</span>
+              <span class="vc-val">${father}</span>
+            </div>`
+          : ''
+      }
+      ${
+        showMother
+          ? `<div class="${lineClass}">
+              <span class="vc-lbl">মাতার নাম:</span>
+              <span class="vc-val">${mother}</span>
+            </div>`
+          : ''
+      }
+      ${
+        showVoterId || showDob
+          ? `<div class="${lineClass} vc-two-col">
+              ${showVoterId ? `<div><span class="vc-lbl">ভোটার আইডি:</span> <span class="vc-val vc-mono">${voterId}</span></div>` : ''}
+              ${showDob ? `<div><span class="vc-lbl">জন্ম তারিখ:</span> <span class="vc-val">${dob}</span></div>` : ''}
+            </div>`
+          : ''
+      }
+      ${
+        showProfession && profession
+          ? `<div class="${lineClass}">
+              <span class="vc-lbl">পেশা:</span>
+              <span class="vc-val">${profession}</span>
+            </div>`
+          : ''
+      }
+      ${
+        showPollingCenter
+          ? `<div class="${lineClass}">
+              <span class="vc-lbl">ভোট কেন্দ্র:</span>
+              <span class="vc-val vc-center-highlight">${config.pollingCenter || '-'}</span>
+            </div>`
+          : ''
+      }
+      ${
+        showAddress
+          ? `<div class="${lineClass}">
+              <span class="vc-lbl">ঠিকানা:</span>
+              <span class="vc-val">${address}</span>
+            </div>`
+          : ''
+      }
     </div>
   `;
 }
@@ -1147,7 +1190,8 @@ export async function printVoterSlips(
 
   // 2. Standard A4 / Multi-Voter Normal Print across all 6 Slip Design Styles
   const slipsHTML = voters.map((v) => renderSlipCardByStyleHTML(v, config, colorMode)).join('');
-  const isCompactGrid = mode === 'sheet6' || mode === 'sheet8';
+  const pageOrientation = config.customSettings?.orientation === 'landscape' ? 'landscape' : 'portrait';
+  const stylesheet = getSlipCardStylesheet(config, mode, isSheet || voters.length > 1);
 
   const printDocument = `
     <!DOCTYPE html>
@@ -1166,402 +1210,10 @@ export async function printVoterSlips(
           padding: ${isSheet ? '3mm' : '8mm'};
         }
         @page {
-          size: A4 portrait;
+          size: A4 ${pageOrientation};
           margin: 5mm;
         }
-        .slips-container {
-          display: ${isSheet || voters.length > 1 ? 'grid' : 'flex'};
-          ${
-            isSheet || voters.length > 1
-              ? `
-            grid-template-columns: ${voters.length === 1 && !isSheet ? '1fr' : '1fr 1fr'};
-            grid-gap: ${isCompactGrid ? '3mm 3mm' : '4.5mm 4mm'};
-            width: 100%;
-          `
-              : `
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-          `
-          }
-        }
-        .slip-card {
-          border: 2px solid #000;
-          background: #fff;
-          width: 100%;
-          max-width: ${isSheet || voters.length > 1 ? '100%' : '620px'};
-          font-size: ${isCompactGrid ? '9.5px' : '11px'};
-          line-height: 1.25;
-          position: relative;
-          page-break-inside: avoid;
-          break-inside: avoid;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-        }
-        .bw-filter img {
-          filter: grayscale(100%) contrast(118%);
-        }
-
-        /* ==============================================================
-           STYLE 1: CLASSIC VOTER CARD (Matches Uploaded Reference Card)
-           ============================================================== */
-        .style-classic-card {
-          border: 2.2px solid #000;
-          border-radius: 2px;
-        }
-        .classic-main-grid {
-          display: flex;
-          align-items: stretch;
-          width: 100%;
-          flex: 1;
-        }
-        .classic-left-col {
-          width: 36%;
-          border-right: 1.5px dashed #222;
-          padding: ${isCompactGrid ? '4px' : '5px'};
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: space-between;
-          text-align: center;
-          background: #fff;
-          flex-shrink: 0;
-        }
-        .classic-photo-wrap {
-          width: 100%;
-          display: flex;
-          justify-content: center;
-        }
-        .classic-cand-img {
-          width: 100%;
-          max-width: ${isCompactGrid ? '110px' : '150px'};
-          height: ${isCompactGrid ? '104px' : '142px'};
-          object-fit: cover;
-          object-position: top center;
-          border-bottom: 1.5px solid #000;
-        }
-        .classic-symbol-wrap {
-          width: 100%;
-          display: flex;
-          justify-content: center;
-          padding: 2px 0;
-        }
-        .classic-sym-img {
-          width: 100%;
-          max-width: ${isCompactGrid ? '80px' : '106px'};
-          height: ${isCompactGrid ? '58px' : '80px'};
-          object-fit: contain;
-        }
-        .classic-vote-callout {
-          font-size: ${isCompactGrid ? '11px' : '13.5px'};
-          font-weight: 900;
-          color: #000;
-          line-height: 1.1;
-          margin-top: 1px;
-        }
-        .classic-slogan {
-          font-size: ${isCompactGrid ? '7.5px' : '8.8px'};
-          font-weight: 700;
-          color: #111;
-          line-height: 1.18;
-          margin-top: 2px;
-        }
-        .classic-right-col {
-          flex: 1;
-          padding: ${isCompactGrid ? '4px 6px' : '6px 8px'};
-          display: flex;
-          flex-direction: column;
-          position: relative;
-          min-width: 0;
-        }
-        .classic-top-bar {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          position: relative;
-          margin-bottom: 2px;
-        }
-        .classic-bismillah {
-          font-size: ${isCompactGrid ? '8.5px' : '9.5px'};
-          font-weight: 700;
-          color: #000;
-        }
-        .classic-vertical-ribbon {
-          position: absolute;
-          right: -4px;
-          top: -4px;
-          background: #e2e8f0;
-          border: 1.2px solid #000;
-          padding: 3px 2px;
-          writing-mode: vertical-rl;
-          text-orientation: mixed;
-          transform: rotate(180deg);
-          font-size: ${isCompactGrid ? '8px' : '9.5px'};
-          font-weight: 900;
-          color: #000;
-          line-height: 1;
-        }
-        .classic-election-block {
-          border-left: 3.5px solid #000;
-          padding-left: 5px;
-          margin-bottom: 3px;
-          padding-right: 18px;
-        }
-        .classic-election-line1 {
-          font-size: ${isCompactGrid ? '10px' : '12px'};
-          font-weight: 800;
-          color: #000;
-          line-height: 1.15;
-        }
-        .classic-election-line2 {
-          font-size: ${isCompactGrid ? '10px' : '11.5px'};
-          font-weight: 800;
-          color: #000;
-          line-height: 1.15;
-        }
-        .classic-position-row {
-          display: flex;
-          align-items: baseline;
-          gap: 5px;
-          flex-wrap: wrap;
-          margin-bottom: 3px;
-        }
-        .classic-black-post {
-          background: #000;
-          color: #fff;
-          font-size: ${isCompactGrid ? '10.5px' : '13px'};
-          font-weight: 900;
-          padding: 1px 6px;
-          display: inline-block;
-          line-height: 1.15;
-        }
-        .classic-qual-text {
-          font-size: ${isCompactGrid ? '8.2px' : '9.5px'};
-          font-weight: 700;
-          color: #000;
-        }
-        .classic-candidate-name-row {
-          border-left: 3.5px solid #000;
-          padding-left: 5px;
-          margin-bottom: 4px;
-          display: flex;
-          align-items: baseline;
-          gap: 4px;
-          flex-wrap: wrap;
-        }
-        .classic-cand-name {
-          font-size: ${isCompactGrid ? '13.5px' : '17px'};
-          font-weight: 900;
-          color: #000;
-          line-height: 1.1;
-          letter-spacing: -0.2px;
-        }
-        .classic-cand-suffix {
-          font-size: ${isCompactGrid ? '10px' : '12px'};
-          font-weight: 800;
-        }
-        .classic-dashed-hr {
-          border-bottom: 1.4px dashed #222;
-          margin: 2px 0 4px 0;
-        }
-        .classic-voter-zone {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-        .classic-bottom-footer {
-          background: #000;
-          color: #fff;
-          display: grid;
-          grid-template-columns: 1fr 1.25fr 1fr;
-          font-size: ${isCompactGrid ? '7.5px' : '8.8px'};
-          font-weight: 800;
-          border-top: 1.5px solid #000;
-        }
-        .classic-foot-col {
-          padding: 2.5px 5px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .classic-foot-center {
-          border-left: 1.2px solid #fff;
-          border-right: 1.2px solid #fff;
-          text-align: center;
-        }
-        .classic-foot-right {
-          text-align: right;
-        }
-
-        /* ==============================================================
-           VOTER DETAILS BLOCK (Auto-Filled, Lined, or Blank)
-           ============================================================== */
-        .vc-voter-filled {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5px;
-          font-size: ${isCompactGrid ? '9.2px' : '10.5px'};
-        }
-        .vc-top-meta-strip {
-          display: flex;
-          justify-content: space-between;
-          background: #f1f5f9;
-          border: 1px solid #000;
-          padding: 1.5px 5px;
-          font-size: ${isCompactGrid ? '8.8px' : '10px'};
-          margin-bottom: 2px;
-        }
-        .vc-info-row {
-          display: flex;
-          align-items: baseline;
-          gap: 4px;
-          line-height: 1.28;
-        }
-        .vc-info-row.lined {
-          border-bottom: 1px dotted #64748b;
-          padding-bottom: 1px;
-        }
-        .vc-two-col {
-          display: flex;
-          justify-content: space-between;
-          gap: 6px;
-        }
-        .vc-lbl {
-          font-weight: 700;
-          color: #111;
-          flex-shrink: 0;
-        }
-        .vc-val {
-          font-weight: 600;
-          color: #000;
-        }
-        .vc-bold-name {
-          font-size: ${isCompactGrid ? '10.5px' : '12px'};
-          font-weight: 900;
-        }
-        .vc-mono {
-          font-family: monospace, sans-serif;
-          font-weight: 800;
-        }
-        .vc-center-highlight {
-          font-weight: 800;
-        }
-        .vc-voter-blank {
-          display: flex;
-          flex-direction: column;
-          gap: ${isCompactGrid ? '5px' : '7px'};
-          padding: 4px 0;
-          font-size: ${isCompactGrid ? '9px' : '10.5px'};
-          font-weight: 700;
-        }
-        .vc-blank-row {
-          display: flex;
-          align-items: baseline;
-          gap: 4px;
-        }
-        .vc-dotted-line {
-          flex: 1;
-          border-bottom: 1.2px dotted #000;
-          min-height: 12px;
-          padding-left: 4px;
-        }
-        .vc-dotted-short {
-          width: 55px;
-          border-bottom: 1.2px dotted #000;
-          min-height: 12px;
-          padding-left: 4px;
-        }
-
-        /* ==============================================================
-           STYLE 2: MODERN SPLIT BANNER
-           ============================================================== */
-        .style-modern-split { padding: 0; }
-        .ms-top-header { text-align: center; font-size: 9px; font-weight: 700; padding: 2px; border-bottom: 1px dotted #444; }
-        .ms-title-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 8px; }
-        .ms-el-title { font-size: 11px; font-weight: 800; }
-        .ms-el-sub { font-size: 8.5px; font-weight: 600; }
-        .ms-post-badge { background: #000; color: #fff; padding: 1.5px 7px; font-size: 9.5px; font-weight: 900; }
-        .ms-cand-banner { text-align: center; font-size: 15px; font-weight: 900; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 2px; background: #f8fafc; }
-        .ms-body-row { display: flex; align-items: stretch; padding: 5px 7px; gap: 6px; flex: 1; }
-        .ms-sym-col { width: 84px; border-right: 1px dashed #444; padding-right: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; flex-shrink: 0; }
-        .ms-sym-img { width: 70px; height: 66px; object-fit: contain; }
-        .ms-sym-label { font-size: 9.5px; font-weight: 900; margin-top: 2px; }
-        .ms-sym-callout { border: 1px solid #000; font-size: 8px; font-weight: 800; padding: 1px 3px; margin-top: 2px; }
-        .ms-voter-col { flex: 1; min-width: 0; }
-        .ms-photo-col { width: 102px; border: 1.2px solid #000; display: flex; flex-direction: column; align-items: center; justify-content: space-between; flex-shrink: 0; }
-        .ms-cand-img { width: 100%; height: 124px; object-fit: cover; object-position: top center; }
-        .ms-photo-cap { background: #000; color: #fff; width: 100%; text-align: center; font-size: 8px; font-weight: 800; padding: 1px 0; }
-
-        /* ==============================================================
-           STYLE 3: POSTER BANNER CARD
-           ============================================================== */
-        .pb-header { display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-bottom: 2px solid #000; background: #f8fafc; }
-        .pb-photo-box { width: 98px; height: 118px; border: 1.5px solid #000; flex-shrink: 0; overflow: hidden; }
-        .pb-img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
-        .pb-center-head { flex: 1; text-align: center; min-width: 0; }
-        .pb-rel { font-size: 8.5px; font-weight: 700; }
-        .pb-el { font-size: 10.5px; font-weight: 800; }
-        .pb-const { font-size: 9.5px; font-weight: 700; }
-        .pb-post-pill { display: inline-block; border: 1.2px solid #000; padding: 0 6px; font-size: 9px; font-weight: 900; margin: 1px 0; }
-        .pb-black-name { background: #000; color: #fff; font-size: 13.5px; font-weight: 900; padding: 2px 6px; margin-top: 2px; }
-        .pb-sym-box { width: 82px; text-align: center; flex-shrink: 0; }
-        .pb-sym-img { width: 68px; height: 66px; object-fit: contain; margin: 0 auto; display: block; }
-        .pb-sym-call { font-size: 8.5px; font-weight: 900; margin-top: 2px; border: 1px solid #000; padding: 1px; }
-        .pb-voter-section { padding: 6px 8px; flex: 1; }
-
-        /* ==============================================================
-           STYLE 4: ROYAL FRAMED SLIP
-           ============================================================== */
-        .style-royal-frame { padding: 3px; border: 2.5px solid #000; }
-        .rf-inner { border: 1.2px solid #000; padding: 5px 7px; display: flex; flex-direction: column; height: 100%; justify-content: space-between; }
-        .rf-top-strip { display: flex; justify-content: space-between; font-size: 8.5px; font-weight: 700; border-bottom: 1px dashed #444; padding-bottom: 2px; }
-        .rf-tag { background: #000; color: #fff; padding: 0 5px; font-weight: 800; }
-        .rf-hero { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1.5px solid #000; }
-        .rf-cand-img { width: 90px; height: 110px; object-fit: cover; object-position: top center; border: 1.2px solid #000; flex-shrink: 0; }
-        .rf-hero-text { flex: 1; text-align: center; }
-        .rf-el { font-size: 10px; font-weight: 800; }
-        .rf-sub { font-size: 8.5px; }
-        .rf-name { font-size: 14px; font-weight: 900; margin: 1px 0; }
-        .rf-call { background: #000; color: #fff; font-size: 9.5px; font-weight: 800; padding: 1px 6px; display: inline-block; }
-        .rf-sym-img { width: 70px; height: 70px; object-fit: contain; flex-shrink: 0; }
-        .rf-voter-wrap { padding: 4px 0; flex: 1; }
-        .rf-footer { border-top: 1px solid #000; padding-top: 2px; font-size: 8px; font-weight: 800; display: flex; justify-content: space-between; }
-
-        /* ==============================================================
-           STYLE 5: OFFICIAL TABLE GRID
-           ============================================================== */
-        .tg-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1.5px solid #000; }
-        .tg-thumb { width: 76px; height: 92px; object-fit: cover; object-position: top center; border: 1px solid #000; flex-shrink: 0; }
-        .tg-head-mid { flex: 1; text-align: center; }
-        .tg-rel { font-size: 8px; font-weight: 700; }
-        .tg-title { font-size: 10px; font-weight: 800; }
-        .tg-cand { font-size: 11px; margin-top: 2px; }
-        .tg-call { background: #000; color: #fff; padding: 0 4px; font-weight: 800; }
-        .tg-sym { width: 62px; height: 62px; object-fit: contain; flex-shrink: 0; }
-        .tg-table { width: 100%; border-collapse: collapse; font-size: 9.5px; flex: 1; }
-        .tg-table td { border: 1px solid #000; padding: 2.5px 5px; }
-        .tg-lbl { font-weight: 800; background: #f1f5f9; width: 22%; }
-        .tg-val { width: 28%; }
-        .tg-bold { font-weight: 900; }
-        .tg-mono { font-family: monospace; font-weight: 800; }
-
-        /* ==============================================================
-           STYLE 6: COMPACT POCKET SLIP
-           ============================================================== */
-        .style-compact-pocket { padding: 6px; }
-        .cp-top { text-align: center; font-size: 8.5px; font-weight: 700; }
-        .cp-el { text-align: center; font-size: 10.5px; font-weight: 800; border-bottom: 1px dashed #000; padding-bottom: 2px; }
-        .cp-cand-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 4px 0; border-bottom: 1.5px solid #000; }
-        .cp-img { width: 74px; height: 90px; object-fit: cover; object-position: top center; border: 1px solid #000; }
-        .cp-cand-mid { flex: 1; text-align: center; }
-        .cp-badge { background: #000; color: #fff; font-size: 8.5px; font-weight: 800; padding: 0 5px; display: inline-block; }
-        .cp-name { font-size: 13px; font-weight: 900; }
-        .cp-call { font-size: 9.5px; font-weight: 800; }
-        .cp-sym { width: 58px; height: 58px; object-fit: contain; }
-        .cp-voter { padding-top: 4px; }
+        ${stylesheet}
       </style>
     </head>
     <body>
@@ -1573,6 +1225,426 @@ export async function printVoterSlips(
   `;
 
   executePrintHtml(printDocument, `Voter_Slips_${voters.length}`);
+}
+
+export function getSlipCardStylesheet(
+  config: CandidateProfile,
+  mode: PrintLayoutMode = 'sheet4',
+  isMultiGrid = false
+): string {
+  const cs = config.customSettings || {};
+  const isCompactGrid = mode === 'sheet6' || mode === 'sheet8';
+  const isPortraitCard = cs.orientation === 'portrait' && mode === 'single' && !isMultiGrid;
+
+  const hScale = cs.headerFontScale ?? 1;
+  const cScale = cs.candidateFontScale ?? 1;
+  const vScale = cs.voterFontScale ?? 1;
+  const pScale = cs.photoScale ?? 1;
+  const sScale = cs.symbolScale ?? 1;
+  const lScale = cs.lineSpacingScale ?? 1;
+  const borderStyle = cs.borderStyle ?? 'solid';
+
+  const borderCss =
+    borderStyle === 'none'
+      ? 'border: none !important;'
+      : borderStyle === 'dashed'
+      ? 'border: 2px dashed #000 !important;'
+      : borderStyle === 'double'
+      ? 'border: 4px double #000 !important;'
+      : '';
+
+  return `
+    .slips-container {
+      display: ${isMultiGrid ? 'grid' : 'flex'};
+      ${
+        isMultiGrid
+          ? `
+        grid-template-columns: 1fr 1fr;
+        grid-gap: ${isCompactGrid ? '3mm 3mm' : '4.5mm 4mm'};
+        width: 100%;
+      `
+          : `
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+      `
+      }
+    }
+    .slip-card {
+      border: 2px solid #000;
+      background: #fff;
+      width: 100%;
+      max-width: ${isMultiGrid ? '100%' : isPortraitCard ? '380px' : '620px'};
+      font-size: ${(isCompactGrid ? 9.5 : 11) * vScale}px;
+      line-height: ${1.25 * lScale};
+      position: relative;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      ${borderCss}
+    }
+    .bw-filter img {
+      filter: grayscale(100%) contrast(118%);
+    }
+
+    /* STYLE 1: CLASSIC VOTER CARD */
+    .style-classic-card {
+      border: 2.2px solid #000;
+      border-radius: 2px;
+      ${borderCss}
+    }
+    .classic-main-grid {
+      display: flex;
+      flex-direction: ${isPortraitCard ? 'column' : cs.swapPhotoSymbol ? 'row-reverse' : 'row'};
+      align-items: stretch;
+      width: 100%;
+      flex: 1;
+    }
+    .classic-left-col {
+      width: ${isPortraitCard ? '100%' : '36%'};
+      ${
+        isPortraitCard
+          ? 'border-bottom: 1.5px dashed #222; flex-direction: row; flex-wrap: wrap; gap: 8px; justify-content: space-around;'
+          : cs.swapPhotoSymbol
+          ? 'border-left: 1.5px dashed #222;'
+          : 'border-right: 1.5px dashed #222;'
+      }
+      padding: ${isCompactGrid ? '4px' : '5px'};
+      display: flex;
+      ${isPortraitCard ? '' : 'flex-direction: column;'}
+      align-items: center;
+      justify-content: space-between;
+      text-align: center;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .classic-photo-wrap {
+      width: ${isPortraitCard ? 'auto' : '100%'};
+      display: ${cs.showCandidatePhoto === false ? 'none' : 'flex'};
+      justify-content: center;
+    }
+    .classic-cand-img {
+      width: 100%;
+      max-width: ${Math.round((isCompactGrid ? 110 : 148) * pScale)}px;
+      height: ${Math.round((isCompactGrid ? 104 : 140) * pScale)}px;
+      object-fit: cover;
+      object-position: top center;
+      border-bottom: 1.5px solid #000;
+    }
+    .classic-symbol-wrap {
+      width: ${isPortraitCard ? 'auto' : '100%'};
+      display: ${cs.showSymbolPhoto === false ? 'none' : 'flex'};
+      justify-content: center;
+      padding: 2px 0;
+    }
+    .classic-sym-img {
+      width: 100%;
+      max-width: ${Math.round((isCompactGrid ? 80 : 104) * sScale)}px;
+      height: ${Math.round((isCompactGrid ? 58 : 78) * sScale)}px;
+      object-fit: contain;
+    }
+    .classic-vote-callout {
+      font-size: ${(isCompactGrid ? 11 : 13.5) * cScale}px;
+      font-weight: 900;
+      color: #000;
+      line-height: 1.1;
+      margin-top: 1px;
+    }
+    .classic-slogan {
+      display: ${cs.showSlogan === false ? 'none' : 'block'};
+      font-size: ${(isCompactGrid ? 7.5 : 8.8) * hScale}px;
+      font-weight: 700;
+      color: #111;
+      line-height: 1.18;
+      margin-top: 2px;
+    }
+    .classic-right-col {
+      flex: 1;
+      padding: ${isCompactGrid ? '4px 6px' : '6px 8px'};
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      min-width: 0;
+    }
+    .classic-top-bar {
+      display: ${cs.showReligiousHeader === false ? 'none' : 'flex'};
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      margin-bottom: 2px;
+    }
+    .classic-bismillah {
+      font-size: ${(isCompactGrid ? 8.5 : 9.5) * hScale}px;
+      font-weight: 700;
+      color: #000;
+    }
+    .classic-vertical-ribbon {
+      position: absolute;
+      right: -4px;
+      top: -4px;
+      background: #e2e8f0;
+      border: 1.2px solid #000;
+      padding: 3px 2px;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      transform: rotate(180deg);
+      font-size: ${isCompactGrid ? '8px' : '9.5px'};
+      font-weight: 900;
+      color: #000;
+      line-height: 1;
+    }
+    .classic-election-block {
+      display: ${cs.showElectionTitle === false ? 'none' : 'block'};
+      border-left: 3.5px solid #000;
+      padding-left: 5px;
+      margin-bottom: 3px;
+      padding-right: 18px;
+    }
+    .classic-election-line1 {
+      font-size: ${(isCompactGrid ? 10 : 12) * hScale}px;
+      font-weight: 800;
+      color: #000;
+      line-height: 1.15;
+    }
+    .classic-election-line2 {
+      font-size: ${(isCompactGrid ? 10 : 11.5) * hScale}px;
+      font-weight: 800;
+      color: #000;
+      line-height: 1.15;
+    }
+    .classic-position-row {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-bottom: 3px;
+    }
+    .classic-black-post {
+      background: #000;
+      color: #fff;
+      font-size: ${(isCompactGrid ? 10.5 : 13) * cScale}px;
+      font-weight: 900;
+      padding: 1px 6px;
+      display: inline-block;
+      line-height: 1.15;
+    }
+    .classic-qual-text {
+      font-size: ${(isCompactGrid ? 8.2 : 9.5) * hScale}px;
+      font-weight: 700;
+      color: #000;
+    }
+    .classic-candidate-name-row {
+      border-left: 3.5px solid #000;
+      padding-left: 5px;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .classic-cand-name {
+      font-size: ${(isCompactGrid ? 13.5 : 17) * cScale}px;
+      font-weight: 900;
+      color: #000;
+      line-height: 1.1;
+      letter-spacing: -0.2px;
+    }
+    .classic-cand-suffix {
+      font-size: ${(isCompactGrid ? 10 : 12) * cScale}px;
+      font-weight: 800;
+    }
+    .classic-dashed-hr {
+      border-bottom: 1.4px dashed #222;
+      margin: 2px 0 4px 0;
+    }
+    .classic-voter-zone {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .classic-bottom-footer {
+      display: ${cs.showFooter === false ? 'none' : 'grid'};
+      background: #000;
+      color: #fff;
+      grid-template-columns: 1fr 1.25fr 1fr;
+      font-size: ${isCompactGrid ? '7.5px' : '8.8px'};
+      font-weight: 800;
+      border-top: 1.5px solid #000;
+    }
+    .classic-foot-col {
+      padding: 2.5px 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .classic-foot-center {
+      border-left: 1.2px solid #fff;
+      border-right: 1.2px solid #fff;
+      text-align: center;
+    }
+    .classic-foot-right {
+      text-align: right;
+    }
+
+    /* VOTER DETAILS BLOCK */
+    .vc-voter-filled {
+      display: flex;
+      flex-direction: column;
+      gap: ${1.5 * lScale}px;
+      font-size: ${(isCompactGrid ? 9.2 : 10.5) * vScale}px;
+    }
+    .vc-top-meta-strip {
+      display: flex;
+      justify-content: space-between;
+      background: #f1f5f9;
+      border: 1px solid #000;
+      padding: 1.5px 5px;
+      font-size: ${(isCompactGrid ? 8.8 : 10) * vScale}px;
+      margin-bottom: 2px;
+    }
+    .vc-info-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      line-height: ${1.28 * lScale};
+    }
+    .vc-info-row.lined {
+      border-bottom: 1px dotted #64748b;
+      padding-bottom: 1px;
+    }
+    .vc-two-col {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .vc-lbl {
+      font-weight: 700;
+      color: #111;
+      flex-shrink: 0;
+    }
+    .vc-val {
+      font-weight: 600;
+      color: #000;
+    }
+    .vc-bold-name {
+      font-size: ${(isCompactGrid ? 10.5 : 12) * vScale}px;
+      font-weight: 900;
+    }
+    .vc-mono {
+      font-family: monospace, sans-serif;
+      font-weight: 800;
+    }
+    .vc-center-highlight {
+      font-weight: 800;
+    }
+    .vc-voter-blank {
+      display: flex;
+      flex-direction: column;
+      gap: ${(isCompactGrid ? 5 : 7) * lScale}px;
+      padding: 4px 0;
+      font-size: ${(isCompactGrid ? 9 : 10.5) * vScale}px;
+      font-weight: 700;
+    }
+    .vc-blank-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .vc-dotted-line {
+      flex: 1;
+      border-bottom: 1.2px dotted #000;
+      min-height: 12px;
+      padding-left: 4px;
+    }
+    .vc-dotted-short {
+      width: 55px;
+      border-bottom: 1.2px dotted #000;
+      min-height: 12px;
+      padding-left: 4px;
+    }
+
+    /* STYLE 2: MODERN SPLIT BANNER */
+    .style-modern-split { padding: 0; }
+    .ms-top-header { display: ${cs.showReligiousHeader === false ? 'none' : 'block'}; text-align: center; font-size: ${9 * hScale}px; font-weight: 700; padding: 2px; border-bottom: 1px dotted #444; }
+    .ms-title-row { display: ${cs.showElectionTitle === false ? 'none' : 'flex'}; justify-content: space-between; align-items: center; padding: 3px 8px; }
+    .ms-el-title { font-size: ${11 * hScale}px; font-weight: 800; }
+    .ms-el-sub { font-size: ${8.5 * hScale}px; font-weight: 600; }
+    .ms-post-badge { background: #000; color: #fff; padding: 1.5px 7px; font-size: ${9.5 * cScale}px; font-weight: 900; }
+    .ms-cand-banner { text-align: center; font-size: ${15 * cScale}px; font-weight: 900; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 2px; background: #f8fafc; }
+    .ms-body-row { display: flex; flex-direction: ${cs.swapPhotoSymbol ? 'row-reverse' : 'row'}; align-items: stretch; padding: 5px 7px; gap: 6px; flex: 1; }
+    .ms-sym-col { display: ${cs.showSymbolPhoto === false ? 'none' : 'flex'}; width: ${Math.round(84 * sScale)}px; border-right: 1px dashed #444; padding-right: 5px; flex-direction: column; align-items: center; justify-content: center; text-align: center; flex-shrink: 0; }
+    .ms-sym-img { width: ${Math.round(70 * sScale)}px; height: ${Math.round(66 * sScale)}px; object-fit: contain; }
+    .ms-sym-label { font-size: 9.5px; font-weight: 900; margin-top: 2px; }
+    .ms-sym-callout { border: 1px solid #000; font-size: 8px; font-weight: 800; padding: 1px 3px; margin-top: 2px; }
+    .ms-voter-col { flex: 1; min-width: 0; }
+    .ms-photo-col { display: ${cs.showCandidatePhoto === false ? 'none' : 'flex'}; width: ${Math.round(102 * pScale)}px; border: 1.2px solid #000; flex-direction: column; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .ms-cand-img { width: 100%; height: ${Math.round(124 * pScale)}px; object-fit: cover; object-position: top center; }
+    .ms-photo-cap { background: #000; color: #fff; width: 100%; text-align: center; font-size: 8px; font-weight: 800; padding: 1px 0; }
+
+    /* STYLE 3: POSTER BANNER CARD */
+    .pb-header { display: flex; flex-direction: ${cs.swapPhotoSymbol ? 'row-reverse' : 'row'}; align-items: center; gap: 6px; padding: 5px 7px; border-bottom: 2px solid #000; background: #f8fafc; }
+    .pb-photo-box { display: ${cs.showCandidatePhoto === false ? 'none' : 'block'}; width: ${Math.round(98 * pScale)}px; height: ${Math.round(118 * pScale)}px; border: 1.5px solid #000; flex-shrink: 0; overflow: hidden; }
+    .pb-img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+    .pb-center-head { flex: 1; text-align: center; min-width: 0; }
+    .pb-rel { display: ${cs.showReligiousHeader === false ? 'none' : 'block'}; font-size: ${8.5 * hScale}px; font-weight: 700; }
+    .pb-el { display: ${cs.showElectionTitle === false ? 'none' : 'block'}; font-size: ${10.5 * hScale}px; font-weight: 800; }
+    .pb-const { display: ${cs.showElectionTitle === false ? 'none' : 'block'}; font-size: ${9.5 * hScale}px; font-weight: 700; }
+    .pb-post-pill { display: inline-block; border: 1.2px solid #000; padding: 0 6px; font-size: ${9 * cScale}px; font-weight: 900; margin: 1px 0; }
+    .pb-black-name { background: #000; color: #fff; font-size: ${13.5 * cScale}px; font-weight: 900; padding: 2px 6px; margin-top: 2px; }
+    .pb-sym-box { display: ${cs.showSymbolPhoto === false ? 'none' : 'block'}; width: ${Math.round(82 * sScale)}px; text-align: center; flex-shrink: 0; }
+    .pb-sym-img { width: ${Math.round(68 * sScale)}px; height: ${Math.round(66 * sScale)}px; object-fit: contain; margin: 0 auto; display: block; }
+    .pb-sym-call { font-size: 8.5px; font-weight: 900; margin-top: 2px; border: 1px solid #000; padding: 1px; }
+    .pb-voter-section { padding: 6px 8px; flex: 1; }
+
+    /* STYLE 4: ROYAL FRAMED SLIP */
+    .style-royal-frame { padding: 3px; border: 2.5px solid #000; ${borderCss} }
+    .rf-inner { border: 1.2px solid #000; padding: 5px 7px; display: flex; flex-direction: column; height: 100%; justify-content: space-between; }
+    .rf-top-strip { display: ${cs.showReligiousHeader === false ? 'none' : 'flex'}; justify-content: space-between; font-size: ${8.5 * hScale}px; font-weight: 700; border-bottom: 1px dashed #444; padding-bottom: 2px; }
+    .rf-tag { background: #000; color: #fff; padding: 0 5px; font-weight: 800; }
+    .rf-hero { display: flex; flex-direction: ${cs.swapPhotoSymbol ? 'row-reverse' : 'row'}; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1.5px solid #000; }
+    .rf-cand-img { display: ${cs.showCandidatePhoto === false ? 'none' : 'block'}; width: ${Math.round(90 * pScale)}px; height: ${Math.round(110 * pScale)}px; object-fit: cover; object-position: top center; border: 1.2px solid #000; flex-shrink: 0; }
+    .rf-hero-text { flex: 1; text-align: center; }
+    .rf-el { display: ${cs.showElectionTitle === false ? 'none' : 'block'}; font-size: ${10 * hScale}px; font-weight: 800; }
+    .rf-sub { font-size: ${8.5 * hScale}px; }
+    .rf-name { font-size: ${14 * cScale}px; font-weight: 900; margin: 1px 0; }
+    .rf-call { background: #000; color: #fff; font-size: ${9.5 * cScale}px; font-weight: 800; padding: 1px 6px; display: inline-block; }
+    .rf-sym-img { display: ${cs.showSymbolPhoto === false ? 'none' : 'block'}; width: ${Math.round(70 * sScale)}px; height: ${Math.round(70 * sScale)}px; object-fit: contain; flex-shrink: 0; }
+    .rf-voter-wrap { padding: 4px 0; flex: 1; }
+    .rf-footer { display: ${cs.showFooter === false ? 'none' : 'flex'}; border-top: 1px solid #000; padding-top: 2px; font-size: 8px; font-weight: 800; justify-content: space-between; }
+
+    /* STYLE 5: OFFICIAL TABLE GRID */
+    .tg-head { display: flex; flex-direction: ${cs.swapPhotoSymbol ? 'row-reverse' : 'row'}; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1.5px solid #000; }
+    .tg-thumb { display: ${cs.showCandidatePhoto === false ? 'none' : 'block'}; width: ${Math.round(76 * pScale)}px; height: ${Math.round(92 * pScale)}px; object-fit: cover; object-position: top center; border: 1px solid #000; flex-shrink: 0; }
+    .tg-head-mid { flex: 1; text-align: center; }
+    .tg-rel { display: ${cs.showReligiousHeader === false ? 'none' : 'block'}; font-size: ${8 * hScale}px; font-weight: 700; }
+    .tg-title { display: ${cs.showElectionTitle === false ? 'none' : 'block'}; font-size: ${10 * hScale}px; font-weight: 800; }
+    .tg-cand { font-size: ${11 * cScale}px; margin-top: 2px; }
+    .tg-call { background: #000; color: #fff; padding: 0 4px; font-weight: 800; }
+    .tg-sym { display: ${cs.showSymbolPhoto === false ? 'none' : 'block'}; width: ${Math.round(62 * sScale)}px; height: ${Math.round(62 * sScale)}px; object-fit: contain; flex-shrink: 0; }
+    .tg-table { width: 100%; border-collapse: collapse; font-size: ${9.5 * vScale}px; flex: 1; }
+    .tg-table td { border: 1px solid #000; padding: 2.5px 5px; }
+    .tg-lbl { font-weight: 800; background: #f1f5f9; width: 22%; }
+    .tg-val { width: 28%; }
+    .tg-bold { font-weight: 900; }
+    .tg-mono { font-family: monospace; font-weight: 800; }
+
+    /* STYLE 6: COMPACT POCKET SLIP */
+    .style-compact-pocket { padding: 6px; }
+    .cp-top { display: ${cs.showReligiousHeader === false ? 'none' : 'block'}; text-align: center; font-size: ${8.5 * hScale}px; font-weight: 700; }
+    .cp-el { display: ${cs.showElectionTitle === false ? 'none' : 'block'}; text-align: center; font-size: ${10.5 * hScale}px; font-weight: 800; border-bottom: 1px dashed #000; padding-bottom: 2px; }
+    .cp-cand-row { display: flex; flex-direction: ${cs.swapPhotoSymbol ? 'row-reverse' : 'row'}; align-items: center; justify-content: space-between; gap: 5px; padding: 4px 0; border-bottom: 1.5px solid #000; }
+    .cp-img { display: ${cs.showCandidatePhoto === false ? 'none' : 'block'}; width: ${Math.round(74 * pScale)}px; height: ${Math.round(90 * pScale)}px; object-fit: cover; object-position: top center; border: 1px solid #000; }
+    .cp-cand-mid { flex: 1; text-align: center; }
+    .cp-badge { background: #000; color: #fff; font-size: ${8.5 * cScale}px; font-weight: 800; padding: 0 5px; display: inline-block; }
+    .cp-name { font-size: ${13 * cScale}px; font-weight: 900; }
+    .cp-call { font-size: ${9.5 * cScale}px; font-weight: 800; }
+    .cp-sym { display: ${cs.showSymbolPhoto === false ? 'none' : 'block'}; width: ${Math.round(58 * sScale)}px; height: ${Math.round(58 * sScale)}px; object-fit: contain; }
+    .cp-voter { padding-top: 4px; }
+  `;
 }
 
 /**

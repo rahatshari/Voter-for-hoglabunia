@@ -249,6 +249,68 @@ export function subscribeAppGlobalConfig(
 }
 
 /**
+ * Fetch & Save OTA App Release metadata (/app_release) in Firebase RTDB
+ */
+export async function getCloudAppRelease(): Promise<import('../types').RemoteReleaseInfo | null> {
+  if (isDeviceOffline()) return null;
+  try {
+    const snap = await withTimeout(get(ref(database, 'app_release')), 3500, null as any);
+    if (snap && snap.exists() && typeof snap.val() === 'object') {
+      const val = snap.val();
+      if (val.versionName || val.versionCode) {
+        return {
+          versionCode: Number(val.versionCode || 100),
+          versionName: String(val.versionName || '1.0.0').replace(/^v/i, ''),
+          apkUrl: String(val.apkUrl || ''),
+          releaseNotes: String(val.releaseNotes || ''),
+          publishedAt: val.publishedAt ? String(val.publishedAt) : undefined,
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export async function saveCloudAppRelease(
+  release: import('../types').RemoteReleaseInfo
+): Promise<void> {
+  await set(ref(database, 'app_release'), {
+    versionCode: Number(release.versionCode || 100),
+    versionName: String(release.versionName || '').replace(/^v/i, '').trim(),
+    apkUrl: String(release.apkUrl || '').trim(),
+    releaseNotes: String(release.releaseNotes || '').trim(),
+    publishedAt: release.publishedAt || new Date().toISOString(),
+  });
+}
+
+export function subscribeCloudAppRelease(
+  onUpdate: (release: import('../types').RemoteReleaseInfo | null) => void
+): Unsubscribe {
+  return onValue(
+    ref(database, 'app_release'),
+    (snap) => {
+      if (snap.exists() && typeof snap.val() === 'object') {
+        const val = snap.val();
+        if (val.versionName || val.versionCode) {
+          onUpdate({
+            versionCode: Number(val.versionCode || 100),
+            versionName: String(val.versionName || '').replace(/^v/i, ''),
+            apkUrl: String(val.apkUrl || ''),
+            releaseNotes: String(val.releaseNotes || ''),
+            publishedAt: val.publishedAt ? String(val.publishedAt) : undefined,
+          });
+          return;
+        }
+      }
+      onUpdate(null);
+    },
+    () => {
+      // Ignore permission errors prior to login
+    }
+  );
+}
+
+/**
  * Check if a user is blocked or maintenance mode applies before allowing entry
  */
 export async function checkCloudAccessForUser(email: string): Promise<{

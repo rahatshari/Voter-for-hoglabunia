@@ -31,7 +31,19 @@ export interface VillageSummary {
   females: number;
 }
 
+export type SearchFieldMode =
+  | 'name'
+  | 'serial'
+  | 'father'
+  | 'mother'
+  | 'voterId'
+  | 'dob'
+  | 'profession'
+  | 'address';
+
 export interface AppSearchFilters {
+  searchField?: SearchFieldMode;
+  query?: string;
   omni?: string;
   serial: string;
   name: string;
@@ -39,6 +51,7 @@ export interface AppSearchFilters {
   mother: string;
   dob: string;
   voterId?: string;
+  address?: string;
   profession: string;
   gender: string;
   ageGroup?: AgeGroupFilter;
@@ -129,6 +142,7 @@ export interface AppGlobalConfig {
   announcementText: string;
   enforceSingleDevice: boolean;
   allowSlipPrint: boolean;
+  disabledVillages?: string[];
   autoUpdateEnabled?: boolean;
   updatedAt?: number;
   updatedBy?: string;
@@ -203,6 +217,40 @@ export type SlipDesignStyle =
 
 export type VoterInfoFillMode = 'auto' | 'lined' | 'blank';
 
+export type SlipOrientation = 'portrait' | 'landscape';
+export type ThermalPaperWidthMm = 58 | 80;
+export type SlipBorderStyle = 'solid' | 'double' | 'dashed' | 'none';
+
+export interface SlipCustomSettings {
+  orientation?: SlipOrientation;
+  paperWidthMm?: ThermalPaperWidthMm;
+  headerFontScale?: number;
+  candidateFontScale?: number;
+  voterFontScale?: number;
+  photoScale?: number;
+  symbolScale?: number;
+  lineSpacingScale?: number;
+  paddingMm?: number;
+  borderStyle?: SlipBorderStyle;
+  swapPhotoSymbol?: boolean;
+  thermalDarkness?: 'light' | 'normal' | 'dark';
+  showReligiousHeader?: boolean;
+  showElectionTitle?: boolean;
+  showCandidatePhoto?: boolean;
+  showSymbolPhoto?: boolean;
+  showSlogan?: boolean;
+  showPollingCenter?: boolean;
+  showWardAndArea?: boolean;
+  showSerial?: boolean;
+  showVoterId?: boolean;
+  showFather?: boolean;
+  showMother?: boolean;
+  showDob?: boolean;
+  showProfession?: boolean;
+  showAddress?: boolean;
+  showFooter?: boolean;
+}
+
 export interface CandidateProfile {
   id: string;
   templateTitle?: string;
@@ -229,6 +277,7 @@ export interface CandidateProfile {
   footerLeftText?: string;
   footerCenterText?: string;
   footerRightText?: string;
+  customSettings?: SlipCustomSettings;
   isCustom?: boolean;
 }
 

@@ -2,26 +2,31 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowUp,
+  ArrowUpDown,
   Award,
   BarChart3,
   Bookmark,
+  Briefcase,
+  Calendar,
   Check,
   CheckCircle2,
   Clock,
+  CreditCard,
   Download,
+  Hash,
   History,
   LayoutGrid,
   List,
   LogOut,
+  MapPin,
   Mic,
   MicOff,
   MoreVertical,
   Printer,
-  RotateCcw,
   Search,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
+  User,
   Users,
   X,
 } from 'lucide-react';
@@ -30,6 +35,7 @@ import {
   AppSearchFilters,
   AppSettings,
   CampaignStatusFilter,
+  SearchFieldMode,
   Voter,
   VoterAnnotation,
   VoterSortOption,
@@ -59,6 +65,8 @@ import {
   toggleVoterStarred,
   toggleVoterVoted,
 } from '../lib/voterTrackerStore';
+import { useLockBodyScroll } from '../lib/useLockBodyScroll';
+import { VillageDropdownMenu, VillageMenuOption } from './VillageDropdownMenu';
 import { VoterCard } from './VoterCard';
 import { VoterDetailTab } from './VoterDetailSheet';
 
@@ -67,7 +75,9 @@ interface SearchScreenProps {
   villageKey: string;
   voters: Voter[];
   villageNames?: string[];
+  villageOptions?: VillageMenuOption[];
   onSwitchVillage?: (villageKey: string) => void;
+  allowSlipPrint?: boolean;
   annotationsMap?: Record<string, VoterAnnotation>;
   onAnnotationsChanged?: () => void;
   onOpenVoterDetail?: (voter: Voter, tab?: VoterDetailTab) => void;
@@ -83,27 +93,138 @@ interface SearchScreenProps {
 
 const RENDER_BATCH_SIZE = 40;
 
-const EMPTY_SEARCH: AppSearchFilters = {
-  omni: '',
-  serial: '',
-  name: '',
-  father: '',
-  mother: '',
-  dob: '',
-  voterId: '',
-  profession: '',
-  gender: '',
-  ageGroup: '',
-  campaignFilter: '',
-  sortBy: 'serial_asc',
-};
+interface SearchFieldMeta {
+  id: SearchFieldMode;
+  label: string;
+  placeholder: string;
+  hint?: string;
+  icon: React.FC<{ className?: string }>;
+}
+
+export const SEARCH_FIELD_MODES: SearchFieldMeta[] = [
+  {
+    id: 'name',
+    label: 'নাম',
+    placeholder: 'ভোটারের নাম লিখুন...',
+    icon: User,
+  },
+  {
+    id: 'serial',
+    label: 'ক্রমিক নং',
+    placeholder: 'ক্রমিক নং লিখুন (যেমন: ১, ২০ বা ১-৫০)...',
+    hint: 'সঠিক ক্রমিক ম্যাচ সক্রিয়: ১ লিখলে শুধুই ১ নং ক্রমিক আসবে (১০ বা ১০০ আসবে না)',
+    icon: Hash,
+  },
+  {
+    id: 'father',
+    label: 'পিতার নাম',
+    placeholder: 'পিতা বা স্বামীর নাম লিখুন...',
+    icon: User,
+  },
+  {
+    id: 'mother',
+    label: 'মাতার নাম',
+    placeholder: 'মাতার নাম লিখুন...',
+    icon: User,
+  },
+  {
+    id: 'voterId',
+    label: 'ভোটার নং',
+    placeholder: 'ভোটার আইডি / এনআইডি নম্বর লিখুন...',
+    icon: CreditCard,
+  },
+  {
+    id: 'dob',
+    label: 'জন্ম তারিখ',
+    placeholder: 'জন্ম তারিখ লিখুন (যেমন: ২৩/০২/২০০১)...',
+    icon: Calendar,
+  },
+  {
+    id: 'profession',
+    label: 'পেশা',
+    placeholder: 'পেশা লিখুন বা নিচের তালিকা থেকে বেছে নিন...',
+    icon: Briefcase,
+  },
+  {
+    id: 'address',
+    label: 'ঠিকানা',
+    placeholder: 'বাড়ি বা ঠিকানার অংশ লিখুন...',
+    icon: MapPin,
+  },
+];
+
+function normalizeInitialSearch(init?: AppSearchFilters): AppSearchFilters {
+  const base: AppSearchFilters = {
+    searchField: 'name',
+    query: '',
+    omni: '',
+    serial: '',
+    name: '',
+    father: '',
+    mother: '',
+    dob: '',
+    voterId: '',
+    address: '',
+    profession: '',
+    gender: '',
+    ageGroup: '',
+    campaignFilter: '',
+    sortBy: 'serial_asc',
+  };
+  if (!init) return base;
+
+  let searchField: SearchFieldMode = init.searchField || 'name';
+  let query = init.query ?? '';
+
+  if (!query) {
+    if (init.serial?.trim()) {
+      searchField = 'serial';
+      query = init.serial.trim();
+    } else if (init.name?.trim()) {
+      searchField = 'name';
+      query = init.name.trim();
+    } else if (init.father?.trim()) {
+      searchField = 'father';
+      query = init.father.trim();
+    } else if (init.mother?.trim()) {
+      searchField = 'mother';
+      query = init.mother.trim();
+    } else if (init.voterId?.trim()) {
+      searchField = 'voterId';
+      query = init.voterId.trim();
+    } else if (init.dob?.trim()) {
+      searchField = 'dob';
+      query = init.dob.trim();
+    } else if (init.profession?.trim()) {
+      searchField = 'profession';
+      query = init.profession.trim();
+    } else if (init.address?.trim()) {
+      searchField = 'address';
+      query = init.address.trim();
+    } else if (init.omni?.trim()) {
+      query = init.omni.trim();
+    }
+  }
+
+  return {
+    ...base,
+    gender: init.gender || '',
+    ageGroup: init.ageGroup || '',
+    campaignFilter: init.campaignFilter || '',
+    sortBy: init.sortBy || 'serial_asc',
+    searchField,
+    query,
+  };
+}
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
   villageTitle,
   villageKey,
   voters,
   villageNames = [],
+  villageOptions,
   onSwitchVillage,
+  allowSlipPrint = true,
   annotationsMap = {},
   onAnnotationsChanged,
   onOpenVoterDetail,
@@ -117,10 +238,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onStateChange,
 }) => {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches());
+
+  useLockBodyScroll(showMoreMenu || showSortMenu);
 
   const [settings, setSettings] = useState<AppSettings>(() => ({
     fullList: initialSettings?.fullList ?? false,
@@ -129,14 +252,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     viewMode: initialSettings?.viewMode ?? 'card',
   }));
 
-  const [search, setSearch] = useState<AppSearchFilters>(() => ({
-    ...EMPTY_SEARCH,
-    ...(initialSearch || {}),
-  }));
+  const [search, setSearch] = useState<AppSearchFilters>(() =>
+    normalizeInitialSearch(initialSearch)
+  );
 
   const [slipQueue, setSlipQueue] = useState<Voter[]>(() => getSlipQueue());
   const [renderedCount, setRenderedCount] = useState(RENDER_BATCH_SIZE);
   const observerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeField: SearchFieldMode = search.searchField || 'name';
+  const activeFieldMeta =
+    SEARCH_FIELD_MODES.find((m) => m.id === activeField) || SEARCH_FIELD_MODES[0];
 
   useEffect(() => {
     const syncQueue = () => setSlipQueue(getSlipQueue());
@@ -148,7 +275,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     };
   }, []);
 
-  // Show Floating Scroll-to-Top FAB after scrolling down
   useEffect(() => {
     const onScroll = () => {
       setShowScrollTop(window.scrollY > 450);
@@ -172,6 +298,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     [voters]
   );
 
+  const computedVillageOptions: VillageMenuOption[] = useMemo(() => {
+    if (villageOptions && villageOptions.length > 0) return villageOptions;
+    return [
+      { key: 'all', label: 'সকল গ্রাম (ইউনিয়ন)' },
+      ...villageNames.map((vn) => ({ key: vn, label: vn })),
+    ];
+  }, [villageOptions, villageNames]);
+
   const professionStats = useMemo(() => {
     const activeData = voters.filter((v) =>
       v._isMigrated !== undefined ? !v._isMigrated : !isMigrated(v)
@@ -191,25 +325,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       .sort((a, b) => a.localeCompare(b, 'bn'));
   }, [professionStats]);
 
-  // Smart filtered & sorted voters
   const filteredVoters = useMemo(
     () => filterAndSortVoters(voters, search, settings, annotationsMap),
     [voters, search, settings, annotationsMap]
   );
-
-  // Count of advanced specific filters active
-  const advancedActiveCount = useMemo(() => {
-    let c = 0;
-    if (search.serial.trim()) c++;
-    if (search.name.trim()) c++;
-    if (search.father.trim()) c++;
-    if (search.mother.trim()) c++;
-    if (search.dob.trim()) c++;
-    if (search.voterId?.trim()) c++;
-    if (search.profession.trim()) c++;
-    if (search.sortBy && search.sortBy !== 'serial_asc') c++;
-    return c;
-  }, [search]);
 
   useEffect(() => {
     setRenderedCount(RENDER_BATCH_SIZE);
@@ -217,13 +336,13 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   // Save debounced recent search query
   useEffect(() => {
-    const term = (search.omni || search.name || '').trim();
+    const term = (search.query || '').trim();
     if (term.length < 2) return;
     const t = setTimeout(() => {
       setRecentSearches(addRecentSearch(term));
     }, 1200);
     return () => clearTimeout(t);
-  }, [search.omni, search.name]);
+  }, [search.query]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -245,7 +364,50 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     [filteredVoters, renderedCount]
   );
 
+  const handleSelectSearchField = (mode: SearchFieldMode) => {
+    setSearch((prev) => {
+      let nextQuery = prev.query || '';
+      if (mode === 'dob' && nextQuery) {
+        nextQuery = formatDobInput(nextQuery);
+      }
+      return {
+        ...prev,
+        searchField: mode,
+        query: nextQuery,
+        omni: '',
+        serial: '',
+        name: '',
+        father: '',
+        mother: '',
+        dob: '',
+        voterId: '',
+        address: '',
+        profession: '',
+      };
+    });
+    setTimeout(() => inputRef.current?.focus(), 40);
+  };
+
+  const handleQueryInputChange = (rawVal: string) => {
+    const val = activeField === 'dob' ? formatDobInput(rawVal) : rawVal;
+    setSearch((prev) => ({
+      ...prev,
+      searchField: activeField,
+      query: val,
+      omni: '',
+      serial: '',
+      name: '',
+      father: '',
+      mother: '',
+      dob: '',
+      voterId: '',
+      address: '',
+      profession: '',
+    }));
+  };
+
   const handleToggleQueue = (voter: Voter) => {
+    if (!allowSlipPrint) return;
     const res = toggleVoterInSlipQueue(voter);
     setSlipQueue(res.queue);
     if (res.added) {
@@ -264,7 +426,23 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   const handleClearAllFilters = () => {
-    setSearch({ ...EMPTY_SEARCH });
+    setSearch((prev) => ({
+      searchField: prev.searchField || 'name',
+      query: '',
+      omni: '',
+      serial: '',
+      name: '',
+      father: '',
+      mother: '',
+      dob: '',
+      voterId: '',
+      address: '',
+      profession: '',
+      gender: '',
+      ageGroup: '',
+      campaignFilter: '',
+      sortBy: 'serial_asc',
+    }));
   };
 
   const handleVoiceSearch = () => {
@@ -273,7 +451,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         onStart: () => setIsListening(true),
         onEnd: () => setIsListening(false),
         onResult: (transcript) => {
-          setSearch((prev) => ({ ...prev, omni: transcript }));
+          handleQueryInputChange(transcript);
           setRecentSearches(addRecentSearch(transcript));
         },
         onError: (msg) => {
@@ -321,6 +499,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   const handlePrint = (voter: Voter) => {
+    if (!allowSlipPrint) {
+      showToast('ভোটার স্লিপ প্রিন্ট অপশনটি বর্তমানে অ্যাডমিন কর্তৃক বন্ধ রয়েছে।');
+      return;
+    }
     if (onOpenSlipModal) {
       onOpenSlipModal(voter);
       return;
@@ -378,14 +560,23 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   const isCriteriaActive = hasActiveSearchCriteria(search, settings);
+  const ActiveFieldIcon = activeFieldMeta.icon;
+
+  const sortLabels: Record<VoterSortOption, string> = {
+    serial_asc: 'ক্রমিক (১→৯)',
+    serial_desc: 'ক্রমিক (৯→১)',
+    name_asc: 'নাম (অ→হ)',
+    age_asc: 'কম বয়স আগে',
+    age_desc: 'বেশি বয়স আগে',
+  };
 
   return (
     <div className="space-y-3.5 animate-slide-down pb-12">
       {/* 1. Material Design 3 Top Search Header Card */}
-      <div className="m3-card-elevated p-3.5 sm:p-5 space-y-3.5">
-        {/* Row 1: Back, Village Selector, Counts, View Mode & More Menu */}
+      <div className="m3-card-elevated p-3.5 sm:p-5 space-y-3">
+        {/* Row 1: Back, Compact Village Selector Popup, Counts, View Mode & More Menu */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={onBack}
@@ -395,42 +586,86 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               <ArrowLeft className="w-5 h-5" />
             </button>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                {onSwitchVillage && villageNames.length > 0 ? (
-                  <select
-                    value={villageKey}
-                    onChange={(e) => onSwitchVillage(e.target.value)}
-                    aria-label="গ্রাম নির্বাচন করুন"
-                    className="font-black text-base sm:text-lg bg-transparent text-[var(--md-on-surface)] focus:outline-none cursor-pointer pr-1 max-w-[190px] sm:max-w-xs truncate"
-                  >
-                    <option value="all">সকল গ্রাম (ইউনিয়ন)</option>
-                    {villageNames.map((vn) => (
-                      <option key={vn} value={vn}>
-                        {vn}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <h2 className="text-base sm:text-lg font-black truncate">
-                    {villageTitle}
-                  </h2>
-                )}
+            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+              {onSwitchVillage && computedVillageOptions.length > 1 ? (
+                <VillageDropdownMenu
+                  selectedKey={villageKey}
+                  options={computedVillageOptions}
+                  onSelect={(vk) => onSwitchVillage(vk)}
+                />
+              ) : (
+                <h2 className="text-base sm:text-lg font-black truncate">
+                  {villageTitle}
+                </h2>
+              )}
 
-                <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full m3-tonal-container">
-                  সক্রিয়: {convertToBengaliNumbers(totalActive)}
+              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full m3-tonal-container">
+                সক্রিয়: {convertToBengaliNumbers(totalActive)}
+              </span>
+              {totalMigrated > 0 && (
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--md-error-container)] text-[var(--md-on-error-container)]">
+                  কর্তিত: {convertToBengaliNumbers(totalMigrated)}
                 </span>
-                {totalMigrated > 0 && (
-                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--md-error-container)] text-[var(--md-on-error-container)]">
-                    কর্তিত: {convertToBengaliNumbers(totalMigrated)}
-                  </span>
-                )}
-              </div>
+              )}
             </div>
           </div>
 
           {/* Right Toolbar */}
           <div className="flex items-center gap-1.5 ml-auto">
+            {/* Sort Popover Button */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowSortMenu((v) => !v)}
+                className={`h-9 px-2.5 rounded-full text-xs font-bold inline-flex items-center gap-1 transition cursor-pointer ${
+                  search.sortBy && search.sortBy !== 'serial_asc'
+                    ? 'm3-tonal-container'
+                    : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
+                }`}
+                title="সর্টিং পরিবর্তন করুন"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">
+                  {sortLabels[search.sortBy || 'serial_asc']}
+                </span>
+              </button>
+
+              {showSortMenu && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40 bg-black/15"
+                    onClick={() => setShowSortMenu(false)}
+                  />
+                  <div className="absolute right-0 top-11 w-48 m3-card-elevated rounded-2xl p-1.5 z-50 shadow-xl space-y-0.5 overscroll-contain animate-m3-scale">
+                    <div className="px-2.5 py-1 text-[10px] font-extrabold text-[var(--md-on-surface-variant)] border-b border-[var(--md-outline-variant)]/40 mb-1">
+                      সর্টিং ধরন
+                    </div>
+                    {(Object.keys(sortLabels) as VoterSortOption[]).map((opt) => {
+                      const active = (search.sortBy || 'serial_asc') === opt;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => {
+                            setSearch((s) => ({ ...s, sortBy: opt }));
+                            setShowSortMenu(false);
+                          }}
+                          className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between cursor-pointer ${
+                            active
+                              ? 'm3-tonal-container font-extrabold'
+                              : 'hover:bg-[var(--md-surface-container-high)] font-semibold'
+                          }`}
+                        >
+                          <span>{sortLabels[opt]}</span>
+                          {active && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Card vs Compact View Switcher */}
             <button
               type="button"
@@ -472,14 +707,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               <button
                 type="button"
                 onClick={() => onOpenAnalytics(villageKey)}
-                className="m3-btn-tonal h-9 px-3 text-xs hidden md:inline-flex items-center gap-1.5"
+                className="m3-btn-tonal h-9 px-3 text-xs hidden lg:inline-flex items-center gap-1.5"
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 <span>অ্যানালাইসিস</span>
               </button>
             )}
 
-            {onOpenSlipModal && (
+            {allowSlipPrint && onOpenSlipModal && (
               <button
                 type="button"
                 onClick={() => onOpenSlipModal(null)}
@@ -504,10 +739,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               {showMoreMenu && (
                 <>
                   <div
-                    className="fixed inset-0 z-40"
+                    className="fixed inset-0 z-40 bg-black/15"
                     onClick={() => setShowMoreMenu(false)}
                   />
-                  <div className="absolute right-0 top-11 w-64 m3-card-elevated rounded-2xl p-2 z-50 shadow-xl space-y-1 animate-m3-scale">
+                  <div className="absolute right-0 top-11 w-64 m3-card-elevated rounded-2xl p-2 z-50 shadow-xl space-y-1 overscroll-contain animate-m3-scale">
                     <button
                       type="button"
                       onClick={() => {
@@ -551,7 +786,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                           setShowMoreMenu(false);
                           onOpenAnalytics(villageKey);
                         }}
-                        className="w-full px-3 py-2.5 rounded-xl hover:bg-[var(--md-surface-container-high)] text-xs font-bold flex items-center gap-2 cursor-pointer md:hidden"
+                        className="w-full px-3 py-2.5 rounded-xl hover:bg-[var(--md-surface-container-high)] text-xs font-bold flex items-center gap-2 cursor-pointer lg:hidden"
                       >
                         <BarChart3 className="w-4 h-4 text-[var(--md-primary)]" />
                         <span>গ্রামের ডাটা অ্যানালাইসিস</span>
@@ -578,60 +813,108 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Prominent M3 Pill Omni-Search Bar + Voice + Advanced Toggle */}
-        <div className="m3-search-bar">
-          <Search className="w-5 h-5 text-[var(--md-primary)] shrink-0 ml-0.5" />
-          <input
-            id="voter-omni-search-input"
-            type="text"
-            value={search.omni || ''}
-            onChange={(e) => setSearch((prev) => ({ ...prev, omni: e.target.value }))}
-            placeholder="নাম, পিতা, মাতা, ভোটার নং বা ক্রমিক (যেমন: ১-৫০)..."
-            className="w-full bg-transparent text-sm font-medium focus:outline-none"
-          />
+        {/* Row 2: Modern Single-Field Search Mode Selector */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+            <span className="text-[11px] font-extrabold text-[var(--md-on-surface-variant)] shrink-0 mr-0.5">
+              খুঁজুন:
+            </span>
+            {SEARCH_FIELD_MODES.map((mode) => {
+              const Icon = mode.icon;
+              const selected = activeField === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => handleSelectSearchField(mode.id)}
+                  className={`h-8 px-3 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shrink-0 transition cursor-pointer active:scale-95 ${
+                    selected
+                      ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-xs'
+                      : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)] hover:bg-[var(--md-surface-container-highest)]'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{mode.label}</span>
+                </button>
+              );
+            })}
+          </div>
 
-          {search.omni && (
+          {/* Focused Single Search Input for the Selected Mode */}
+          <div className="m3-search-bar">
+            <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-full m3-tonal-container inline-flex items-center gap-1 shrink-0">
+              <ActiveFieldIcon className="w-3.5 h-3.5" />
+              <span>{activeFieldMeta.label}</span>
+            </span>
+
+            <input
+              ref={inputRef}
+              id="voter-single-field-search-input"
+              type="text"
+              inputMode={
+                activeField === 'voterId'
+                  ? 'numeric'
+                  : 'text'
+              }
+              value={search.query || ''}
+              onChange={(e) => handleQueryInputChange(e.target.value)}
+              placeholder={activeFieldMeta.placeholder}
+              className="w-full bg-transparent text-sm font-medium focus:outline-none"
+            />
+
+            {search.query && (
+              <button
+                type="button"
+                onClick={() => handleQueryInputChange('')}
+                className="m3-icon-btn !w-8 !h-8 shrink-0"
+                title="লেখা মুছুন"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => setSearch((prev) => ({ ...prev, omni: '' }))}
-              className="m3-icon-btn !w-8 !h-8 shrink-0"
-              title="লেখা মুছুন"
+              onClick={handleVoiceSearch}
+              className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition cursor-pointer ${
+                isListening
+                  ? 'bg-[var(--md-error)] text-[var(--md-on-error)] animate-pulse'
+                  : 'hover:bg-[var(--md-surface-container-highest)] text-[var(--md-on-surface-variant)]'
+              }`}
+              title="বাংলা ভয়েস সার্চ"
             >
-              <X className="w-4 h-4" />
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
+          </div>
+
+          {activeFieldMeta.hint && (
+            <p className="text-[11px] font-semibold text-[var(--md-primary)] px-1">
+              ✨ {activeFieldMeta.hint}
+            </p>
           )}
 
-          <button
-            type="button"
-            onClick={handleVoiceSearch}
-            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition cursor-pointer ${
-              isListening
-                ? 'bg-[var(--md-error)] text-[var(--md-on-error)] animate-pulse'
-                : 'hover:bg-[var(--md-surface-container-highest)] text-[var(--md-on-surface-variant)]'
-            }`}
-            title="বাংলা ভয়েস সার্চ"
-          >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowAdvancedFilters((v) => !v)}
-            className={`h-9 px-3 rounded-full text-xs font-bold inline-flex items-center gap-1.5 shrink-0 transition cursor-pointer ${
-              showAdvancedFilters || advancedActiveCount > 0
-                ? 'm3-tonal-container'
-                : 'bg-[var(--md-surface-container-lowest)] text-[var(--md-on-surface-variant)] border border-[var(--md-outline-variant)]'
-            }`}
-            title="আলাদা ঘর ও সর্টিং ফিল্টার"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span className="hidden xs:inline">ফিল্টার</span>
-            {advancedActiveCount > 0 && (
-              <span className="w-4 h-4 rounded-full bg-[var(--md-primary)] text-[var(--md-on-primary)] text-[10px] flex items-center justify-center">
-                {convertToBengaliNumbers(advancedActiveCount)}
-              </span>
-            )}
-          </button>
+          {/* Quick Profession Selector Chips when Profession mode is chosen */}
+          {activeField === 'profession' && uniqueProfessions.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              {uniqueProfessions.map((prof) => {
+                const isProfSelected = (search.query || '').trim() === prof;
+                return (
+                  <button
+                    key={prof}
+                    type="button"
+                    onClick={() => handleQueryInputChange(isProfSelected ? '' : prof)}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 transition cursor-pointer ${
+                      isProfSelected
+                        ? 'm3-tonal-container ring-1 ring-[var(--md-primary)]'
+                        : 'bg-[var(--md-surface-container-low)] border border-[var(--md-outline-variant)]'
+                    }`}
+                  >
+                    {prof} ({convertToBengaliNumbers(professionStats[prof] || 0)})
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Row 3: Horizontal Scrollable M3 Filter Chips */}
@@ -730,109 +1013,17 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </button>
         </div>
 
-        {/* Collapsible Advanced Multi-Field Search & Sort Panel */}
-        {showAdvancedFilters && (
-          <div className="m3-card-filled p-3.5 space-y-3 animate-slide-down">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-[var(--md-on-surface-variant)]">
-                উন্নত ফিল্টার ও সর্টিং
-              </span>
-              <button
-                type="button"
-                onClick={handleClearAllFilters}
-                className="text-xs font-bold text-[var(--md-error)] inline-flex items-center gap-1 cursor-pointer hover:underline"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>সব ফিল্টার মুছুন</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-              <input
-                type="text"
-                value={search.serial}
-                onChange={(e) => setSearch({ ...search, serial: e.target.value })}
-                placeholder="ক্রমিক বা রেঞ্জ (যেমন: ১০০-১৫০)"
-                className="m3-input w-full"
-              />
-              <input
-                type="text"
-                value={search.name}
-                onChange={(e) => setSearch({ ...search, name: e.target.value })}
-                placeholder="ভোটারের নাম"
-                className="m3-input w-full"
-              />
-              <input
-                type="text"
-                value={search.father}
-                onChange={(e) => setSearch({ ...search, father: e.target.value })}
-                placeholder="পিতার নাম"
-                className="m3-input w-full"
-              />
-              <input
-                type="text"
-                value={search.mother}
-                onChange={(e) => setSearch({ ...search, mother: e.target.value })}
-                placeholder="মাতার নাম"
-                className="m3-input w-full"
-              />
-              <input
-                type="text"
-                value={search.dob}
-                onChange={(e) =>
-                  setSearch((prev) => ({ ...prev, dob: formatDobInput(e.target.value) }))
-                }
-                placeholder="জন্ম তারিখ (২৩/০২/২০০১)"
-                className="m3-input w-full"
-              />
-              <input
-                type="text"
-                value={search.voterId || ''}
-                onChange={(e) => setSearch({ ...search, voterId: e.target.value })}
-                placeholder="ভোটার আইডি / এনআইডি নং"
-                className="m3-input w-full"
-              />
-              <select
-                value={search.profession}
-                onChange={(e) => setSearch({ ...search, profession: e.target.value })}
-                className="m3-input w-full cursor-pointer"
-              >
-                <option value="">সকল পেশা</option>
-                {uniqueProfessions.map((p) => (
-                  <option key={p} value={p}>
-                    {p} ({convertToBengaliNumbers(professionStats[p] || 0)})
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={search.sortBy || 'serial_asc'}
-                onChange={(e) =>
-                  setSearch({ ...search, sortBy: e.target.value as VoterSortOption })
-                }
-                className="m3-input w-full cursor-pointer font-bold"
-              >
-                <option value="serial_asc">সর্টিং: ক্রমিক (১ → ৯)</option>
-                <option value="serial_desc">সর্টিং: ক্রমিক (৯ → ১)</option>
-                <option value="name_asc">সর্টিং: নাম (অ → হ)</option>
-                <option value="age_asc">সর্টিং: কম বয়স আগে</option>
-                <option value="age_desc">সর্টিং: বেশি বয়স আগে</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        {/* Interactive Profession Statistics Pills (Clickable!) */}
+        {/* Interactive Profession Statistics Pills */}
         {settings.stats && (
           <div className="m3-card-filled p-3.5 space-y-2 animate-slide-down">
             <div className="flex items-center justify-between">
               <span className="text-xs font-extrabold text-[var(--md-primary)]">
                 পেশা ভিত্তিক পরিসংখ্যান (ট্যাপ করে ফিল্টার করুন)
               </span>
-              {search.profession && (
+              {activeField === 'profession' && search.query && (
                 <button
                   type="button"
-                  onClick={() => setSearch((s) => ({ ...s, profession: '' }))}
+                  onClick={() => handleQueryInputChange('')}
                   className="text-[11px] font-bold text-[var(--md-error)] cursor-pointer"
                 >
                   ফিল্টার সরান ✕
@@ -842,19 +1033,20 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(professionStats).map(([prof, count]) => {
                 const selectable = prof !== 'পেশা দেওয়া নেই';
-                const active = search.profession === prof;
+                const active = activeField === 'profession' && search.query === prof;
                 return (
                   <button
                     key={prof}
                     type="button"
                     disabled={!selectable}
-                    onClick={() =>
-                      selectable &&
+                    onClick={() => {
+                      if (!selectable) return;
                       setSearch((s) => ({
                         ...s,
-                        profession: s.profession === prof ? '' : prof,
-                      }))
-                    }
+                        searchField: 'profession',
+                        query: active ? '' : prof,
+                      }));
+                    }}
                     className={`text-[11px] font-bold px-2.5 py-1 rounded-full transition ${
                       active
                         ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-xs'
@@ -871,7 +1063,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
         {/* Recent Searches Row (shown when search is empty) */}
         {!isCriteriaActive && recentSearches.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap pt-1">
+          <div className="flex items-center gap-2 flex-wrap pt-0.5">
             <span className="text-[11px] font-bold text-[var(--md-on-surface-variant)] inline-flex items-center gap-1">
               <History className="w-3.5 h-3.5" />
               সাম্প্রতিক:
@@ -880,7 +1072,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               <button
                 key={term}
                 type="button"
-                onClick={() => setSearch((s) => ({ ...s, omni: term }))}
+                onClick={() => handleQueryInputChange(term)}
                 className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[var(--md-surface-container)] hover:bg-[var(--md-surface-container-high)] transition cursor-pointer"
               >
                 {term}
@@ -912,13 +1104,13 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           }`}
         >
           {!isCriteriaActive
-            ? 'অনুসন্ধান বক্সে লিখুন, ভয়েস সার্চ করুন অথবা ওপরের চিপ বাছাই করুন'
+            ? `${activeFieldMeta.label} দিয়ে খুঁজতে উপরে লিখুন অথবা চিপ বাছাই করুন`
             : filteredVoters.length > 0
             ? `পাওয়া গেছে: ${convertToBengaliNumbers(filteredVoters.length)} জন ভোটার`
             : 'দুঃখিত, কোনো ভোটার পাওয়া যায়নি'}
         </div>
 
-        {filteredVoters.length > 0 && filteredVoters.length <= 25 && (
+        {allowSlipPrint && filteredVoters.length > 0 && filteredVoters.length <= 25 && (
           <button
             type="button"
             onClick={() => {
@@ -930,7 +1122,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             }}
             className="m3-btn-tonal h-9 px-3.5 text-xs inline-flex items-center gap-1.5"
           >
-            <Users className="w-3.5 h-3.5" />
+            <Printer className="w-3.5 h-3.5" />
             <span>সবাইকে প্রিন্ট কিউতে নিন</span>
           </button>
         )}
@@ -950,12 +1142,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         )}
       </div>
 
-      {/* 3. Multi-Voter / Family Slip Queue Banner */}
-      {slipQueue.length > 0 && (
+      {/* 3. Multi-Voter Slip Queue Banner */}
+      {allowSlipPrint && slipQueue.length > 0 && (
         <div className="m3-tonal-container rounded-3xl p-4 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-1 min-w-0">
             <div className="text-xs sm:text-sm font-black flex items-center gap-2 flex-wrap">
-              <Users className="w-4 h-4 shrink-0" />
+              <Printer className="w-4 h-4 shrink-0" />
               <span>
                 একসাথে স্লিপ প্রিন্ট কিউতে{' '}
                 <strong className="underline">
@@ -1004,7 +1196,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </div>
       )}
 
-      {/* 4. Empty Prompt State (Friendly Quick Actions when nothing typed yet) */}
+      {/* 4. Empty Prompt State */}
       {!isCriteriaActive && (
         <div className="m3-card-outlined p-8 sm:p-10 text-center space-y-4">
           <div className="w-14 h-14 rounded-3xl m3-tonal-container flex items-center justify-center mx-auto">
@@ -1012,10 +1204,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
           <div className="space-y-1 max-w-md mx-auto">
             <h3 className="text-base font-extrabold">
-              {villageTitle} — দ্রুত ভোটার অনুসন্ধান
+              {villageTitle} — আধুনিক একক-ফিল্ড অনুসন্ধান
             </h3>
             <p className="text-xs text-[var(--md-on-surface-variant)] leading-relaxed">
-              ওপরের সার্চ বারে যেকোনো নাম, পিতার নাম, ভোটার নম্বর অথবা ক্রমিক রেঞ্জ (যেমন: ১-১০০) লিখুন কিংবা নিচের বাটনে ট্যাপ করুন।
+              ওপরে যেকোনো একটি মাধ্যম (নাম, ক্রমিক নং, পিতার নাম, মাতার নাম বা ভোটার নং) বেছে নিয়ে নির্ভুলভাবে খুঁজুন।
             </p>
           </div>
           <div className="flex items-center justify-center gap-2.5 flex-wrap pt-1">
@@ -1049,6 +1241,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               voter={voter}
               viewMode={settings.viewMode || 'card'}
               annotation={annotationsMap[vKey]}
+              allowSlipPrint={allowSlipPrint}
               onCopy={handleCopy}
               onCopyVoterId={handleCopyVoterId}
               onPrint={handlePrint}
@@ -1081,7 +1274,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               কোনো ভোটার তথ্য পাওয়া যায়নি
             </p>
             <p className="text-xs text-[var(--md-on-surface-variant)]">
-              বানান পরিবর্তন করে বা ফিল্টার রিসেট করে আবার চেষ্টা করুন।
+              সার্চের ধরন ({activeFieldMeta.label}) ঠিক আছে কিনা দেখুন অথবা রিসেট করুন।
             </p>
           </div>
         )}

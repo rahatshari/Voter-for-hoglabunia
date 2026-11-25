@@ -10,7 +10,6 @@ import {
   Printer,
   QrCode,
   StickyNote,
-  Users,
 } from 'lucide-react';
 import { Voter, VoterAnnotation, VoterViewMode } from '../types';
 import { calculateAge, convertToEnglishNumbers, isMigrated } from '../lib/bengaliUtils';
@@ -23,6 +22,7 @@ interface VoterCardProps {
   onPrint: (voter: Voter) => void;
   isQueued?: boolean;
   onToggleQueue?: (voter: Voter) => void;
+  allowSlipPrint?: boolean;
   viewMode?: VoterViewMode;
   annotation?: VoterAnnotation;
   onToggleStar?: (voter: Voter) => void;
@@ -37,6 +37,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
   onPrint,
   isQueued = false,
   onToggleQueue,
+  allowSlipPrint = true,
   viewMode = 'card',
   annotation,
   onToggleStar,
@@ -50,16 +51,13 @@ export const VoterCard: React.FC<VoterCardProps> = ({
   const isFemale = (voter._gender || voter.gender) === 'মহিলা';
   const tagMeta = SUPPORT_TAGS_META.find((t) => t.id === annotation?.supportTag);
 
-  // =========================================================================
-  // COMPACT LIST VIEW (High-density mobile scanning mode)
-  // =========================================================================
   if (viewMode === 'compact') {
     return (
       <div
         className={`m3-card-elevated px-3.5 py-2.5 flex items-center justify-between gap-2.5 transition ${
           isMig
             ? 'border-[var(--md-error)]/40 bg-[var(--md-error-container)]/20'
-            : isQueued
+            : isQueued && allowSlipPrint
             ? 'ring-2 ring-[var(--md-primary)]'
             : ''
         }`}
@@ -117,7 +115,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
               <CheckCircle2 className="w-4 h-4" />
             </button>
           )}
-          {onToggleQueue && (
+          {allowSlipPrint && onToggleQueue && (
             <button
               type="button"
               onClick={() => onToggleQueue(voter)}
@@ -131,29 +129,28 @@ export const VoterCard: React.FC<VoterCardProps> = ({
               {isQueued ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => onPrint(voter)}
-            className="m3-btn-filled h-8 px-2.5 text-[11px] flex items-center gap-1"
-            title="ভোটার স্লিপ"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">স্লিপ</span>
-          </button>
+          {allowSlipPrint && (
+            <button
+              type="button"
+              onClick={() => onPrint(voter)}
+              className="m3-btn-filled h-8 px-2.5 text-[11px] flex items-center gap-1"
+              title="ভোটার স্লিপ"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">স্লিপ</span>
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  // =========================================================================
-  // DETAILED MATERIAL DESIGN 3 CARD VIEW
-  // =========================================================================
   return (
     <article
       className={`m3-card-elevated p-4 sm:p-4.5 relative overflow-hidden transition ${
         isMig
           ? 'border-[var(--md-error)]/50 bg-[var(--md-error-container)]/15'
-          : isQueued
+          : isQueued && allowSlipPrint
           ? 'ring-2 ring-[var(--md-primary)] bg-[var(--md-primary-container)]/10'
           : ''
       }`}
@@ -164,7 +161,6 @@ export const VoterCard: React.FC<VoterCardProps> = ({
           className="flex items-start gap-3 min-w-0 flex-1 cursor-pointer group"
           onClick={() => onOpenDetail && onOpenDetail(voter, 'info')}
         >
-          {/* M3 Tonal Serial Avatar */}
           <div
             className={`min-w-[44px] h-11 px-2 rounded-2xl flex flex-col items-center justify-center shrink-0 font-black leading-none shadow-2xs ${
               isMig
@@ -187,13 +183,12 @@ export const VoterCard: React.FC<VoterCardProps> = ({
               {displayName}
             </h3>
 
-            {/* Status & Gender Chips */}
             <div className="flex items-center gap-1.5 flex-wrap mt-1">
               <span
                 className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
                   isFemale
-                    ? 'bg-rose-500/12 text-rose-700'
-                    : 'bg-sky-500/12 text-sky-700'
+                    ? 'bg-rose-500/15 text-rose-600'
+                    : 'bg-sky-500/15 text-sky-600'
                 }`}
               >
                 {voter.gender || '-'}
@@ -220,7 +215,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
                 </span>
               )}
 
-              {isQueued && (
+              {isQueued && allowSlipPrint && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full m3-tonal-container font-bold">
                   প্রিন্ট কিউতে যুক্ত
                 </span>
@@ -255,7 +250,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
               onClick={() => onToggleStar(voter)}
               className={`w-8 h-8 rounded-full inline-flex items-center justify-center transition cursor-pointer active:scale-90 ${
                 annotation?.starred
-                  ? 'bg-amber-400/20 text-amber-600'
+                  ? 'bg-amber-400/20 text-amber-500'
                   : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
               }`}
               title="বুকমার্ক করুন"
@@ -268,7 +263,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
         </div>
       </div>
 
-      {/* Structured 2-Column Mobile-Friendly Metadata Grid */}
+      {/* Metadata Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
         <div className="flex justify-between sm:justify-start sm:gap-2">
           <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
@@ -311,7 +306,6 @@ export const VoterCard: React.FC<VoterCardProps> = ({
           </span>
         </div>
 
-        {/* Highlighted Copyable Voter ID */}
         <div className="flex justify-between sm:justify-start sm:gap-2 items-center">
           <span className="text-[var(--md-on-surface-variant)] font-medium shrink-0">
             ভোটার নং:
@@ -340,7 +334,6 @@ export const VoterCard: React.FC<VoterCardProps> = ({
         </div>
       </div>
 
-      {/* Saved Note / Phone Banner (if field agent added one) */}
       {(annotation?.note || annotation?.phone) && (
         <div className="mt-2.5 px-3 py-2 rounded-xl bg-[var(--md-surface-container)] flex items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5 min-w-0">
@@ -361,78 +354,68 @@ export const VoterCard: React.FC<VoterCardProps> = ({
         </div>
       )}
 
-      {/* M3 Action Bar */}
+      {/* M3 Action Bar (Family option removed per requirement) */}
       <div className="flex items-center justify-between gap-1.5 mt-3.5 pt-3 border-t border-[var(--md-outline-variant)]/50 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap">
           {onOpenDetail && (
-            <>
-              <button
-                type="button"
-                onClick={() => onOpenDetail(voter, 'family')}
-                className="m3-btn-tonal h-8 px-3 text-xs inline-flex items-center gap-1.5"
-                title="পরিবারের অন্য ভোটারদের দেখুন"
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>পরিবার</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onOpenDetail(voter, 'info')}
-                className="m3-btn-outlined h-8 px-2.5 text-xs inline-flex items-center gap-1"
-                title="বিস্তারিত, শেয়ার ও QR কোড"
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>শেয়ার/QR</span>
-              </button>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={() => onCopy(voter)}
-            className="m3-btn-outlined h-8 px-2.5 text-xs inline-flex items-center gap-1"
-            title="সম্পূর্ণ তথ্য কপি"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">কপি</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1.5 ml-auto">
-          {onToggleQueue && (
             <button
               type="button"
-              onClick={() => onToggleQueue(voter)}
-              className={`h-8 px-3 rounded-full text-xs font-bold inline-flex items-center gap-1 transition cursor-pointer active:scale-95 ${
-                isQueued ? 'm3-tonal-container' : 'm3-btn-outlined'
-              }`}
-              title="একসাথে একাধিক ভোটার স্লিপ প্রিন্ট লিস্টে যোগ করুন"
+              onClick={() => onOpenDetail(voter, 'info')}
+              className="m3-btn-tonal h-8 px-3 text-xs inline-flex items-center gap-1.5"
+              title="বিস্তারিত, নোট, শেয়ার ও QR কোড"
             >
-              {isQueued ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>যুক্ত</span>
-                </>
-              ) : (
-                <>
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>একসাথে</span>
-                </>
-              )}
+              <QrCode className="w-3.5 h-3.5" />
+              <span>বিস্তারিত / QR</span>
             </button>
           )}
 
           <button
             type="button"
-            onClick={() => onPrint(voter)}
-            className="m3-btn-filled h-8 px-3.5 text-xs inline-flex items-center gap-1.5 shadow-2xs"
-            title="ভোটার স্লিপ তৈরি ও প্রিন্ট"
+            onClick={() => onCopy(voter)}
+            className="m3-btn-outlined h-8 px-3 text-xs inline-flex items-center gap-1"
+            title="সম্পূর্ণ তথ্য কপি"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>ভোটার স্লিপ</span>
+            <Copy className="w-3.5 h-3.5" />
+            <span>কপি</span>
           </button>
         </div>
+
+        {allowSlipPrint && (
+          <div className="flex items-center gap-1.5 ml-auto">
+            {onToggleQueue && (
+              <button
+                type="button"
+                onClick={() => onToggleQueue(voter)}
+                className={`h-8 px-3 rounded-full text-xs font-bold inline-flex items-center gap-1 transition cursor-pointer active:scale-95 ${
+                  isQueued ? 'm3-tonal-container' : 'm3-btn-outlined'
+                }`}
+                title="একসাথে একাধিক ভোটার স্লিপ প্রিন্ট লিস্টে যোগ করুন"
+              >
+                {isQueued ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>যুক্ত</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>একসাথে</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onPrint(voter)}
+              className="m3-btn-filled h-8 px-3.5 text-xs inline-flex items-center gap-1.5 shadow-2xs"
+              title="ভোটার স্লিপ তৈরি ও প্রিন্ট"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>ভোটার স্লিপ</span>
+            </button>
+          </div>
+        )}
       </div>
     </article>
   );

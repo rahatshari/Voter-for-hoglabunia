@@ -311,7 +311,28 @@ export function parseSerialRange(input: string): { min: number; max: number } | 
 export function getNumericSerial(voter: Voter): number {
   const eng = voter._normSerial ?? convertToEnglishNumbers(voter.serialNo || '');
   const num = parseInt(eng.replace(/\D/g, ''), 10);
-  return isNaN(num) ? 999999 : num;
+  return isNaN(num) ? -1 : num;
+}
+
+export function matchesExactSerialOrRange(voter: Voter, rawSerialQuery: string): boolean {
+  const trimmed = rawSerialQuery.trim();
+  if (!trimmed) return true;
+
+  const range = parseSerialRange(trimmed);
+  const voterNum = getNumericSerial(voter);
+  if (voterNum < 0) return false;
+
+  if (range) {
+    return voterNum >= range.min && voterNum <= range.max;
+  }
+
+  const engDigits = convertToEnglishNumbers(trimmed).replace(/\D/g, '');
+  if (!engDigits) return false;
+  const targetNum = parseInt(engDigits, 10);
+  if (isNaN(targetNum)) return false;
+
+  // STRICT exact integer match: '১' (1) matches ONLY serial 1 (e.g. '০০১'), NEVER 10 or 100; '২০' matches ONLY 20, NEVER 200!
+  return voterNum === targetNum;
 }
 
 export function hasActiveSearchCriteria(
@@ -319,13 +340,15 @@ export function hasActiveSearchCriteria(
   settings: AppSettings
 ): boolean {
   return Boolean(
-    (search.omni && search.omni.trim()) ||
+    (search.query && search.query.trim()) ||
+      (search.omni && search.omni.trim()) ||
       search.serial.trim() ||
       search.name.trim() ||
       search.father.trim() ||
       search.mother.trim() ||
       search.dob.trim() ||
       (search.voterId && search.voterId.trim()) ||
+      (search.address && search.address.trim()) ||
       search.profession.trim() ||
       search.gender.trim() ||
       search.ageGroup ||
@@ -341,16 +364,42 @@ export function filterAndSortVoters(
   settings: AppSettings,
   annotationsMap?: Record<string, VoterAnnotation>
 ): Voter[] {
+  const activeField = search.searchField || 'name';
+  const rawSingleQuery = (search.query || '').trim();
+
+  // Map single-field mode cleanly to the chosen field ONLY
+  const qSerialRaw =
+    activeField === 'serial' && rawSingleQuery ? rawSingleQuery : search.serial.trim();
+  const qName =
+    activeField === 'name' && rawSingleQuery
+      ? normalizeBengaliText(rawSingleQuery.toLowerCase())
+      : normalizeBengaliText(search.name.trim().toLowerCase());
+  const qFather =
+    activeField === 'father' && rawSingleQuery
+      ? normalizeBengaliText(rawSingleQuery.toLowerCase())
+      : normalizeBengaliText(search.father.trim().toLowerCase());
+  const qMother =
+    activeField === 'mother' && rawSingleQuery
+      ? normalizeBengaliText(rawSingleQuery.toLowerCase())
+      : normalizeBengaliText(search.mother.trim().toLowerCase());
+  const qDob =
+    activeField === 'dob' && rawSingleQuery
+      ? convertToEnglishNumbers(rawSingleQuery)
+      : convertToEnglishNumbers(search.dob.trim());
+  const qVoterId =
+    activeField === 'voterId' && rawSingleQuery
+      ? convertToEnglishNumbers(rawSingleQuery).replace(/\s+/g, '')
+      : convertToEnglishNumbers((search.voterId || '').trim()).replace(/\s+/g, '');
+  const qAddress =
+    activeField === 'address' && rawSingleQuery
+      ? normalizeBengaliText(rawSingleQuery.toLowerCase())
+      : normalizeBengaliText((search.address || '').trim().toLowerCase());
+  const qProf =
+    activeField === 'profession' && rawSingleQuery
+      ? rawSingleQuery
+      : search.profession.trim();
+
   const qOmniRaw = (search.omni || '').trim();
-  const qSerialRaw = search.serial.trim();
-  const qSerial = convertToEnglishNumbers(qSerialRaw);
-  const serialRange = qSerialRaw ? parseSerialRange(qSerialRaw) : qOmniRaw ? parseSerialRange(qOmniRaw) : null;
-  const qName = normalizeBengaliText(search.name.trim().toLowerCase());
-  const qFather = normalizeBengaliText(search.father.trim().toLowerCase());
-  const qMother = normalizeBengaliText(search.mother.trim().toLowerCase());
-  const qDob = convertToEnglishNumbers(search.dob.trim());
-  const qVoterId = convertToEnglishNumbers((search.voterId || '').trim());
-  const qProf = search.profession.trim();
   const qGender = search.gender.trim();
   const qAgeGroup = search.ageGroup || '';
   const qCampaign = search.campaignFilter || '';
@@ -358,12 +407,13 @@ export function filterAndSortVoters(
 
   const isEmpty =
     !qOmniRaw &&
-    !qSerial &&
+    !qSerialRaw &&
     !qName &&
     !qFather &&
     !qMother &&
     !qDob &&
     !qVoterId &&
+    !qAddress &&
     !qProf &&
     !qGender &&
     !qAgeGroup &&
@@ -374,8 +424,9 @@ export function filterAndSortVoters(
   }
 
   const annStore = annotationsMap || (qCampaign ? loadVoterAnnotations() : {});
+  const omniSerialRange = qOmniRaw ? parseSerialRange(qOmniRaw) : null;
   const omniTokens =
-    qOmniRaw && !serialRange
+    qOmniRaw && !omniSerialRange
       ? qOmniRaw
           .split(/\s+/)
           .filter(Boolean)
@@ -416,18 +467,16 @@ export function filterAndSortVoters(
       if (qAgeGroup === 'senior' && age <= 60) return false;
     }
 
-    // Serial range or exact/partial serial
-    if (serialRange) {
+    // Exact serial or explicit range (e.g. 1-20)
+    if (qSerialRaw) {
+      if (!matchesExactSerialOrRange(voter, qSerialRaw)) return false;
+    } else if (omniSerialRange) {
       const numSerial = getNumericSerial(voter);
-      if (numSerial < serialRange.min || numSerial > serialRange.max) return false;
-    } else if (qSerial) {
-      const vSerial = voter._normSerial ?? convertToEnglishNumbers(voter.serialNo || '');
-      if (!vSerial.includes(qSerial)) return false;
+      if (numSerial < omniSerialRange.min || numSerial > omniSerialRange.max) return false;
     }
 
-    // Unified Omni-Search (matches across Name, Father, Mother, Serial, Voter ID, Village, Profession, Address)
+    // Legacy omni fallback if ever passed
     if (omniTokens.length > 0) {
-      const vSerial = (voter._normSerial ?? convertToEnglishNumbers(voter.serialNo || '')).toLowerCase();
       const vVoterId = convertToEnglishNumbers(voter.voterId || '').toLowerCase();
       const vDob = (voter._normDob ?? convertToEnglishNumbers(voter.dob || '')).toLowerCase();
       const vName = voter._normName ?? normalizeBengaliText((voter.name || '').toLowerCase());
@@ -438,9 +487,11 @@ export function filterAndSortVoters(
       const vAddr = normalizeBengaliText((voter.address || '').toLowerCase());
 
       for (const tok of omniTokens) {
+        const isPureDigits = /^\d+$/.test(tok.eng);
+        const serialExact = isPureDigits && getNumericSerial(voter) === parseInt(tok.eng, 10);
         const matched =
-          (tok.eng &&
-            (vSerial.includes(tok.eng) || vVoterId.includes(tok.eng) || vDob.includes(tok.eng))) ||
+          serialExact ||
+          (tok.eng && (vVoterId.includes(tok.eng) || vDob.includes(tok.eng))) ||
           (tok.norm &&
             (vName.includes(tok.norm) ||
               vFather.includes(tok.norm) ||
@@ -469,12 +520,20 @@ export function filterAndSortVoters(
       if (!vDob.includes(qDob)) return false;
     }
     if (qVoterId) {
-      const vId = convertToEnglishNumbers(voter.voterId || '');
+      const vId = convertToEnglishNumbers(voter.voterId || '').replace(/\s+/g, '');
       if (!vId.includes(qVoterId)) return false;
+    }
+    if (qAddress) {
+      const vAddr = normalizeBengaliText(
+        `${voter.address || ''} ${voter.villageName || ''}`.toLowerCase()
+      );
+      if (!vAddr.includes(qAddress)) return false;
     }
     if (qProf) {
       const vProf = (voter._profession || voter.profession || '').trim();
-      if (vProf !== qProf) return false;
+      if (vProf !== qProf && !normalizeBengaliText(vProf.toLowerCase()).includes(normalizeBengaliText(qProf.toLowerCase()))) {
+        return false;
+      }
     }
     if (qGender) {
       const vGender = (voter._gender || voter.gender || '').trim();

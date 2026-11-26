@@ -108,6 +108,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const disabledSet = useMemo(() => new Set(disabledVillages), [disabledVillages]);
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage?.getItem('voter_pending_update_cache_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.versionName) {
+          setHasNewUpdate(true);
+        }
+      }
+    } catch {}
+
     const onAvail = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       setHasNewUpdate(Boolean(detail?.hasUpdate));

@@ -21,6 +21,7 @@ import {
   loadPendingUpdateCache,
   loadUpdatePrefs,
   normalizeVersionJson,
+  pickNewestRemoteRelease,
   refreshWebAppCachesAndReload,
   saveUpdatePrefs,
   setSessionDismissedVersion,
@@ -75,7 +76,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
             info.versionName
           )
         ) {
-          setUpdateInfo((prev) => prev || cachedPending);
+          setUpdateInfo((prev) => pickNewestRemoteRelease([prev, cachedPending]));
         } else {
           clearUpdateGraceRecord();
         }
@@ -103,7 +104,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     });
   }, []);
 
-  // Real-time Firebase RTDB `/app_release` stream whenever authenticated!
+  // Real-time Firebase RTDB `/app_release` stream (never overrides a newer GitHub release!)
   useEffect(() => {
     let unsubRelease: (() => void) | null = null;
 
@@ -132,7 +133,12 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
             installed.versionName
           )
         ) {
-          setUpdateInfo(normalized);
+          let mergedTarget: RemoteReleaseInfo = normalized;
+          setUpdateInfo((prev) => {
+            const best = pickNewestRemoteRelease([prev, normalized]) || normalized;
+            mergedTarget = best;
+            return best;
+          });
           setNowTick(Date.now());
           const latestPrefs = loadUpdatePrefs();
           setPrefs(latestPrefs);
@@ -140,13 +146,13 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
           if (typeof window !== 'undefined') {
             window.dispatchEvent(
               new CustomEvent('voter_update_availability', {
-                detail: { hasUpdate: true, versionName: normalized.versionName },
+                detail: { hasUpdate: true, versionName: mergedTarget.versionName },
               })
             );
           }
 
           const grace = getUpdateGraceStatus({
-            remote: normalized,
+            remote: mergedTarget,
             installedCode: installed.versionCode,
             installedName: installed.versionName,
             now: Date.now(),
@@ -155,23 +161,13 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
           if (
             grace.isMandatory ||
             shouldShowAutoUpdatePopup({
-              remote: normalized,
+              remote: mergedTarget,
               prefs: latestPrefs,
               globalAutoUpdateEnabled,
               sessionDismissedVersion: getSessionDismissedVersion(),
             })
           ) {
-            triggerUpdateNotifications(normalized, latestPrefs);
-          }
-        } else {
-          clearUpdateGraceRecord();
-          setUpdateInfo(null);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('voter_update_availability', {
-                detail: { hasUpdate: false, versionName: installed.versionName },
-              })
-            );
+            triggerUpdateNotifications(mergedTarget, latestPrefs);
           }
         }
       });
@@ -192,7 +188,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     return () => clearInterval(ticker);
   }, [updateInfo]);
 
-  // Listen for live progress events from AndroidNative Download Manager
+  // Listen for live progress & install permission events from AndroidNative Download Manager
   useEffect(() => {
     const onNativeProgress = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
@@ -203,15 +199,33 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
       }));
       if (detail.status === 'completed') {
         setUpdateStatusText(
-          '✅ ফাইল ডাউনলোড সম্পন্ন হয়েছে! ইন্সটল স্ক্রিন না এলে নিচের "এখনই ইন্সটল করুন" বাটনে চাপুন।'
+          '✅ ডাউনলোড সম্পন্ন! ইন্সটলার অটো চালু হচ্ছে — না এলে নিচে "এখনই ইন্সটল করুন" চাপুন।'
         );
       } else if (detail.status === 'error') {
         setUpdateStatusText(null);
       }
     };
 
+    const onInstallPermChanged = (e: Event) => {
+      const allowed = (e as CustomEvent)?.detail?.allowed;
+      if (typeof allowed === 'boolean') {
+        setCanInstallPkgs(allowed);
+      } else {
+        const native = getAndroidNativeBridge();
+        if (native && typeof native.canInstallPackages === 'function') {
+          try {
+            setCanInstallPkgs(Boolean(native.canInstallPackages()));
+          } catch {}
+        }
+      }
+    };
+
     window.addEventListener('voter_apk_download_progress', onNativeProgress);
-    return () => window.removeEventListener('voter_apk_download_progress', onNativeProgress);
+    window.addEventListener('voter_install_permission_changed', onInstallPermChanged);
+    return () => {
+      window.removeEventListener('voter_apk_download_progress', onNativeProgress);
+      window.removeEventListener('voter_install_permission_changed', onInstallPermChanged);
+    };
   }, []);
 
   // Sync whether downloaded APK already exists on device when updateInfo changes
@@ -254,7 +268,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
         setLastCheckError(res.networkFailed);
 
         if (res.updateInfo) {
-          setUpdateInfo(res.updateInfo);
+          setUpdateInfo((prev) => pickNewestRemoteRelease([prev, res.updateInfo]) || res.updateInfo);
           setNowTick(Date.now());
           if (manual) {
             setDismissedVersion(null);
@@ -290,15 +304,13 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
           }
         } else if (!res.networkFailed) {
           clearUpdateGraceRecord();
-          if (manual) {
-            setUpdateInfo(null);
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(
-                new CustomEvent('voter_update_availability', {
-                  detail: { hasUpdate: false, versionName: res.installedName },
-                })
-              );
-            }
+          setUpdateInfo(null);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('voter_update_availability', {
+                detail: { hasUpdate: false, versionName: res.installedName },
+              })
+            );
           }
         }
       } finally {
@@ -308,17 +320,18 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     [globalAutoUpdateEnabled]
   );
 
-  // Automatic check lifecycle
+  // Fast automatic check lifecycle: 700ms after open, every 3 minutes, and on focus/visibility/online!
   useEffect(() => {
     const initialTimer = setTimeout(() => {
       runUpdateCheck(false);
-    }, 2500);
+    }, 700);
 
     const periodicTimer = setInterval(() => {
       runUpdateCheck(false);
-    }, 10 * 60 * 1000);
+    }, 3 * 60 * 1000);
 
-    const onFocus = () => {
+    const onForegroundOrOnline = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       const native = getAndroidNativeBridge();
       if (native && typeof native.canInstallPackages === 'function') {
         try {
@@ -344,7 +357,9 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
       runUpdateCheck(true);
     };
 
-    window.addEventListener('focus', onFocus);
+    window.addEventListener('focus', onForegroundOrOnline);
+    window.addEventListener('online', onForegroundOrOnline);
+    document.addEventListener('visibilitychange', onForegroundOrOnline);
     window.addEventListener('voter_update_prefs_changed', onPrefsChanged);
     window.addEventListener('voter_open_update_modal', onOpenModal);
     window.addEventListener('voter_manual_check_update', onManualCheckEvent);
@@ -369,7 +384,9 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     return () => {
       clearTimeout(initialTimer);
       clearInterval(periodicTimer);
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('focus', onForegroundOrOnline);
+      window.removeEventListener('online', onForegroundOrOnline);
+      document.removeEventListener('visibilitychange', onForegroundOrOnline);
       window.removeEventListener('voter_update_prefs_changed', onPrefsChanged);
       window.removeEventListener('voter_open_update_modal', onOpenModal);
       window.removeEventListener('voter_manual_check_update', onManualCheckEvent);
@@ -390,22 +407,28 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     document.body.removeChild(a);
   };
 
-  const handleInstallUpdate = async () => {
+  const startApkDownloadAndInstall = async (forceRedownload = false) => {
     if (!updateInfo) return;
     const native = getAndroidNativeBridge();
 
-    // 1. Android Native Built-In Phone Download Manager
+    // 1. Android Native Built-In Phone Download & Auto-Install Manager
     if (native && typeof native.downloadAndInstallApk === 'function') {
       try {
         if (typeof native.canInstallPackages === 'function') {
           setCanInstallPkgs(Boolean(native.canInstallPackages()));
         }
-        setUpdateStatusText('⬇️ ইনবিল্ট ডাউনলোড ম্যানেজারের মাধ্যমে ডাউনলোড শুরু হচ্ছে...');
+        setUpdateStatusText(
+          '⬇️ অ্যাপের ভেতরেই আপডেট ডাউনলোড হচ্ছে — শেষ হলেই অটো ইন্সটল স্ক্রিন আসবে...'
+        );
         setDownloadState({
           ...createInitialDownloadState(updateInfo.versionName, updateInfo.apkUrl),
           status: 'downloading',
         });
-        native.downloadAndInstallApk(updateInfo.apkUrl, updateInfo.versionName);
+        if (forceRedownload && typeof native.forceRedownloadAndInstallApk === 'function') {
+          native.forceRedownloadAndInstallApk(updateInfo.apkUrl, updateInfo.versionName);
+        } else {
+          native.downloadAndInstallApk(updateInfo.apkUrl, updateInfo.versionName);
+        }
         return;
       } catch (e) {
         console.warn('Native APK installer fallback:', e);
@@ -524,6 +547,14 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
     }
   };
 
+  const handleInstallUpdate = () => {
+    startApkDownloadAndInstall(false);
+  };
+
+  const handleForceRedownload = () => {
+    startApkDownloadAndInstall(true);
+  };
+
   const handleCancelDownload = () => {
     const native = getAndroidNativeBridge();
     if (native && typeof native.cancelApkDownload === 'function') {
@@ -553,7 +584,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
           setCanInstallPkgs(allowed);
           if (!allowed && typeof native.openInstallPermissionSettings === 'function') {
             setUpdateStatusText(
-              '⚠️ অনুগ্রহ করে "Allow from this source" চালু করে ফিরে এসে আবার "এখনই ইন্সটল করুন" চাপুন।'
+              '⚠️ অনুগ্রহ করে "Allow from this source" চালু করে ব্যাক চাপুন — অটো ইন্সটল শুরু হবে!'
             );
             native.openInstallPermissionSettings();
             return;
@@ -676,6 +707,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
               canInstallPkgs={canInstallPkgs}
               compact
               onStartDownload={handleInstallUpdate}
+              onForceRedownload={handleForceRedownload}
               onCancelDownload={handleCancelDownload}
               onInstallDownloaded={handleInstallDownloadedApk}
               onOpenInstallPermission={handleOpenInstallPermission}
@@ -758,6 +790,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
                 canInstallPkgs={canInstallPkgs}
                 compact
                 onStartDownload={handleInstallUpdate}
+                onForceRedownload={handleForceRedownload}
                 onCancelDownload={handleCancelDownload}
                 onInstallDownloaded={handleInstallDownloadedApk}
                 onOpenInstallPermission={handleOpenInstallPermission}
@@ -835,6 +868,7 @@ export const AppUpdateBanner: React.FC<AppUpdateBannerProps> = ({
         onUpdatePrefs={handleUpdatePrefs}
         onManualCheck={() => runUpdateCheck(true)}
         onInstallUpdate={handleInstallUpdate}
+        onForceRedownload={handleForceRedownload}
         onCancelDownload={handleCancelDownload}
         onInstallDownloadedApk={handleInstallDownloadedApk}
       />

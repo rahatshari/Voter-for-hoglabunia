@@ -186,11 +186,27 @@ export function normalizeGitHubRelease(
   const cleanVersionName = tagName.replace(/^v/i, '');
   const remoteCode = parseVersionCodeFromTag(tagName);
   const assets = Array.isArray(release.assets) ? release.assets : [];
-  const apkAsset =
-    assets.find((a: any) => String(a?.name || '').toLowerCase().endsWith('.apk')) || assets[0];
+
+  const apkAssets = assets.filter((a: any) =>
+    String(a?.name || '').toLowerCase().endsWith('.apk')
+  );
+  const preferredApkAsset =
+    apkAssets.find((a: any) =>
+      String(a?.name || '')
+        .toLowerCase()
+        .startsWith('hoglabunia-voter-app-v')
+    ) ||
+    apkAssets.find((a: any) =>
+      String(a?.name || '')
+        .toLowerCase()
+        .startsWith('hoglabunia-voter-app')
+    ) ||
+    apkAssets[0] ||
+    assets[0];
+
   const rawApkUrl =
-    apkAsset?.browser_download_url ||
-    `https://github.com/${repoSlug}/releases/latest/download/Hoglabunia-Voter-App.apk`;
+    preferredApkAsset?.browser_download_url ||
+    `https://github.com/${repoSlug}/releases/download/v${cleanVersionName}/Hoglabunia-Voter-App-v${cleanVersionName}.apk`;
 
   return {
     versionCode: remoteCode,
@@ -211,18 +227,58 @@ export function normalizeVersionJson(
   const versionCode = Number(data.versionCode || 0);
   const versionName = String(data.versionName || '').replace(/^v/i, '').trim();
   if (!versionName && versionCode <= 0) return null;
+  const resolvedVer = versionName || `1.0.${Math.max(0, versionCode - 100)}`;
+  const targetRepo = String(data.repo || repoSlug).trim() || DEFAULT_REPO;
   const rawApkUrl =
     String(data.apkUrl || '').trim() ||
-    `https://github.com/${data.repo || repoSlug}/releases/latest/download/Hoglabunia-Voter-App.apk`;
+    `https://github.com/${targetRepo}/releases/download/v${resolvedVer}/Hoglabunia-Voter-App-v${resolvedVer}.apk`;
   return {
-    versionCode: versionCode || parseVersionCodeFromTag(versionName),
-    versionName: versionName || `1.0.${Math.max(0, versionCode - 100)}`,
+    versionCode: versionCode || parseVersionCodeFromTag(resolvedVer),
+    versionName: resolvedVer,
     apkUrl: normalizeApkDownloadUrl(rawApkUrl),
     releaseNotes:
       String(data.releaseNotes || '').trim() ||
       'অ্যাপের নতুন ভার্সন প্রকাশিত হয়েছে। নতুন ফিচার পেতে এখনই আপডেট করুন।',
     publishedAt: data.publishedAt ? String(data.publishedAt) : undefined,
   };
+}
+
+/**
+ * Picks the strictly newest RemoteReleaseInfo across multiple update sources
+ * so an older Firebase /app_release entry never blocks a newer GitHub Release!
+ */
+export function pickNewestRemoteRelease(
+  candidates: Array<RemoteReleaseInfo | null | undefined>
+): RemoteReleaseInfo | null {
+  let best: RemoteReleaseInfo | null = null;
+  for (const cand of candidates) {
+    if (!cand || (!cand.versionName && !cand.versionCode)) continue;
+    if (!best) {
+      best = cand;
+      continue;
+    }
+    const cmp = compareVersionStrings(cand.versionName, best.versionName);
+    if (cmp > 0) {
+      best = cand;
+    } else if (cmp === 0) {
+      if ((cand.versionCode || 0) > (best.versionCode || 0)) {
+        best = cand;
+      } else if (
+        (cand.versionCode || 0) === (best.versionCode || 0) &&
+        cand.apkUrl.includes('/releases/download/') &&
+        !best.apkUrl.includes('/releases/download/')
+      ) {
+        best = {
+          ...cand,
+          releaseNotes:
+            best.releaseNotes && best.releaseNotes.length > cand.releaseNotes.length
+              ? best.releaseNotes
+              : cand.releaseNotes,
+        };
+      }
+    }
+  }
+  return best;
 }
 
 export function shouldShowAutoUpdatePopup(params: {
@@ -245,6 +301,71 @@ export function getAndroidNativeBridge(): any {
     return (window as any).AndroidNative;
   }
   return null;
+}
+
+/**
+ * Invokes AndroidNative.checkLatestReleaseNative(repoSlug) which fetches
+ * both GitHub Release Asset CDN version.json & GitHub API via Kotlin HttpURLConnection
+ * (zero CORS restriction and zero mobile carrier NAT API rate limit!).
+ */
+export function fetchNativeReleaseInfo(
+  repoSlug = DEFAULT_REPO,
+  timeoutMs = 5500
+): Promise<{ info: RemoteReleaseInfo | null; succeeded: boolean }> {
+  return new Promise((resolve) => {
+    const native = getAndroidNativeBridge();
+    if (
+      typeof window === 'undefined' ||
+      !native ||
+      typeof native.checkLatestReleaseNative !== 'function'
+    ) {
+      resolve({ info: null, succeeded: false });
+      return;
+    }
+
+    let settled = false;
+    const finish = (info: RemoteReleaseInfo | null, succeeded: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('voter_native_release_info', onEvent);
+      clearTimeout(timer);
+      resolve({ info, succeeded });
+    };
+
+    const onEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail || typeof detail !== 'object') {
+        finish(null, false);
+        return;
+      }
+      const fromVersionJson = detail.versionJson
+        ? normalizeVersionJson(detail.versionJson, repoSlug)
+        : null;
+      const fromGhRelease = detail.githubRelease
+        ? normalizeGitHubRelease(detail.githubRelease, repoSlug)
+        : null;
+      const merged = pickNewestRemoteRelease([fromGhRelease, fromVersionJson]);
+      // Prefer concise Bengali version.json releaseNotes if same version
+      if (
+        merged &&
+        fromVersionJson &&
+        fromVersionJson.versionName === merged.versionName &&
+        fromVersionJson.releaseNotes
+      ) {
+        merged.releaseNotes = fromVersionJson.releaseNotes;
+      }
+      finish(merged, Boolean(detail.success || merged));
+    };
+
+    const timer = setTimeout(() => finish(null, false), timeoutMs);
+    window.addEventListener('voter_native_release_info', onEvent);
+
+    try {
+      native.checkLatestReleaseNative(repoSlug);
+    } catch {
+      finish(null, false);
+    }
+  });
 }
 
 export async function getInstalledAppVersion(): Promise<{
@@ -306,71 +427,35 @@ export interface UpdateCheckResult {
 
 export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
   const installed = await getInstalledAppVersion();
-  let detectedRemote: RemoteReleaseInfo | null = null;
   let anyNetworkSucceeded = false;
 
-  // 0. Check Firebase Realtime Database (/app_release) first — works even when GitHub repo is Private!
-  try {
-    const [{ get, ref }, { database }] = await Promise.all([
-      import('firebase/database'),
-      import('./firebase'),
-    ]);
-    const TIMED_OUT = Symbol('timeout');
-    const snap = await Promise.race([
-      get(ref(database, 'app_release')),
-      new Promise<typeof TIMED_OUT>((resolve) => setTimeout(() => resolve(TIMED_OUT), 3500)),
-    ]);
-    if (snap !== TIMED_OUT) {
-      anyNetworkSucceeded = true;
-      if (snap && typeof (snap as any).exists === 'function' && (snap as any).exists()) {
-        const parsed = normalizeVersionJson((snap as any).val(), installed.repo);
-        if (
-          parsed &&
-          isRemoteVersionNewer(
-            parsed.versionCode,
-            parsed.versionName,
-            installed.versionCode,
-            installed.versionName
-          )
-        ) {
-          detectedRemote = parsed;
-        }
-      }
-    }
-  } catch {
-    // fallback below
-  }
+  // Query ALL 4 sources concurrently and pick the NEWEST release version!
+  const checkNativeTask = fetchNativeReleaseInfo(installed.repo).then((res) => {
+    if (res.succeeded) anyNetworkSucceeded = true;
+    return res.info;
+  });
 
-  // 1. Check GitHub Releases API
-  if (!detectedRemote) {
+  const checkGitHubApiTask = (async (): Promise<RemoteReleaseInfo | null> => {
     try {
-    const ghRes = await fetch(`https://api.github.com/repos/${installed.repo}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json' },
-      cache: 'no-store',
-    });
-    if (ghRes.ok) {
-      anyNetworkSucceeded = true;
-      const release = await ghRes.json();
-      const parsed = normalizeGitHubRelease(release, installed.repo);
-      if (
-        parsed &&
-        isRemoteVersionNewer(
-          parsed.versionCode,
-          parsed.versionName,
-          installed.versionCode,
-          installed.versionName
-        )
-      ) {
-        detectedRemote = parsed;
-      }
+      const ghRes = await fetch(
+        `https://api.github.com/repos/${installed.repo}/releases/latest?t=${Date.now()}`,
+        {
+          headers: { Accept: 'application/vnd.github+json' },
+          cache: 'no-store',
+        }
+      );
+      if (ghRes.ok) {
+        anyNetworkSucceeded = true;
+        const release = await ghRes.json();
+        return normalizeGitHubRelease(release, installed.repo);
       }
     } catch {
-      // fallback below
+      // ignore
     }
-  }
+    return null;
+  })();
 
-  // 2. Fallback: check GitHub Pages live version.json
-  if (!detectedRemote) {
+  const checkLivePagesTask = (async (): Promise<RemoteReleaseInfo | null> => {
     try {
       const liveRes = await fetch(`${DEFAULT_LIVE_VERSION_URL}?t=${Date.now()}`, {
         cache: 'no-store',
@@ -378,23 +463,55 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
       if (liveRes.ok) {
         anyNetworkSucceeded = true;
         const liveData = await liveRes.json();
-        const parsed = normalizeVersionJson(liveData, installed.repo);
-        if (
-          parsed &&
-          isRemoteVersionNewer(
-            parsed.versionCode,
-            parsed.versionName,
-            installed.versionCode,
-            installed.versionName
-          )
-        ) {
-          detectedRemote = parsed;
+        return normalizeVersionJson(liveData, installed.repo);
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  })();
+
+  const checkFirebaseRtdbTask = (async (): Promise<RemoteReleaseInfo | null> => {
+    try {
+      const [{ get, ref }, { database }] = await Promise.all([
+        import('firebase/database'),
+        import('./firebase'),
+      ]);
+      const TIMED_OUT = Symbol('timeout');
+      const snap = await Promise.race([
+        get(ref(database, 'app_release')),
+        new Promise<typeof TIMED_OUT>((resolve) => setTimeout(() => resolve(TIMED_OUT), 3200)),
+      ]);
+      if (snap !== TIMED_OUT) {
+        anyNetworkSucceeded = true;
+        if (snap && typeof (snap as any).exists === 'function' && (snap as any).exists()) {
+          return normalizeVersionJson((snap as any).val(), installed.repo);
         }
       }
     } catch {
-      // offline
+      // ignore
     }
-  }
+    return null;
+  })();
+
+  const [nativeRel, ghApiRel, pagesRel, rtdbRel] = await Promise.all([
+    checkNativeTask,
+    checkGitHubApiTask,
+    checkLivePagesTask,
+    checkFirebaseRtdbTask,
+  ]);
+
+  const newestCandidate = pickNewestRemoteRelease([nativeRel, ghApiRel, pagesRel, rtdbRel]);
+  const detectedRemote =
+    newestCandidate &&
+    isRemoteVersionNewer(
+      newestCandidate.versionCode,
+      newestCandidate.versionName,
+      installed.versionCode,
+      installed.versionName
+    )
+      ? newestCandidate
+      : null;
 
   const checkedAt = Date.now();
   saveUpdatePrefs({ lastCheckedAt: checkedAt }, true);
@@ -623,7 +740,9 @@ export function createInitialDownloadState(
     percent: 0,
     speedBps: 0,
     errorMessage: null,
-    fileName: versionName ? `Union-Voter-App-v${versionName}.apk` : 'Union-Voter-App.apk',
+    fileName: versionName
+      ? `Hoglabunia-Voter-App-v${versionName}.apk`
+      : 'Hoglabunia-Voter-App.apk',
     blobUrl: null,
   };
 }

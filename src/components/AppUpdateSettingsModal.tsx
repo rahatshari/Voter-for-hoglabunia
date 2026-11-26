@@ -28,6 +28,7 @@ interface AppUpdateSettingsModalProps {
   onUpdatePrefs: (patch: Partial<AppUpdatePreferences>) => void;
   onManualCheck: () => void;
   onInstallUpdate: () => void;
+  onForceRedownload?: () => void;
   onCancelDownload: () => void;
   onInstallDownloadedApk: () => void;
 }
@@ -49,6 +50,7 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
   onUpdatePrefs,
   onManualCheck,
   onInstallUpdate,
+  onForceRedownload,
   onCancelDownload,
   onInstallDownloadedApk,
 }) => {
@@ -59,17 +61,26 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    const native = getAndroidNativeBridge();
-    if (native && typeof native.canInstallPackages === 'function') {
-      try {
-        setCanInstallPkgs(Boolean(native.canInstallPackages()));
-      } catch {
-        setCanInstallPkgs(true);
+    const syncInstallPerm = () => {
+      const native = getAndroidNativeBridge();
+      if (native && typeof native.canInstallPackages === 'function') {
+        try {
+          setCanInstallPkgs(Boolean(native.canInstallPackages()));
+        } catch {
+          setCanInstallPkgs(true);
+        }
       }
-    }
+    };
+    syncInstallPerm();
     if (typeof window !== 'undefined' && 'Notification' in window) {
       setWebNotifPermission(Notification.permission);
     }
+    window.addEventListener('voter_install_permission_changed', syncInstallPerm);
+    window.addEventListener('focus', syncInstallPerm);
+    return () => {
+      window.removeEventListener('voter_install_permission_changed', syncInstallPerm);
+      window.removeEventListener('focus', syncInstallPerm);
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -206,6 +217,7 @@ export const AppUpdateSettingsModal: React.FC<AppUpdateSettingsModalProps> = ({
                 isAndroidNative={isAndroidNative}
                 canInstallPkgs={canInstallPkgs}
                 onStartDownload={onInstallUpdate}
+                onForceRedownload={onForceRedownload}
                 onCancelDownload={onCancelDownload}
                 onInstallDownloaded={onInstallDownloadedApk}
                 onOpenInstallPermission={handleOpenInstallPermission}

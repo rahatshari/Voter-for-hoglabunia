@@ -32,8 +32,8 @@ jobs:
             "versionCode": ${VERSION_CODE},
             "versionName": "${VERSION_NAME}",
             "repo": "${{ github.repository }}",
-            "apkUrl": "https://github.com/${{ github.repository }}/releases/latest/download/Hoglabunia-Voter-App.apk",
-            "releaseNotes": "ভার্সন v${VERSION_NAME} — ৩x HD ঝকঝকে থার্মাল ও পেজ স্লিপ প্রিভিউ, মোবাইলে ১০০% ফুল-পেজ ও ল্যান্ডস্কেপ অটো-ফিট এবং ৬০ FPS ল্যাগ-মুক্ত কাস্টমাইজার আপডেট।"
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/Hoglabunia-Voter-App-v${VERSION_NAME}.apk",
+            "releaseNotes": "ভার্সন v${VERSION_NAME} — পাবলিক রিপোজিটরি ইন-অ্যাপ অটো আপডেট ও ইন্সটলার, ৩x HD স্লিপ প্রিভিউ এবং ল্যান্ডস্কেপ অটো-ফিট আপডেট।"
           }
           EOF
           cat public/version.json

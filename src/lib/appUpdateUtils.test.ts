@@ -209,3 +209,24 @@ test('normalizeApkDownloadUrl converts Google Drive and Dropbox share links into
     'https://www.dropbox.com/scl/fi/abc/Hoglabunia-Voter-App.apk?rlkey=xyz&dl=1'
   );
 });
+
+test('pickNewestRemoteRelease chooses the strictly newest version across GitHub and RTDB sources', async () => {
+  const { pickNewestRemoteRelease } = await import('./appUpdateUtils');
+  const staleRtdb = {
+    versionCode: 104,
+    versionName: '1.0.4',
+    apkUrl: 'https://example.com/old.apk',
+    releaseNotes: 'Old RTDB',
+  };
+  const freshGithub = {
+    versionCode: 106,
+    versionName: '1.0.6',
+    apkUrl: 'https://github.com/rahatshari/hoglabunia-union-voter/releases/download/v1.0.6/Hoglabunia-Voter-App-v1.0.6.apk',
+    releaseNotes: 'New public GitHub release',
+  };
+  const winner = pickNewestRemoteRelease([staleRtdb, freshGithub, null]);
+  assert.ok(winner);
+  assert.equal(winner.versionName, '1.0.6');
+  assert.equal(winner.versionCode, 106);
+});
+

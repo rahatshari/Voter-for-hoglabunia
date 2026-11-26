@@ -10,6 +10,7 @@ interface InAppDownloadManagerPanelProps {
   canInstallPkgs: boolean;
   compact?: boolean;
   onStartDownload: () => void;
+  onForceRedownload?: () => void;
   onCancelDownload: () => void;
   onInstallDownloaded: () => void;
   onOpenInstallPermission: () => void;
@@ -22,6 +23,7 @@ export const InAppDownloadManagerPanel: React.FC<InAppDownloadManagerPanelProps>
   canInstallPkgs,
   compact = false,
   onStartDownload,
+  onForceRedownload,
   onCancelDownload,
   onInstallDownloaded,
   onOpenInstallPermission,
@@ -35,7 +37,7 @@ export const InAppDownloadManagerPanel: React.FC<InAppDownloadManagerPanelProps>
   const isCancelled = status === 'cancelled';
 
   const displayPercent = isCompleted ? 100 : Math.max(0, Math.min(100, percent || 0));
-  const displayFileName = fileName || `Union-Voter-App-v${versionName}.apk`;
+  const displayFileName = fileName || `Hoglabunia-Voter-App-v${versionName}.apk`;
 
   return (
     <div
@@ -204,7 +206,7 @@ export const InAppDownloadManagerPanel: React.FC<InAppDownloadManagerPanelProps>
             </button>
             <button
               type="button"
-              onClick={onStartDownload}
+              onClick={onForceRedownload || onStartDownload}
               className={`py-2.5 px-3 rounded-xl text-xs font-bold cursor-pointer transition ${
                 compact
                   ? 'bg-white/15 hover:bg-white/25 text-white'

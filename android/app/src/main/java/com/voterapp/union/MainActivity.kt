@@ -1152,10 +1152,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun fetchTextFollowingRedirects(rawUrl: String, acceptHeader: String = "application/json, */*"): String? {
         var conn: HttpURLConnection? = null
-        return try {
+        try {
             var currentUrl = URL(rawUrl)
-            var redirects = 0
-            while (true) {
+            for (redirects in 0..10) {
                 conn = (currentUrl.openConnection() as HttpURLConnection).apply {
                     instanceFollowRedirects = false
                     connectTimeout = 12000
@@ -1177,7 +1176,6 @@ class MainActivity : AppCompatActivity() {
                     conn.disconnect()
                     if (loc.isNullOrBlank() || redirects >= 10) return null
                     currentUrl = URL(currentUrl, loc)
-                    redirects++
                     continue
                 }
                 if (code !in 200..299) {
@@ -1191,8 +1189,8 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w("VoterApp", "fetchTextFollowingRedirects failed for $rawUrl: ${e.message}")
             try { conn?.disconnect() } catch (ignored: Exception) {}
-            null
         }
+        return null
     }
 
     /**

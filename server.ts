@@ -367,6 +367,74 @@ app.get('/api/auth/check-status', (req: Request, res: Response) => {
   });
 });
 
+const SERVER_FIREBASE_API_KEY =
+  process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A';
+
+// Server-assisted Firebase Auth REST login (ensures login works inside sandboxed preview iframes & strict networks)
+app.post('/api/auth/firebase-login', async (req: Request, res: Response) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '').trim();
+  if (!email || !password) {
+    return res.status(400).json({ success: false, errorCode: 'MISSING_FIELDS' });
+  }
+  try {
+    const fbRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${SERVER_FIREBASE_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+      }
+    );
+    const data: any = await fbRes.json();
+    if (!fbRes.ok || data?.error) {
+      return res.status(401).json({
+        success: false,
+        errorCode: data?.error?.message || 'INVALID_LOGIN_CREDENTIALS',
+      });
+    }
+    return res.json({
+      success: true,
+      email: data.email || email,
+      uid: data.localId,
+      idToken: data.idToken,
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      errorCode: 'NETWORK_ERROR',
+      message: err?.message || 'Firebase unreachable',
+    });
+  }
+});
+
+app.post('/api/auth/firebase-reset', async (req: Request, res: Response) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ success: false });
+  }
+  try {
+    const fbRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${SERVER_FIREBASE_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+      }
+    );
+    const data: any = await fbRes.json();
+    if (!fbRes.ok || data?.error) {
+      return res.status(400).json({
+        success: false,
+        errorCode: data?.error?.message || 'RESET_FAILED',
+      });
+    }
+    return res.json({ success: true });
+  } catch {
+    return res.status(502).json({ success: false, errorCode: 'NETWORK_ERROR' });
+  }
+});
+
 // Single Active Device Session API
 // 1. Register or takeover active session for an email
 app.post('/api/session/register', (req: Request, res: Response) => {

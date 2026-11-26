@@ -8,13 +8,108 @@ import {
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
-import { signInWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
-import { auth } from '../lib/firebase';
-import { recordSuccessfulLoginTimestamp } from '../lib/sessionExpiryUtils';
+import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { FIREBASE_WEB_API_KEY, auth } from '../lib/firebase';
+import { safeLocalRemove, safeLocalSet } from '../lib/safeStorage';
 
 interface LoginScreenProps {
   onLoginSuccess: (email: string) => void;
   initialMessage?: { text: string; isError: boolean } | null;
+}
+
+function isCredentialFailureCode(code: string): boolean {
+  const c = code.toLowerCase();
+  return (
+    c.includes('invalid-credential') ||
+    c.includes('invalid-login-credentials') ||
+    c.includes('invalid_login_credentials') ||
+    c.includes('user-not-found') ||
+    c.includes('email_not_found') ||
+    c.includes('wrong-password') ||
+    c.includes('invalid_password') ||
+    c.includes('invalid-email') ||
+    c.includes('invalid_email') ||
+    c.includes('too-many-requests') ||
+    c.includes('too_many_attempts') ||
+    c.includes('user-disabled') ||
+    c.includes('user_disabled')
+  );
+}
+
+function mapFirebaseErrorMessage(codeOrMsg: string): string {
+  const c = codeOrMsg.toLowerCase();
+  if (
+    c.includes('invalid-credential') ||
+    c.includes('invalid-login-credentials') ||
+    c.includes('invalid_login_credentials') ||
+    c.includes('user-not-found') ||
+    c.includes('email_not_found') ||
+    c.includes('wrong-password') ||
+    c.includes('invalid_password')
+  ) {
+    return 'ইমেইল বা পাসওয়ার্ড সঠিক নয়। পাসওয়ার্ড মনে না থাকলে নিচে "পাসওয়ার্ড ভুলে গেছেন?" বাটনে চাপুন।';
+  }
+  if (c.includes('invalid-email') || c.includes('invalid_email')) {
+    return 'ইমেইলের ফরম্যাট সঠিক নয়। যেমন: user@gmail.com';
+  }
+  if (c.includes('too-many-requests') || c.includes('too_many_attempts')) {
+    return 'বারবার ভুল পাসওয়ার্ড দেওয়ার কারণে সাময়িকভাবে বন্ধ আছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।';
+  }
+  if (c.includes('user-disabled') || c.includes('user_disabled')) {
+    return 'এই অ্যাকাউন্টটি নিষ্ক্রিয় করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।';
+  }
+  if (c.includes('network')) {
+    return 'ইন্টারনেট সংযোগে সমস্যা দেখা দিয়েছে। সংযোগ চেক করে আবার চেষ্টা করুন।';
+  }
+  return `লগইন ব্যর্থ হয়েছে (${codeOrMsg})। অনুগ্রহ করে পুনরায় চেষ্টা করুন।`;
+}
+
+async function verifyPasswordViaFirebaseRest(
+  email: string,
+  password: string
+): Promise<{ email: string }> {
+  // 1. Try local/backend proxy first (works even if browser iframe blocks cross-origin googleapis)
+  try {
+    const srvRes = await fetch('/api/auth/firebase-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const ct = srvRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const srvJson = await srvRes.json();
+      if (srvRes.ok && srvJson.success) {
+        return { email: srvJson.email || email };
+      }
+      if (srvJson?.errorCode && srvJson.errorCode !== 'NETWORK_ERROR') {
+        const err: any = new Error(srvJson.errorCode);
+        err.code = srvJson.errorCode;
+        throw err;
+      }
+    }
+  } catch (e: any) {
+    if (e?.code && isCredentialFailureCode(e.code)) {
+      throw e;
+    }
+  }
+
+  // 2. Direct Google Identity Toolkit REST call (works in Android APK & static hosting)
+  const directRes = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_WEB_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    }
+  );
+  const directJson = await directRes.json();
+  if (!directRes.ok || directJson?.error) {
+    const code = directJson?.error?.message || 'INVALID_LOGIN_CREDENTIALS';
+    const err: any = new Error(code);
+    err.code = code;
+    throw err;
+  }
+  return { email: directJson.email || email };
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
@@ -61,8 +156,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setUnauthorizedDomain(null);
 
     try {
+      // Pre-check server/local block status if reachable
       try {
-        const checkRes = await fetch(`/api/auth/check-status?email=${encodeURIComponent(cleanEmail)}`);
+        const checkRes = await fetch(
+          `/api/auth/check-status?email=${encodeURIComponent(cleanEmail)}`
+        );
         const ct = checkRes.headers.get('content-type') || '';
         if (checkRes.ok && ct.includes('application/json')) {
           const checkJson = await checkRes.json();
@@ -86,133 +184,159 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             return;
           }
         }
-      } catch (checkErr) {
-        console.warn('Block check bypassed due to network:', checkErr);
+      } catch {
+        // Network pre-check optional
       }
 
-      // Prepare session ID BEFORE signInWithEmailAndPassword so App.tsx onAuthStateChanged registers the exact same sessionId
-      const preSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
-      localStorage.setItem('voter_device_session_id', preSessionId);
+      // Prepare single session ID safely BEFORE sign-in
+      const preSessionId =
+        'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+      safeLocalSet('voter_device_session_id', preSessionId);
 
-      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
-      const loggedEmail = userCredential.user.email || cleanEmail;
+      let sdkSucceeded = false;
+      let loggedEmail = cleanEmail;
 
+      try {
+        const SDK_TIMEOUT = Symbol('sdk_timeout');
+        const sdkResult = await Promise.race([
+          signInWithEmailAndPassword(auth, cleanEmail, cleanPassword),
+          new Promise<typeof SDK_TIMEOUT>((resolve) =>
+            setTimeout(() => resolve(SDK_TIMEOUT), 7000)
+          ),
+        ]);
+
+        if (sdkResult !== SDK_TIMEOUT) {
+          sdkSucceeded = true;
+          loggedEmail = sdkResult.user.email || cleanEmail;
+        }
+      } catch (sdkErr: any) {
+        const sdkCode = String(sdkErr?.code || sdkErr?.message || '');
+        // If password/email is genuinely wrong, fail immediately with clear Bangla message
+        if (isCredentialFailureCode(sdkCode)) {
+          safeLocalRemove('voter_device_session_id');
+          setLoading(false);
+          setStatusMessage({ text: mapFirebaseErrorMessage(sdkCode), isError: true });
+          return;
+        }
+        // Otherwise (e.g. preview iframe storage/CORS/unauthorized-domain), fall through to official Firebase REST verification!
+        console.warn('Firebase SDK signIn fallback to REST:', sdkCode);
+      }
+
+      if (!sdkSucceeded) {
+        const restVerified = await verifyPasswordViaFirebaseRest(cleanEmail, cleanPassword);
+        loggedEmail = restVerified.email;
+
+        // Check cloud/server block status and register session when using REST fallback
+        try {
+          const { checkCloudAccessForUser } = await import('../lib/cloudStore');
+          const cloudCheck = await checkCloudAccessForUser(loggedEmail);
+          if (cloudCheck.isBlocked) {
+            safeLocalRemove('voter_device_session_id');
+            setLoading(false);
+            setStatusMessage({
+              text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে।',
+              isError: true,
+            });
+            return;
+          }
+          if (cloudCheck.maintenanceBlocked) {
+            safeLocalRemove('voter_device_session_id');
+            setLoading(false);
+            setStatusMessage({
+              text:
+                cloudCheck.maintenanceMessage ||
+                'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।',
+              isError: true,
+            });
+            return;
+          }
+        } catch {}
+
+        safeLocalSet('voter_verified_auth_email', loggedEmail);
+        onLoginSuccess(loggedEmail);
+        return;
+      }
+
+      // SDK succeeded! Verify cloud access (App.tsx onAuthStateChanged will handle full session registration)
       try {
         const { checkCloudAccessForUser } = await import('../lib/cloudStore');
         const cloudCheck = await checkCloudAccessForUser(loggedEmail);
         if (cloudCheck.isBlocked) {
-          localStorage.removeItem('voter_device_session_id');
-          await signOut(auth);
+          safeLocalRemove('voter_device_session_id');
+          safeLocalRemove('voter_verified_auth_email');
+          await signOut(auth).catch(() => {});
           setLoading(false);
           setStatusMessage({
-            text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
+            text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে।',
             isError: true,
           });
           return;
         }
         if (cloudCheck.maintenanceBlocked) {
-          localStorage.removeItem('voter_device_session_id');
-          await signOut(auth);
+          safeLocalRemove('voter_device_session_id');
+          safeLocalRemove('voter_verified_auth_email');
+          await signOut(auth).catch(() => {});
           setLoading(false);
           setStatusMessage({
-            text: `${cloudCheck.maintenanceMessage || 'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'}`,
+            text:
+              cloudCheck.maintenanceMessage ||
+              'সিস্টেম রক্ষণাবেক্ষণের কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।',
             isError: true,
           });
           return;
         }
-      } catch (cloudCheckErr) {
-        console.warn('Cloud access check notice:', cloudCheckErr);
-      }
+      } catch {}
 
-      const activeSessionId = localStorage.getItem('voter_device_session_id') || preSessionId;
-
-      const ua = navigator.userAgent;
-      let detectedDevice = 'Mobile Web';
-      if (/Android/i.test(ua)) detectedDevice = 'Android Mobile';
-      else if (/iPhone|iPad|iPod/i.test(ua)) detectedDevice = 'iOS Device';
-      else if (/Windows/i.test(ua)) detectedDevice = 'Windows PC';
-      else if (/Macintosh/i.test(ua)) detectedDevice = 'Mac Computer';
-
-      try {
-        const regRes = await fetch('/api/session/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: loggedEmail,
-            sessionId: activeSessionId,
-            deviceName: detectedDevice,
-          }),
-        });
-
-        if (regRes.status === 403) {
-          localStorage.removeItem('voter_device_session_id');
-          await signOut(auth);
-          setLoading(false);
-          setStatusMessage({
-            text: 'আপনার অ্যাকাউন্টটি অ্যাডমিন কর্তৃক সাময়িকভাবে ব্লক করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।',
-            isError: true,
-          });
-          return;
-        }
-      } catch (err) {
-        console.warn('Session registration sync:', err);
-      }
-
-      recordSuccessfulLoginTimestamp(loggedEmail);
+      safeLocalSet('voter_verified_auth_email', loggedEmail);
       onLoginSuccess(loggedEmail);
     } catch (error: any) {
-      console.warn('Login error code:', error?.code);
+      safeLocalRemove('voter_device_session_id');
       setLoading(false);
-
-      let errMsg = 'লগইন ব্যর্থ হয়েছে। ইমেইল বা পাসওয়ার্ড সঠিক নয়।';
-      const code = error?.code || '';
-
+      const code = String(error?.code || error?.message || '');
       if (code === 'auth/unauthorized-domain') {
         setUnauthorizedDomain(window.location.hostname);
-        errMsg = `ফায়ারবেসে এই ডোমেনটি (${window.location.hostname}) অনুমোদন করা নেই। নিচের নির্দেশিকা অনুযায়ী ডোমেনটি যুক্ত করুন।`;
-      } else if (
-        code === 'auth/invalid-credential' ||
-        code === 'auth/user-not-found' ||
-        code === 'auth/wrong-password'
-      ) {
-        errMsg =
-          'ইমেইল বা পাসওয়ার্ড সঠিক নয়। অনুগ্রহ করে পুনরায় সতর্কতার সাথে টাইপ করুন।';
-      } else if (code === 'auth/invalid-email') {
-        errMsg = 'ইমেইলের ফরম্যাট সঠিক নয়। যেমন: user@gmail.com';
-      } else if (code === 'auth/too-many-requests') {
-        errMsg =
-          'বারবার ভুল পাসওয়ার্ড দেওয়ার কারণে অ্যাকাউন্টটি সাময়িকভাবে বন্ধ আছে। কিছুক্ষণ পর আবার চেষ্টা করুন।';
-      } else if (code === 'auth/network-request-failed') {
-        errMsg = 'ইন্টারনেট সংযোগে সমস্যা দেখা দিয়েছে। ইন্টারনেট চেক করে আবার চেষ্টা করুন।';
-      } else if (error?.message) {
-        errMsg = `ত্রুটি: ${error.message}`;
+        setStatusMessage({
+          text: `ফায়ারবেসে এই ডোমেনটি (${window.location.hostname}) অনুমোদন করা নেই।`,
+          isError: true,
+        });
+        return;
       }
-
-      setStatusMessage({ text: errMsg, isError: true });
+      setStatusMessage({ text: mapFirebaseErrorMessage(code), isError: true });
     }
   };
 
   const handleResetPassword = async () => {
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
-      setStatusMessage({ text: 'দয়া করে আপনার ইমেইলটি বক্সে লিখুন!', isError: true });
+      setStatusMessage({ text: 'দয়া করে আপনার ইমেইলটি আগে বক্সে লিখুন!', isError: true });
       return;
     }
 
     try {
       await sendPasswordResetEmail(auth, cleanEmail);
       setStatusMessage({
-        text: 'পাসওয়ার্ড রিসেট লিঙ্ক আপনার ইমেইলে পাঠানো হয়েছে! স্প্যাম ফোল্ডারও চেক করুন।',
+        text: 'পাসওয়ার্ড রিসেট লিঙ্ক আপনার ইমেইলে পাঠানো হয়েছে! ইনবক্স ও স্প্যাম ফোল্ডার চেক করুন।',
         isError: false,
       });
-    } catch (error: any) {
-      let errMsg = 'পাসওয়ার্ড রিসেট লিঙ্ক পাঠানো ব্যর্থ হয়েছে।';
-      if (error?.code === 'auth/user-not-found') {
-        errMsg = 'এই ইমেইল দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি!';
-      } else if (error?.code === 'auth/invalid-email') {
-        errMsg = 'ইমেইলটি সঠিক নয়।';
-      }
-      setStatusMessage({ text: errMsg, isError: true });
+    } catch {
+      try {
+        const res = await fetch('/api/auth/firebase-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail }),
+        });
+        if (res.ok) {
+          setStatusMessage({
+            text: 'পাসওয়ার্ড রিসেট লিঙ্ক আপনার ইমেইলে পাঠানো হয়েছে! ইনবক্স ও স্প্যাম ফোল্ডার চেক করুন।',
+            isError: false,
+          });
+          return;
+        }
+      } catch {}
+      setStatusMessage({
+        text: 'পাসওয়ার্ড রিসেট লিঙ্ক পাঠানো ব্যর্থ হয়েছে। সঠিক ইমেইল দিয়ে আবার চেষ্টা করুন।',
+        isError: true,
+      });
     }
   };
 
@@ -267,16 +391,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               >
                 {copiedDomain ? 'কপি হয়েছে' : 'কপি করুন'}
               </button>
-            </div>
-            <div className="pt-1 text-center">
-              <a
-                href="https://console.firebase.google.com/project/voter-ba30b/authentication/settings"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full font-bold text-xs transition"
-              >
-                <span>ফায়ারবেস কনসোলে যান ↗</span>
-              </a>
             </div>
           </div>
         )}

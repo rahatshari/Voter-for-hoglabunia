@@ -59,15 +59,87 @@ export interface ThermalSlipMetrics {
   rollFeedLengthMm: number;
 }
 
+export interface ThermalSlipRenderOptions {
+  /**
+   * Supersampling multiplier for crisp HD rendering on Retina / mobile screens.
+   * - Use `1` (default) for physical ESC/POS thermal printer dot output (`384px` / `576px`).
+   * - Use `3` for razor-sharp HD screen preview and high-res PNG downloads.
+   */
+  pixelScale?: number;
+  /**
+   * When true, renders subtle ink/paper fidelity suitable for HD preview
+   * without altering physical layout metrics.
+   */
+  previewQuality?: boolean;
+}
+
+const MAX_IMAGE_CACHE_SIZE = 32;
+const resolvedImageCache = new Map<string, HTMLImageElement | null>();
+const inflightImageCache = new Map<string, Promise<HTMLImageElement | null>>();
+
+function rememberResolvedImage(src: string, img: HTMLImageElement | null) {
+  if (resolvedImageCache.size >= MAX_IMAGE_CACHE_SIZE && !resolvedImageCache.has(src)) {
+    const oldestKey = resolvedImageCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      resolvedImageCache.delete(oldestKey);
+    }
+  }
+  resolvedImageCache.set(src, img);
+}
+
 function loadImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    if (!src) return resolve(null);
+  if (!src) return Promise.resolve(null);
+  if (resolvedImageCache.has(src)) {
+    const cached = resolvedImageCache.get(src) ?? null;
+    return Promise.resolve(cached);
+  }
+  const existing = inflightImageCache.get(src);
+  if (existing) return existing;
+
+  const promise = new Promise<HTMLImageElement | null>((resolve) => {
+    if (typeof Image === 'undefined') {
+      resolve(null);
+      return;
+    }
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
+    img.onload = () => {
+      inflightImageCache.delete(src);
+      rememberResolvedImage(src, img);
+      resolve(img);
+    };
+    img.onerror = () => {
+      inflightImageCache.delete(src);
+      rememberResolvedImage(src, null);
+      resolve(null);
+    };
     img.src = src;
   });
+
+  inflightImageCache.set(src, promise);
+  return promise;
+}
+
+let sharedMeasureCanvas: HTMLCanvasElement | null = null;
+function getMeasureContext(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null;
+  if (!sharedMeasureCanvas) {
+    sharedMeasureCanvas = document.createElement('canvas');
+    sharedMeasureCanvas.width = 600;
+    sharedMeasureCanvas.height = 200;
+  }
+  return sharedMeasureCanvas.getContext('2d');
+}
+
+function configureHighQualityContext(
+  ctx: CanvasRenderingContext2D,
+  pixelScale: number
+) {
+  ctx.setTransform(pixelScale, 0, 0, pixelScale, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) {
+    ctx.imageSmoothingQuality = 'high';
+  }
 }
 
 function drawImageContain(
@@ -78,6 +150,7 @@ function drawImageContain(
   w: number,
   h: number
 ) {
+  if (!img.width || !img.height) return;
   const scale = Math.min(w / img.width, h / img.height);
   const dw = img.width * scale;
   const dh = img.height * scale;
@@ -94,6 +167,7 @@ function drawImageCoverTop(
   w: number,
   h: number
 ) {
+  if (!img.width || !img.height) return;
   const imgRatio = img.width / img.height;
   const boxRatio = w / h;
   let sx = 0;
@@ -139,22 +213,23 @@ function drawOuterBorder(
   w: number,
   h: number,
   style: 'solid' | 'double' | 'dashed' | 'none',
+  inkColor: string,
   inset = 3
 ) {
   if (style === 'none') return;
   ctx.save();
-  ctx.strokeStyle = '#000000';
+  ctx.strokeStyle = inkColor;
   if (style === 'dashed') {
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.8;
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
   } else if (style === 'double') {
-    ctx.lineWidth = 2.2;
+    ctx.lineWidth = 2;
     ctx.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1;
     ctx.strokeRect(inset + 4, inset + 4, w - (inset + 4) * 2, h - (inset + 4) * 2);
   } else {
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.8;
     ctx.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
   }
   ctx.restore();
@@ -165,11 +240,12 @@ function drawHorizontalRule(
   x1: number,
   x2: number,
   y: number,
+  inkColor: string,
   dashed = false
 ) {
   ctx.save();
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = dashed ? 1.4 : 2;
+  ctx.strokeStyle = inkColor;
+  ctx.lineWidth = dashed ? 1.2 : 1.7;
   if (dashed) ctx.setLineDash([5, 3]);
   ctx.beginPath();
   ctx.moveTo(x1, y);
@@ -178,18 +254,52 @@ function drawHorizontalRule(
   ctx.restore();
 }
 
+function drawLinedGuide(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  x2: number,
+  y: number,
+  inkColor: string
+) {
+  ctx.save();
+  ctx.strokeStyle = inkColor;
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 0.9;
+  ctx.setLineDash([2, 2.5]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y);
+  ctx.lineTo(x2, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+const BENGALI_FONT_STACK = '"Noto Sans Bengali", "Hind Siliguri", system-ui, sans-serif';
+
 /**
  * Draws the Voter Slip onto a canvas in exact 203-DPI thermal pixel units (8 px = 1 mm)
  * supporting both Portrait & Landscape orientations, 58mm & 80mm widths, and all custom settings.
+ * Supports high-DPI supersampling (`options.pixelScale = 3`) for crystal-clear HD previews!
  */
 export async function drawThermalSlipToCanvas(
   canvas: HTMLCanvasElement,
   voter: Voter,
-  config: CandidateProfile
+  config: CandidateProfile,
+  options?: ThermalSlipRenderOptions
 ): Promise<ThermalSlipMetrics> {
+  const pixelScale = Math.max(1, Math.min(4, options?.pixelScale ?? 1));
+  const previewQuality = Boolean(options?.previewQuality);
   const cs = resolveSlipCustomSettings(config);
   const rollDots = cs.paperWidthMm === 80 ? 576 : 384; // 8 dots/mm printable area
   const baseScale = cs.paperWidthMm === 80 ? 1.32 : 1.0;
+
+  // Subtle ink tone for HD screen preview depending on darkness setting, pure black for printer
+  const inkColor = previewQuality
+    ? cs.thermalDarkness === 'light'
+      ? '#334155'
+      : cs.thermalDarkness === 'dark'
+      ? '#000000'
+      : '#0f172a'
+    : '#000000';
 
   const [candImg, symImg] = await Promise.all([
     cs.showCandidatePhoto
@@ -212,27 +322,32 @@ export async function drawThermalSlipToCanvas(
     // LANDSCAPE THERMAL CARD (Horizontal card whose height = roll printable dots)
     // =========================================================================
     const cardHeight = rollDots; // 384px (48mm printable on 58mm roll) or 576px (72mm on 80mm roll)
-    // Compute landscape length dynamically so all text fits cleanly
     const baseLandscapeWidth = cs.paperWidthMm === 80 ? 832 : 576; // 104mm or 72mm
-    const extraScale = Math.max(1, (vScale + spacing - 1) * 0.65);
+    const extraScale = Math.max(1, (vScale + spacing - 1) * 0.68);
     const cardWidth = Math.ceil((baseLandscapeWidth * extraScale) / 8) * 8;
 
-    canvas.width = cardWidth;
-    canvas.height = cardHeight;
+    const targetPhysW = Math.round(cardWidth * pixelScale);
+    const targetPhysH = Math.round(cardHeight * pixelScale);
+    if (canvas.width !== targetPhysW) canvas.width = targetPhysW;
+    if (canvas.height !== targetPhysH) canvas.height = targetPhysH;
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      configureHighQualityContext(ctx, pixelScale);
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, cardWidth, cardHeight);
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = inkColor;
       ctx.textBaseline = 'top';
 
-      drawOuterBorder(ctx, cardWidth, cardHeight, cs.borderStyle, 3);
+      drawOuterBorder(ctx, cardWidth, cardHeight, cs.borderStyle, inkColor, 3);
 
       const innerPad = cs.borderStyle === 'double' ? Math.max(padPx, 12) : Math.max(padPx, 9);
       const hasMediaCol = cs.showCandidatePhoto || cs.showSymbolPhoto;
       const sideColW = hasMediaCol
-        ? Math.round((cs.paperWidthMm === 80 ? 185 : 132) * Math.max(0.8, (cs.photoScale + cs.symbolScale) / 2))
+        ? Math.round(
+            (cs.paperWidthMm === 80 ? 184 : 132) *
+              Math.max(0.8, Math.min(1.25, (cs.photoScale + cs.symbolScale) / 2))
+          )
         : 0;
 
       const mediaOnRight = cs.swapPhotoSymbol;
@@ -243,8 +358,8 @@ export async function drawThermalSlipToCanvas(
       // Vertical dashed separator between media column and content column
       if (hasMediaCol) {
         ctx.save();
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = inkColor;
+        ctx.lineWidth = 1.4;
         ctx.setLineDash([5, 3]);
         const sepX = mediaOnRight ? mediaX - 5 : mediaX + sideColW + 5;
         ctx.beginPath();
@@ -258,103 +373,144 @@ export async function drawThermalSlipToCanvas(
         const availH = cardHeight - innerPad * 2 - 4;
         if (cs.showCandidatePhoto && candImg) {
           const phH = cs.showSymbolPhoto
-            ? Math.min(Math.round(availH * 0.52 * cs.photoScale), Math.round(availH * 0.62))
+            ? Math.min(Math.round(availH * 0.52 * cs.photoScale), Math.round(availH * 0.6))
             : Math.min(Math.round(availH * 0.78 * cs.photoScale), availH - 28);
-          const phW = Math.min(sideColW - 6, Math.round(phH * 0.88));
+          const phW = Math.min(sideColW - 6, Math.round(phH * 0.86));
           const phX = mediaX + Math.round((sideColW - phW) / 2);
           drawImageCoverTop(ctx, candImg, phX, my, phW, phH);
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = inkColor;
+          ctx.lineWidth = 1.3;
           ctx.strokeRect(phX, my, phW, phH);
           my += phH + 5;
         }
         if (cs.showSymbolPhoto && symImg) {
-          const remH = Math.max(40, cardHeight - innerPad - my - (cs.showSlogan ? 34 : 18));
-          const symH = Math.min(Math.round(68 * baseScale * cs.symbolScale), remH);
-          const symW = Math.min(sideColW - 8, Math.round(86 * baseScale * cs.symbolScale));
+          const remH = Math.max(36, cardHeight - innerPad - my - (cs.showSlogan ? 34 : 18));
+          const symH = Math.min(Math.round(66 * baseScale * cs.symbolScale), remH);
+          const symW = Math.min(sideColW - 8, Math.round(84 * baseScale * cs.symbolScale));
           const symX = mediaX + Math.round((sideColW - symW) / 2);
           drawImageContain(ctx, symImg, symX, my, symW, symH);
           my += symH + 3;
         }
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#000000';
-        ctx.font = `900 ${Math.round(11.5 * baseScale)}px "Noto Sans Bengali", sans-serif`;
-        ctx.fillText(
-          (config.symbolCallout || `${config.symbolName} মার্কায় ভোট দিন`).slice(0, 24),
-          mediaX + sideColW / 2,
-          my,
-          sideColW - 4
-        );
-        my += Math.round(15 * baseScale);
 
-        if (cs.showSlogan && config.sloganText && my + 14 < cardHeight - innerPad) {
-          ctx.font = `bold ${Math.round(9 * baseScale)}px "Noto Sans Bengali", sans-serif`;
-          const sLines = wrapCanvasText(ctx, config.sloganText, sideColW - 4).slice(0, 2);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = inkColor;
+        ctx.font = `800 ${Math.round(11 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        const calloutLines = wrapCanvasText(
+          ctx,
+          config.symbolCallout || `${config.symbolName} মার্কায় ভোট দিন`,
+          sideColW - 2
+        ).slice(0, 2);
+        for (const cl of calloutLines) {
+          if (my + 12 > cardHeight - innerPad) break;
+          ctx.fillText(cl, mediaX + sideColW / 2, my);
+          my += Math.round(13.5 * baseScale);
+        }
+
+        if (cs.showSlogan && config.sloganText && my + 12 < cardHeight - innerPad) {
+          ctx.font = `600 ${Math.round(9 * baseScale)}px ${BENGALI_FONT_STACK}`;
+          const sLines = wrapCanvasText(ctx, config.sloganText, sideColW - 2).slice(0, 2);
           for (const sl of sLines) {
             if (my + 11 > cardHeight - innerPad) break;
-            ctx.fillText(sl, mediaX + sideColW / 2, my, sideColW - 4);
-            my += Math.round(11 * baseScale);
+            ctx.fillText(sl, mediaX + sideColW / 2, my);
+            my += Math.round(11.5 * baseScale);
           }
         }
       }
 
-      // Draw Right/Main Column Content
+      // Draw Right/Main Column Content cleanly without horizontal glyph squishing
       let y = innerPad;
-      const bottomLimit = cardHeight - innerPad - (cs.showFooter ? Math.round(22 * baseScale) : 0);
+      const footerH = cs.showFooter ? Math.round(18 * baseScale) : 0;
+      const bottomLimit = cardHeight - innerPad - (footerH > 0 ? footerH + 4 : 0);
 
       if (cs.showReligiousHeader && config.religiousHeader) {
         ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.round(10.5 * hScale)}px "Noto Sans Bengali", sans-serif`;
-        ctx.fillText(config.religiousHeader, mainX + mainW / 2, y, mainW);
+        ctx.fillStyle = inkColor;
+        ctx.font = `700 ${Math.round(10.5 * hScale)}px ${BENGALI_FONT_STACK}`;
+        const rLines = wrapCanvasText(ctx, config.religiousHeader, mainW).slice(0, 1);
+        if (rLines[0]) {
+          ctx.fillText(rLines[0], mainX + mainW / 2, y);
+        }
         y += Math.round(14 * hScale * spacing);
       }
 
       if (cs.showElectionTitle && (config.electionTitle || config.constituencyText)) {
         ctx.textAlign = 'left';
-        ctx.font = `800 ${Math.round(11.5 * hScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.fillStyle = inkColor;
+        ctx.font = `800 ${Math.round(11.5 * hScale)}px ${BENGALI_FONT_STACK}`;
         const titleLine = [config.electionTitle, config.constituencyText]
           .filter(Boolean)
           .join(' — ');
-        ctx.fillText(titleLine, mainX, y, mainW);
-        y += Math.round(15 * hScale * spacing);
+        const tLines = wrapCanvasText(ctx, titleLine, mainW).slice(0, 2);
+        for (const tl of tLines) {
+          ctx.fillText(tl, mainX, y);
+          y += Math.round(14.5 * hScale * spacing);
+        }
       }
 
       // Candidate Badge + Big Name Banner
       const badgeTxt = config.candidateBadge || config.postTitle || 'পদপ্রার্থী';
       const candFull = `${config.candidateName || config.name} ${config.candidateSuffix || ''}`.trim();
-      const bannerH = Math.round(23 * cScale);
-      ctx.fillStyle = '#000000';
+      const bannerText = `${badgeTxt}: ${candFull}`;
+      ctx.font = `800 ${Math.round(12.5 * cScale)}px ${BENGALI_FONT_STACK}`;
+      const bannerLines = wrapCanvasText(ctx, bannerText, mainW - 12).slice(0, 2);
+      const bannerLineH = Math.round(16 * cScale);
+      const bannerH = Math.max(Math.round(22 * cScale), bannerLines.length * bannerLineH + 6);
+      ctx.fillStyle = inkColor;
       ctx.fillRect(mainX, y, mainW, bannerH);
       ctx.fillStyle = '#FFFFFF';
       ctx.textAlign = 'left';
-      ctx.font = `900 ${Math.round(13 * cScale)}px "Noto Sans Bengali", sans-serif`;
-      ctx.fillText(`${badgeTxt}: ${candFull}`, mainX + 6, y + Math.round(4 * cScale), mainW - 12);
-      ctx.fillStyle = '#000000';
+      let by = y + 3;
+      for (const bl of bannerLines) {
+        ctx.fillText(bl, mainX + 6, by);
+        by += bannerLineH;
+      }
+      ctx.fillStyle = inkColor;
       y += bannerH + Math.round(5 * spacing);
 
       // Polling Center & Ward Strip
       if (cs.showPollingCenter || cs.showWardAndArea) {
-        ctx.font = `bold ${Math.round(11 * vScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.font = `700 ${Math.round(10.8 * vScale)}px ${BENGALI_FONT_STACK}`;
         const parts: string[] = [];
         if (cs.showPollingCenter && config.pollingCenter) {
           parts.push(`কেন্দ্র: ${config.pollingCenter}`);
         }
         if (cs.showWardAndArea) {
-          parts.push(`এলাকা: ${voter.villageName || config.voterArea || '-'} (ওয়ার্ড: ${config.wardNo || '-'})`);
+          parts.push(
+            `এলাকা: ${voter.villageName || config.voterArea || '-'} (ওয়ার্ড: ${config.wardNo || '-'})`
+          );
         }
-        ctx.fillText(parts.join('  |  '), mainX, y, mainW);
-        y += Math.round(15 * vScale * spacing);
-        drawHorizontalRule(ctx, mainX, mainX + mainW, y, true);
+        const metaLines = wrapCanvasText(ctx, parts.join('  •  '), mainW).slice(0, 2);
+        for (const ml of metaLines) {
+          if (y + 13 > bottomLimit) break;
+          ctx.fillText(ml, mainX, y);
+          y += Math.round(14 * vScale * spacing);
+        }
+        drawHorizontalRule(ctx, mainX, mainX + mainW, y + 1, inkColor, true);
         y += Math.round(5 * spacing);
       }
 
-      // Voter Fields (2-column compact landscape grid so everything fits cleanly)
-      const rowStep = Math.round(16.5 * vScale * spacing);
+      // Voter Fields (cleanly wrapped so Bengali letters are never squished!)
+      const rowStep = Math.round(16 * vScale * spacing);
+      const drawLandscapeField = (text: string, bold = false, maxLines = 1) => {
+        if (!text || y + 12 > bottomLimit) return;
+        ctx.font = `${bold ? 800 : 700} ${Math.round((bold ? 13 : 11.2) * vScale)}px ${BENGALI_FONT_STACK}`;
+        const lines = wrapCanvasText(ctx, text, mainW).slice(0, maxLines);
+        for (const ln of lines) {
+          if (y + 12 > bottomLimit) break;
+          ctx.fillText(ln, mainX, y);
+          if (fillMode === 'lined') {
+            drawLinedGuide(ctx, mainX, mainX + mainW, y + Math.round(14.5 * vScale), inkColor);
+          }
+          y += bold ? Math.round(17.5 * vScale * spacing) : rowStep;
+        }
+      };
+
       if (fillMode === 'blank') {
-        ctx.font = `bold ${Math.round(11 * vScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.font = `700 ${Math.round(11 * vScale)}px ${BENGALI_FONT_STACK}`;
         const blankRows = [
-          'নাম: ..............................................  ক্রমিক: ............',
-          'পিতা/স্বামী: ......................................  মাতা: ......................',
-          'ভোটার আইডি: ....................................  জন্ম: ......................',
+          'নাম: ............................................  ক্রমিক: ............',
+          'পিতা/স্বামী: ....................................  মাতা: ....................',
+          'ভোটার আইডি: ..................................  জন্ম: ....................',
         ];
         for (const br of blankRows) {
           if (y + rowStep > bottomLimit) break;
@@ -362,62 +518,54 @@ export async function drawThermalSlipToCanvas(
           y += rowStep;
         }
       } else {
-        // Name + Serial
-        ctx.font = `900 ${Math.round(13.5 * vScale)}px "Noto Sans Bengali", sans-serif`;
         const namePart = cs.showSerial
           ? `ক্রমিক: ${voter.serialNo || '-'}  |  নাম: ${voter.name || '-'}`
           : `নাম: ${voter.name || '-'}`;
-        ctx.fillText(namePart, mainX, y, mainW);
-        y += Math.round(18 * vScale * spacing);
+        drawLandscapeField(namePart, true, 2);
 
-        ctx.font = `bold ${Math.round(11.5 * vScale)}px "Noto Sans Bengali", sans-serif`;
-        if (cs.showVoterId && y + 12 <= bottomLimit) {
+        if (cs.showVoterId) {
           const idDob = [
             `ভোটার আইডি: ${voter.voterId || '-'}`,
             cs.showDob && voter.dob ? `জন্ম: ${voter.dob}` : '',
           ]
             .filter(Boolean)
             .join('   |   ');
-          ctx.fillText(idDob, mainX, y, mainW);
-          y += rowStep;
+          drawLandscapeField(idDob, false, 1);
         }
 
-        if ((cs.showFather || cs.showMother) && y + 12 <= bottomLimit) {
+        if (cs.showFather || cs.showMother) {
           const parents = [
             cs.showFather ? `পিতা/স্বামী: ${voter.fatherName || '-'}` : '',
             cs.showMother ? `মাতা: ${voter.motherName || '-'}` : '',
           ]
             .filter(Boolean)
             .join('   |   ');
-          ctx.fillText(parents, mainX, y, mainW);
-          y += rowStep;
+          drawLandscapeField(parents, false, 2);
         }
 
-        if ((cs.showProfession || cs.showAddress) && y + 12 <= bottomLimit) {
+        if (cs.showProfession || cs.showAddress) {
           const addrProf = [
             cs.showProfession && voter.profession ? `পেশা: ${voter.profession}` : '',
             cs.showAddress ? `ঠিকানা: ${voter.address || voter.villageName || '-'}` : '',
           ]
             .filter(Boolean)
             .join('   |   ');
-          if (addrProf) {
-            ctx.fillText(addrProf, mainX, y, mainW);
-          }
+          drawLandscapeField(addrProf, false, 1);
         }
       }
 
       // Footer Strip
       if (cs.showFooter) {
-        const fy = cardHeight - innerPad - Math.round(17 * baseScale);
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(mainX, fy, mainW, Math.round(17 * baseScale));
+        const fy = cardHeight - innerPad - footerH;
+        ctx.fillStyle = inkColor;
+        ctx.fillRect(mainX, fy, mainW, footerH);
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.round(10 * baseScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.font = `700 ${Math.round(10 * baseScale)}px ${BENGALI_FONT_STACK}`;
         ctx.fillText(
           config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT,
           mainX + mainW / 2,
-          fy + 3,
+          fy + Math.max(2, Math.round(2.5 * baseScale)),
           mainW - 8
         );
       }
@@ -439,130 +587,144 @@ export async function drawThermalSlipToCanvas(
 
   // ===========================================================================
   // PORTRAIT THERMAL SLIP (Exact width = 384px for 58mm or 576px for 80mm,
-  // dynamic two-pass exact height measurement!)
+  // dynamic two-pass exact height measurement with zero GPU reallocation thrash!)
   // ===========================================================================
   const width = rollDots;
   const innerPad = cs.borderStyle === 'double' ? Math.max(padPx, 12) : Math.max(padPx, 10);
   const contentW = width - innerPad * 2;
 
-  const renderPortraitPass = (ctx: CanvasRenderingContext2D, dryRun: boolean): number => {
+  const renderPortraitPass = (
+    ctx: CanvasRenderingContext2D,
+    dryRun: boolean,
+    logicalHeight = 800
+  ): number => {
     let y = innerPad;
 
     if (!dryRun) {
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, width, logicalHeight);
+      ctx.fillStyle = inkColor;
       ctx.textBaseline = 'top';
     }
 
     // 1. Religious Header
     if (cs.showReligiousHeader && config.religiousHeader) {
-      ctx.font = `bold ${Math.round(12.5 * hScale)}px "Noto Sans Bengali", sans-serif`;
-      if (!dryRun) {
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#000000';
-        ctx.fillText(config.religiousHeader, width / 2, y, contentW);
+      ctx.font = `700 ${Math.round(12 * hScale)}px ${BENGALI_FONT_STACK}`;
+      const rLines = wrapCanvasText(ctx, config.religiousHeader, contentW);
+      for (const rl of rLines) {
+        if (!dryRun) {
+          ctx.textAlign = 'center';
+          ctx.fillStyle = inkColor;
+          ctx.fillText(rl, width / 2, y);
+        }
+        y += Math.round(17 * hScale * spacing);
       }
-      y += Math.round(18 * hScale * spacing);
     }
 
     // 2. Election Title & Constituency
     if (cs.showElectionTitle) {
       if (config.electionTitle) {
-        ctx.font = `900 ${Math.round(14.5 * hScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.font = `800 ${Math.round(14.5 * hScale)}px ${BENGALI_FONT_STACK}`;
         const lines = wrapCanvasText(ctx, config.electionTitle, contentW);
         for (const ln of lines) {
           if (!dryRun) {
             ctx.textAlign = 'center';
-            ctx.fillText(ln, width / 2, y, contentW);
+            ctx.fillStyle = inkColor;
+            ctx.fillText(ln, width / 2, y);
           }
-          y += Math.round(18 * hScale * spacing);
+          y += Math.round(18.5 * hScale * spacing);
         }
       }
       const subText = config.constituencyText || config.electionSubtitle || '';
       if (subText) {
-        ctx.font = `bold ${Math.round(11 * hScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.font = `700 ${Math.round(11.2 * hScale)}px ${BENGALI_FONT_STACK}`;
         const lines = wrapCanvasText(ctx, subText, contentW);
         for (const ln of lines) {
           if (!dryRun) {
             ctx.textAlign = 'center';
-            ctx.fillText(ln, width / 2, y, contentW);
+            ctx.fillStyle = inkColor;
+            ctx.fillText(ln, width / 2, y);
           }
-          y += Math.round(15 * hScale * spacing);
+          y += Math.round(15.5 * hScale * spacing);
         }
       }
     }
 
     if (cs.showReligiousHeader || cs.showElectionTitle) {
       y += 3;
-      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, true);
+      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, true);
       y += Math.round(7 * spacing);
     }
 
     // 3. Candidate Hero Row (Symbol + Center Name/Badge + Candidate Photo, swappable!)
-    const symW = cs.showSymbolPhoto ? Math.round(80 * baseScale * cs.symbolScale) : 0;
-    const symH = cs.showSymbolPhoto ? Math.round(76 * baseScale * cs.symbolScale) : 0;
-    const photoW = cs.showCandidatePhoto ? Math.round(108 * baseScale * cs.photoScale) : 0;
-    const photoH = cs.showCandidatePhoto ? Math.round(130 * baseScale * cs.photoScale) : 0;
+    const symW = cs.showSymbolPhoto ? Math.round(78 * baseScale * cs.symbolScale) : 0;
+    const symH = cs.showSymbolPhoto ? Math.round(74 * baseScale * cs.symbolScale) : 0;
+    const photoW = cs.showCandidatePhoto ? Math.round(104 * baseScale * cs.photoScale) : 0;
+    const photoH = cs.showCandidatePhoto ? Math.round(126 * baseScale * cs.photoScale) : 0;
 
     const leftBoxW = cs.swapPhotoSymbol ? photoW : symW;
     const rightBoxW = cs.swapPhotoSymbol ? symW : photoW;
-    const centerXStart = innerPad + (leftBoxW > 0 ? leftBoxW + 6 : 0);
+    const centerXStart = innerPad + (leftBoxW > 0 ? leftBoxW + 7 : 0);
     const centerW = Math.max(
-      90,
-      contentW - (leftBoxW > 0 ? leftBoxW + 6 : 0) - (rightBoxW > 0 ? rightBoxW + 6 : 0)
+      92,
+      contentW - (leftBoxW > 0 ? leftBoxW + 7 : 0) - (rightBoxW > 0 ? rightBoxW + 7 : 0)
     );
     const centerXMid = centerXStart + centerW / 2;
 
-    // Measure center column height
-    let centerY = y + 4;
-    const badgeH = Math.round(21 * cScale);
+    // Measure & draw center column
+    let centerY = y + 3;
+    const badgeLabel = config.candidateBadge || config.postTitle || 'পদপ্রার্থী';
+    ctx.font = `700 ${Math.round(10.8 * cScale)}px ${BENGALI_FONT_STACK}`;
+    const badgeLines = wrapCanvasText(ctx, badgeLabel, centerW - 8).slice(0, 2);
+    const badgeLineH = Math.round(14.5 * cScale);
+    const badgeH = Math.max(Math.round(20 * cScale), badgeLines.length * badgeLineH + 5);
+
     if (!dryRun) {
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = inkColor;
       ctx.fillRect(centerXStart, centerY, centerW, badgeH);
       ctx.fillStyle = '#FFFFFF';
       ctx.textAlign = 'center';
-      ctx.font = `bold ${Math.round(11 * cScale)}px "Noto Sans Bengali", sans-serif`;
-      ctx.fillText(
-        config.candidateBadge || config.postTitle || 'পদপ্রার্থী',
-        centerXMid,
-        centerY + Math.round(4 * cScale),
-        centerW - 6
-      );
-      ctx.fillStyle = '#000000';
+      let by = centerY + 3;
+      for (const bl of badgeLines) {
+        ctx.fillText(bl, centerXMid, by);
+        by += badgeLineH;
+      }
+      ctx.fillStyle = inkColor;
     }
     centerY += badgeH + Math.round(6 * spacing);
 
-    ctx.font = `900 ${Math.round(15.5 * cScale)}px "Noto Sans Bengali", sans-serif`;
+    ctx.font = `800 ${Math.round(15 * cScale)}px ${BENGALI_FONT_STACK}`;
     const fullName = `${config.candidateName || config.name} ${config.candidateSuffix || 'কে'}`.trim();
     const nameLines = wrapCanvasText(ctx, fullName, centerW);
     for (const nl of nameLines) {
       if (!dryRun) {
         ctx.textAlign = 'center';
-        ctx.fillText(nl, centerXMid, centerY, centerW);
+        ctx.fillStyle = inkColor;
+        ctx.fillText(nl, centerXMid, centerY);
       }
       centerY += Math.round(19 * cScale * spacing);
     }
 
-    // Vote Callout pill in center if symbol hidden, or subtitle
     const calloutStr = config.symbolCallout || `${config.symbolName} মার্কায় ভোট দিন`;
-    ctx.font = `800 ${Math.round(11 * cScale)}px "Noto Sans Bengali", sans-serif`;
+    ctx.font = `800 ${Math.round(11 * cScale)}px ${BENGALI_FONT_STACK}`;
     const callLines = wrapCanvasText(ctx, calloutStr, centerW);
     for (const cl of callLines) {
       if (!dryRun) {
         ctx.textAlign = 'center';
-        ctx.fillText(cl, centerXMid, centerY + 2, centerW);
+        ctx.fillStyle = inkColor;
+        ctx.fillText(cl, centerXMid, centerY + 1);
       }
       centerY += Math.round(15 * cScale * spacing);
     }
 
     if (cs.showSlogan && config.sloganText) {
-      ctx.font = `bold ${Math.round(9.5 * baseScale)}px "Noto Sans Bengali", sans-serif`;
+      ctx.font = `600 ${Math.round(9.5 * baseScale)}px ${BENGALI_FONT_STACK}`;
       const slLines = wrapCanvasText(ctx, config.sloganText, centerW).slice(0, 2);
       for (const sl of slLines) {
         if (!dryRun) {
           ctx.textAlign = 'center';
-          ctx.fillText(sl, centerXMid, centerY + 2, centerW);
+          ctx.fillStyle = inkColor;
+          ctx.fillText(sl, centerXMid, centerY + 1);
         }
         centerY += Math.round(13 * baseScale * spacing);
       }
@@ -570,7 +732,7 @@ export async function drawThermalSlipToCanvas(
 
     // Draw Symbol & Candidate Photo on their chosen sides
     const symBlockH = cs.showSymbolPhoto ? symH + Math.round(20 * baseScale) : 0;
-    const photoBlockH = cs.showCandidatePhoto ? photoH + Math.round(16 * baseScale) : 0;
+    const photoBlockH = cs.showCandidatePhoto ? photoH + Math.round(18 * baseScale) : 0;
 
     if (!dryRun) {
       if (cs.showSymbolPhoto) {
@@ -579,14 +741,9 @@ export async function drawThermalSlipToCanvas(
           drawImageContain(ctx, symImg, sx, y + 2, symW, symH);
         }
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#000000';
-        ctx.font = `bold ${Math.round(10.5 * baseScale)}px "Noto Sans Bengali", sans-serif`;
-        ctx.fillText(
-          `মার্কা: ${config.symbolName || ''}`,
-          sx + symW / 2,
-          y + symH + 4,
-          symW
-        );
+        ctx.fillStyle = inkColor;
+        ctx.font = `700 ${Math.round(10.2 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        ctx.fillText(`মার্কা: ${config.symbolName || ''}`, sx + symW / 2, y + symH + 4, symW + 4);
       }
 
       if (cs.showCandidatePhoto) {
@@ -594,11 +751,12 @@ export async function drawThermalSlipToCanvas(
         if (candImg) {
           drawImageCoverTop(ctx, candImg, px, y + 2, photoW, photoH);
         }
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.3;
+        ctx.strokeStyle = inkColor;
         ctx.strokeRect(px, y + 2, photoW, photoH);
         ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.round(10 * baseScale)}px "Noto Sans Bengali", sans-serif`;
+        ctx.fillStyle = inkColor;
+        ctx.font = `700 ${Math.round(10 * baseScale)}px ${BENGALI_FONT_STACK}`;
         ctx.fillText('প্রার্থী', px + photoW / 2, y + photoH + 4, photoW);
       }
     }
@@ -606,48 +764,83 @@ export async function drawThermalSlipToCanvas(
     const heroHeight = Math.max(centerY - y, symBlockH, photoBlockH);
     y += heroHeight + Math.round(6 * spacing);
 
-    if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, false);
+    if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, false);
     y += Math.round(7 * spacing);
 
     // 4. Polling Center & Ward / Area
     if (cs.showPollingCenter && config.pollingCenter) {
-      ctx.font = `bold ${Math.round(12.5 * vScale)}px "Noto Sans Bengali", sans-serif`;
+      ctx.font = `700 ${Math.round(12.2 * vScale)}px ${BENGALI_FONT_STACK}`;
       const cLines = wrapCanvasText(ctx, `ভোট কেন্দ্র: ${config.pollingCenter}`, contentW);
       for (const cl of cLines) {
         if (!dryRun) {
           ctx.textAlign = 'left';
-          ctx.fillText(cl, innerPad, y, contentW);
+          ctx.fillStyle = inkColor;
+          ctx.fillText(cl, innerPad, y);
         }
         y += Math.round(17 * vScale * spacing);
       }
     }
 
     if (cs.showWardAndArea) {
-      ctx.font = `bold ${Math.round(12 * vScale)}px "Noto Sans Bengali", sans-serif`;
-      if (!dryRun) {
-        ctx.textAlign = 'left';
-        ctx.fillText(
-          `এলাকা: ${voter.villageName || config.voterArea || '-'}`,
-          innerPad,
-          y,
-          contentW * 0.65
-        );
-        ctx.textAlign = 'right';
-        ctx.fillText(`ওয়ার্ড নং: ${config.wardNo || '-'}`, width - innerPad, y, contentW * 0.35);
+      ctx.font = `700 ${Math.round(11.8 * vScale)}px ${BENGALI_FONT_STACK}`;
+      const areaLabel = `এলাকা: ${voter.villageName || config.voterArea || '-'}`;
+      const wardLabel = `ওয়ার্ড নং: ${config.wardNo || '-'}`;
+      const combinedWidth =
+        ctx.measureText(areaLabel).width + ctx.measureText(wardLabel).width + 16;
+      if (combinedWidth <= contentW) {
+        if (!dryRun) {
+          ctx.fillStyle = inkColor;
+          ctx.textAlign = 'left';
+          ctx.fillText(areaLabel, innerPad, y);
+          ctx.textAlign = 'right';
+          ctx.fillText(wardLabel, width - innerPad, y);
+        }
+        y += Math.round(17 * vScale * spacing);
+      } else {
+        const awLines = wrapCanvasText(ctx, `${areaLabel}  •  ${wardLabel}`, contentW);
+        for (const al of awLines) {
+          if (!dryRun) {
+            ctx.fillStyle = inkColor;
+            ctx.textAlign = 'left';
+            ctx.fillText(al, innerPad, y);
+          }
+          y += Math.round(16.5 * vScale * spacing);
+        }
       }
-      y += Math.round(17 * vScale * spacing);
     }
 
     if (cs.showPollingCenter || cs.showWardAndArea) {
       y += 2;
-      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, true);
+      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, true);
       y += Math.round(7 * spacing);
     }
 
-    // 5. Voter Details Section
-    const vStep = Math.round(20 * vScale * spacing);
+    // 5. Voter Details Section (cleanly wrapped, zero glyph distortion)
+    const vStep = Math.round(19.5 * vScale * spacing);
+    const drawWrappedVoterField = (labelAndVal: string) => {
+      ctx.font = `700 ${Math.round(12.5 * vScale)}px ${BENGALI_FONT_STACK}`;
+      const lines = wrapCanvasText(ctx, labelAndVal, contentW);
+      for (const ln of lines) {
+        if (!dryRun) {
+          ctx.textAlign = 'left';
+          ctx.fillStyle = inkColor;
+          ctx.fillText(ln, innerPad, y);
+          if (fillMode === 'lined') {
+            drawLinedGuide(
+              ctx,
+              innerPad,
+              width - innerPad,
+              y + Math.round(16.5 * vScale),
+              inkColor
+            );
+          }
+        }
+        y += vStep;
+      }
+    };
+
     if (fillMode === 'blank') {
-      ctx.font = `bold ${Math.round(12 * vScale)}px "Noto Sans Bengali", sans-serif`;
+      ctx.font = `700 ${Math.round(12 * vScale)}px ${BENGALI_FONT_STACK}`;
       const blankFields = [
         'ভোটারের নাম : ..........................................',
         'ক্রমিক নং : ...................  ওয়ার্ড : ...............',
@@ -658,55 +851,48 @@ export async function drawThermalSlipToCanvas(
       for (const bf of blankFields) {
         if (!dryRun) {
           ctx.textAlign = 'left';
+          ctx.fillStyle = inkColor;
           ctx.fillText(bf, innerPad, y, contentW);
         }
         y += vStep;
       }
     } else {
       // Highlighted Serial + Name Box
-      ctx.font = `900 ${Math.round(15 * vScale)}px "Noto Sans Bengali", sans-serif`;
+      ctx.font = `800 ${Math.round(14.5 * vScale)}px ${BENGALI_FONT_STACK}`;
       const headVoter = cs.showSerial
-        ? `ক্রমিক: ${voter.serialNo || '-'} | ${voter.name || '-'}`
+        ? `ক্রমিক: ${voter.serialNo || '-'}  |  ${voter.name || '-'}`
         : `নাম: ${voter.name || '-'}`;
-      const vNameLines = wrapCanvasText(ctx, headVoter, contentW - 10);
-      const boxH = vNameLines.length * Math.round(19 * vScale) + 8;
+      const vNameLines = wrapCanvasText(ctx, headVoter, contentW - 12);
+      const lineH = Math.round(19 * vScale);
+      const boxH = vNameLines.length * lineH + 9;
       if (!dryRun) {
-        ctx.strokeStyle = '#000000';
+        if (previewQuality) {
+          ctx.fillStyle = '#f8fafc';
+          ctx.fillRect(innerPad, y, contentW, boxH);
+        }
+        ctx.strokeStyle = inkColor;
         ctx.lineWidth = 1.4;
         ctx.strokeRect(innerPad, y, contentW, boxH);
+        ctx.fillStyle = inkColor;
         ctx.textAlign = 'left';
-        let ny = y + 4;
+        let ny = y + 4.5;
         for (const nl of vNameLines) {
-          ctx.fillText(nl, innerPad + 5, ny, contentW - 10);
-          ny += Math.round(19 * vScale);
+          ctx.fillText(nl, innerPad + 6, ny);
+          ny += lineH;
         }
       }
-      y += boxH + Math.round(6 * spacing);
+      y += boxH + Math.round(7 * spacing);
 
       if (cs.showVoterId) {
-        ctx.font = `bold ${Math.round(13.5 * vScale)}px monospace`;
-        if (!dryRun) {
-          ctx.textAlign = 'left';
-          ctx.fillText(`ভোটার আইডি: ${voter.voterId || '-'}`, innerPad, y, contentW);
-        }
-        y += vStep;
+        drawWrappedVoterField(`ভোটার আইডি: ${voter.voterId || '-'}`);
       }
 
-      ctx.font = `bold ${Math.round(12.5 * vScale)}px "Noto Sans Bengali", sans-serif`;
       if (cs.showFather) {
-        if (!dryRun) {
-          ctx.textAlign = 'left';
-          ctx.fillText(`পিতা/স্বামী: ${voter.fatherName || '-'}`, innerPad, y, contentW);
-        }
-        y += vStep;
+        drawWrappedVoterField(`পিতা/স্বামী: ${voter.fatherName || '-'}`);
       }
 
       if (cs.showMother) {
-        if (!dryRun) {
-          ctx.textAlign = 'left';
-          ctx.fillText(`মাতা: ${voter.motherName || '-'}`, innerPad, y, contentW);
-        }
-        y += vStep;
+        drawWrappedVoterField(`মাতা: ${voter.motherName || '-'}`);
       }
 
       const dobProf = [
@@ -714,39 +900,22 @@ export async function drawThermalSlipToCanvas(
         cs.showProfession && voter.profession ? `পেশা: ${voter.profession}` : '',
       ]
         .filter(Boolean)
-        .join('  |  ');
+        .join('   |   ');
       if (dobProf) {
-        ctx.font = `bold ${Math.round(12 * vScale)}px "Noto Sans Bengali", sans-serif`;
-        if (!dryRun) {
-          ctx.textAlign = 'left';
-          ctx.fillText(dobProf, innerPad, y, contentW);
-        }
-        y += Math.round(18 * vScale * spacing);
+        drawWrappedVoterField(dobProf);
       }
 
       if (cs.showAddress) {
-        ctx.font = `bold ${Math.round(12 * vScale)}px "Noto Sans Bengali", sans-serif`;
-        const addrLines = wrapCanvasText(
-          ctx,
-          `ঠিকানা: ${voter.address || voter.villageName || '-'}`,
-          contentW
-        );
-        for (const al of addrLines) {
-          if (!dryRun) {
-            ctx.textAlign = 'left';
-            ctx.fillText(al, innerPad, y, contentW);
-          }
-          y += Math.round(17 * vScale * spacing);
-        }
+        drawWrappedVoterField(`ঠিকানা: ${voter.address || voter.villageName || '-'}`);
       }
     }
 
     // 6. Footer
     if (cs.showFooter) {
       y += 3;
-      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, true);
+      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, true);
       y += Math.round(6 * spacing);
-      ctx.font = `800 ${Math.round(11.5 * baseScale)}px "Noto Sans Bengali", sans-serif`;
+      ctx.font = `800 ${Math.round(11.2 * baseScale)}px ${BENGALI_FONT_STACK}`;
       const fLines = wrapCanvasText(
         ctx,
         config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT,
@@ -755,7 +924,8 @@ export async function drawThermalSlipToCanvas(
       for (const fl of fLines) {
         if (!dryRun) {
           ctx.textAlign = 'center';
-          ctx.fillText(fl, width / 2, y, contentW);
+          ctx.fillStyle = inkColor;
+          ctx.fillText(fl, width / 2, y);
         }
         y += Math.round(16 * baseScale * spacing);
       }
@@ -765,19 +935,21 @@ export async function drawThermalSlipToCanvas(
     return Math.ceil(y / 8) * 8;
   };
 
-  // Pass 1: Measure exact height
-  canvas.width = width;
-  canvas.height = 800;
-  const measureCtx = canvas.getContext('2d');
+  // Pass 1: Measure exact height on offscreen context (no visible canvas flicker!)
+  const measureCtx = getMeasureContext() || canvas.getContext('2d');
   const exactHeight = measureCtx ? renderPortraitPass(measureCtx, true) : 512;
 
-  // Pass 2: Resize to exact height & draw cleanly
-  canvas.width = width;
-  canvas.height = exactHeight;
+  // Pass 2: Resize visible canvas ONLY if physical dimensions changed & draw at HD pixelScale
+  const targetPhysW = Math.round(width * pixelScale);
+  const targetPhysH = Math.round(exactHeight * pixelScale);
+  if (canvas.width !== targetPhysW) canvas.width = targetPhysW;
+  if (canvas.height !== targetPhysH) canvas.height = targetPhysH;
+
   const drawCtx = canvas.getContext('2d');
   if (drawCtx) {
-    renderPortraitPass(drawCtx, false);
-    drawOuterBorder(drawCtx, width, exactHeight, cs.borderStyle, 3);
+    configureHighQualityContext(drawCtx, pixelScale);
+    renderPortraitPass(drawCtx, false, exactHeight);
+    drawOuterBorder(drawCtx, width, exactHeight, cs.borderStyle, inkColor, 3);
   }
 
   const lengthMm = Math.round(exactHeight / 8);
@@ -807,7 +979,6 @@ export function prepareCanvasForThermalPrinter(
     return viewCanvas;
   }
   const rotated = document.createElement('canvas');
-  // viewCanvas.height is already printableRollDots (384 or 576)!
   rotated.width = viewCanvas.height;
   rotated.height = viewCanvas.width;
   const rCtx = rotated.getContext('2d');

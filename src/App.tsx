@@ -62,6 +62,7 @@ import {
   loadVoterAnnotations,
 } from './lib/voterTrackerStore';
 import { getSlipQueue } from './lib/voterSlipUtils';
+import { safeLocalGet, safeLocalRemove, safeLocalSet } from './lib/safeStorage';
 
 const EMPTY_FILTERS: AppSearchFilters = {
   searchField: 'name',
@@ -85,7 +86,7 @@ export const App: React.FC = () => {
   const initialDevEmail =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('dev_user') ||
-        localStorage.getItem('voter_dev_test_email')
+        safeLocalGet('voter_dev_test_email')
       : null;
 
   const [currentUser, setCurrentUser] = useState<User | null>(
@@ -519,17 +520,23 @@ export const App: React.FC = () => {
         setIsAuthChecking(false);
         return;
       }
-      if (user) {
-        setCurrentUser(user);
+      const effectiveUser =
+        user ||
+        (safeLocalGet('voter_verified_auth_email')
+          ? ({ email: safeLocalGet('voter_verified_auth_email') } as any)
+          : null);
+
+      if (effectiveUser) {
+        setCurrentUser(effectiveUser);
         setAuthStatusText('ইন্টারনেট সংযোগ ও ভোটার ডাটা প্রস্তুত হচ্ছে...');
 
-        let mySessionId = localStorage.getItem('voter_device_session_id');
+        let mySessionId = safeLocalGet('voter_device_session_id');
         if (!mySessionId) {
           mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
-          localStorage.setItem('voter_device_session_id', mySessionId);
+          safeLocalSet('voter_device_session_id', mySessionId);
         }
 
-        if (user.email) {
+        if (effectiveUser.email) {
           const ua = navigator.userAgent;
           let detectedDevice = 'Mobile Web';
           if (/Android/i.test(ua)) detectedDevice = 'Android Mobile';
@@ -546,12 +553,14 @@ export const App: React.FC = () => {
             sessionIntervalRef.current = null;
           }
 
-          clientRegisterSession(user.email, mySessionId, detectedDevice);
+          clientRegisterSession(effectiveUser.email, mySessionId, detectedDevice);
 
           if (navigator.onLine) {
-            cloudRegisterSession(user.email, mySessionId, detectedDevice)
+            cloudRegisterSession(effectiveUser.email, mySessionId, detectedDevice)
               .then(async (res) => {
                 if (res.isBlocked) {
+                  safeLocalRemove('voter_verified_auth_email');
+                  safeLocalRemove('voter_device_session_id');
                   await signOut(auth).catch(() => {});
                   setCurrentUser(null);
                   setLoginAlert({
@@ -561,6 +570,8 @@ export const App: React.FC = () => {
                   return;
                 }
                 if (res.maintenanceBlocked) {
+                  safeLocalRemove('voter_verified_auth_email');
+                  safeLocalRemove('voter_device_session_id');
                   await signOut(auth).catch(() => {});
                   setCurrentUser(null);
                   setLoginAlert({
@@ -577,7 +588,7 @@ export const App: React.FC = () => {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                email: user.email,
+                email: effectiveUser.email,
                 sessionId: mySessionId,
                 deviceName: detectedDevice,
               }),
@@ -585,25 +596,25 @@ export const App: React.FC = () => {
           }
 
           sessionIntervalRef.current = setInterval(async () => {
-            const currentSid = localStorage.getItem('voter_device_session_id');
-            if (!currentSid || !user.email) return;
+            const currentSid = safeLocalGet('voter_device_session_id');
+            if (!currentSid || !effectiveUser.email) return;
 
             clientHeartbeat(currentSid);
             if (!navigator.onLine) return;
 
-            cloudHeartbeat(currentSid, user.email);
+            cloudHeartbeat(currentSid, effectiveUser.email);
 
             try {
               const valRes = await fetch(
                 `/api/session/validate?email=${encodeURIComponent(
-                  user.email
+                  effectiveUser.email
                 )}&sessionId=${encodeURIComponent(currentSid)}`
               );
               const vct = valRes.headers.get('content-type') || '';
               if (valRes.ok && vct.includes('application/json')) {
                 const data = await valRes.json();
                 if (data.isValid === false && data.reason === 'another_device_logged_in') {
-                  const activeSid = localStorage.getItem('voter_device_session_id');
+                  const activeSid = safeLocalGet('voter_device_session_id');
                   if (activeSid === mySessionId && !isLoggingOut) {
                     if (sessionIntervalRef.current) {
                       clearInterval(sessionIntervalRef.current);
@@ -620,13 +631,14 @@ export const App: React.FC = () => {
             sessionListenerUnsubRef.current = listenForSessionTermination(
               mySessionId,
               (reason) => {
-                const currentSid = localStorage.getItem('voter_device_session_id');
+                const currentSid = safeLocalGet('voter_device_session_id');
                 if (reason === 'user_blocked') {
                   if (sessionIntervalRef.current) {
                     clearInterval(sessionIntervalRef.current);
                     sessionIntervalRef.current = null;
                   }
-                  localStorage.removeItem('voter_device_session_id');
+                  safeLocalRemove('voter_device_session_id');
+                  safeLocalRemove('voter_verified_auth_email');
                   signOut(auth).catch(() => {});
                   setCurrentUser(null);
                   setLoginAlert({
@@ -643,14 +655,14 @@ export const App: React.FC = () => {
                   setIsAnotherDeviceOpen(true);
                 }
               },
-              user.email
+              effectiveUser.email
             );
           } catch {}
         }
 
         const data = await loadVillages();
 
-        const savedRaw = localStorage.getItem('voterAppSavedState');
+        const savedRaw = safeLocalGet('voterAppSavedState');
         if (savedRaw) {
           try {
             const state: SavedAppState = JSON.parse(savedRaw);
@@ -712,7 +724,7 @@ export const App: React.FC = () => {
       if (activeScreen !== 'home') {
         setActiveScreen('home');
         setActiveVillageKey('');
-        localStorage.removeItem('voterAppSavedState');
+        safeLocalRemove('voterAppSavedState');
         return true;
       }
       return false;
@@ -762,7 +774,7 @@ export const App: React.FC = () => {
       search: nextSearch,
       settings: savedSettings,
     };
-    localStorage.setItem('voterAppSavedState', JSON.stringify(state));
+    safeLocalSet('voterAppSavedState', JSON.stringify(state));
   };
 
   const handleOpenGlobalSearch = (preset?: {
@@ -810,7 +822,7 @@ export const App: React.FC = () => {
       search: nextSearch,
       settings: nextSettings,
     };
-    localStorage.setItem('voterAppSavedState', JSON.stringify(state));
+    safeLocalSet('voterAppSavedState', JSON.stringify(state));
   };
 
   const handleSwitchVillageInSearch = (targetKey: string) => {
@@ -843,7 +855,7 @@ export const App: React.FC = () => {
   const handleBackToHome = () => {
     setActiveScreen('home');
     setActiveVillageKey('');
-    localStorage.removeItem('voterAppSavedState');
+    safeLocalRemove('voterAppSavedState');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (window.location.hash) {
       window.history.replaceState({ screen: 'home' }, 'Home', window.location.pathname);
@@ -876,7 +888,7 @@ export const App: React.FC = () => {
           search,
           settings,
         };
-        localStorage.setItem('voterAppSavedState', JSON.stringify(state));
+        safeLocalSet('voterAppSavedState', JSON.stringify(state));
       }
     },
     [activeVillageKey]
@@ -894,10 +906,13 @@ export const App: React.FC = () => {
     }
 
     const email = currentUser?.email;
-    const sessionId = localStorage.getItem('voter_device_session_id');
+    const sessionId = safeLocalGet('voter_device_session_id');
 
-    localStorage.removeItem('voter_device_session_id');
-    localStorage.removeItem('voterAppSavedState');
+    safeLocalRemove('voter_device_session_id');
+    safeLocalRemove('voter_verified_auth_email');
+    safeLocalRemove('voter_dev_test_email');
+    safeLocalRemove('voterAppSavedState');
+    isDevUserActiveRef.current = false;
 
     if (email && sessionId) {
       try {
@@ -941,8 +956,9 @@ export const App: React.FC = () => {
       sessionIntervalRef.current = null;
     }
     setIsAnotherDeviceOpen(false);
-    localStorage.removeItem('voter_device_session_id');
-    localStorage.removeItem('voterAppSavedState');
+    safeLocalRemove('voter_device_session_id');
+    safeLocalRemove('voter_verified_auth_email');
+    safeLocalRemove('voterAppSavedState');
     signOut(auth).catch(() => {});
     setCurrentUser(null);
     setActiveScreen('home');
@@ -968,7 +984,17 @@ export const App: React.FC = () => {
             if (Object.keys(villagesData).length === 0) {
               await loadVillages();
             }
-            setCurrentUser({ email } as any);
+            const sid =
+              safeLocalGet('voter_device_session_id') ||
+              'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+            safeLocalSet('voter_device_session_id', sid);
+            clientRegisterSession(email, sid, 'App Session');
+            fetch('/api/session/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email, sessionId: sid, deviceName: 'Web/Preview' }),
+            }).catch(() => null);
+            setCurrentUser((prev) => prev || ({ email } as any));
           }}
         />
       </>

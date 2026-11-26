@@ -1,5 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import {
+  Auth,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  getAuth,
+  inMemoryPersistence,
+  initializeAuth,
+} from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
 const env: Record<string, string | undefined> =
@@ -10,9 +17,11 @@ const env: Record<string, string | undefined> =
     : {};
 
 export const FIREBASE_PROJECT_ID = env.VITE_FIREBASE_PROJECT_ID || 'voter-ba30b';
+export const FIREBASE_WEB_API_KEY =
+  env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A';
 
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyAbOIhoArZU275DtYKxo11UyizhGR1GP8A',
+  apiKey: FIREBASE_WEB_API_KEY,
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'voter-ba30b.firebaseapp.com',
   databaseURL:
     env.VITE_FIREBASE_DATABASE_URL || 'https://voter-ba30b-default-rtdb.firebaseio.com',
@@ -23,6 +32,26 @@ const firebaseConfig = {
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const auth = getAuth(app);
+
+function createResilientAuth(): Auth {
+  if (typeof window === 'undefined') {
+    return getAuth(app);
+  }
+  try {
+    // Avoid indexedDBLocalPersistence which can hang indefinitely inside cross-origin preview iframes
+    // while keeping persistent browserLocalPersistence on Android APK & standard browsers!
+    return initializeAuth(app, {
+      persistence: [
+        browserLocalPersistence,
+        browserSessionPersistence,
+        inMemoryPersistence,
+      ],
+    });
+  } catch {
+    return getAuth(app);
+  }
+}
+
+export const auth = createResilientAuth();
 export const database = getDatabase(app);
 export default app;

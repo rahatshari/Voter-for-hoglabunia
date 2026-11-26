@@ -1287,7 +1287,7 @@ export function getSlipCardStylesheet(
       ${borderCss}
     }
     .bw-filter img {
-      filter: grayscale(100%) contrast(118%);
+      filter: grayscale(100%) contrast(105%);
     }
 
     /* STYLE 1: CLASSIC VOTER CARD */

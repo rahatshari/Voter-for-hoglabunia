@@ -4,6 +4,8 @@ import { DEFAULT_SLIP_FOOTER_TEXT } from './voterSlipUtils';
 export const DEFAULT_SLIP_CUSTOM_SETTINGS: Required<SlipCustomSettings> = {
   orientation: 'portrait',
   paperWidthMm: 58,
+  thermalColorMode: 'bw',
+  voterOnlyMode: false,
   headerFontScale: 1,
   candidateFontScale: 1,
   voterFontScale: 1,
@@ -76,6 +78,7 @@ export interface ThermalSlipRenderOptions {
 const MAX_IMAGE_CACHE_SIZE = 32;
 const resolvedImageCache = new Map<string, HTMLImageElement | null>();
 const inflightImageCache = new Map<string, Promise<HTMLImageElement | null>>();
+const grayscaleImageCache = new Map<string, HTMLCanvasElement>();
 
 function rememberResolvedImage(src: string, img: HTMLImageElement | null) {
   if (resolvedImageCache.size >= MAX_IMAGE_CACHE_SIZE && !resolvedImageCache.has(src)) {
@@ -120,6 +123,62 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
   return promise;
 }
 
+/**
+ * Converts an HTMLImageElement into a crisp, high-clarity Black & White canvas source
+ * (cached so 60 FPS slider redraws take 0ms).
+ */
+function getRenderableMediaSource(
+  img: HTMLImageElement,
+  colorMode: 'bw' | 'color',
+  darkness: 'light' | 'normal' | 'dark'
+): CanvasImageSource {
+  if (colorMode === 'color' || typeof document === 'undefined') {
+    return img;
+  }
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) return img;
+
+  const cacheKey = `${img.src.slice(0, 180)}_${img.src.length}_${w}x${h}_${darkness}`;
+  const cached = grayscaleImageCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const off = document.createElement('canvas');
+    const maxDim = 420;
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    off.width = Math.max(1, Math.round(w * scale));
+    off.height = Math.max(1, Math.round(h * scale));
+    const octx = off.getContext('2d');
+    if (!octx) return img;
+    octx.drawImage(img, 0, 0, off.width, off.height);
+    const imgData = octx.getImageData(0, 0, off.width, off.height);
+    const d = imgData.data;
+    const contrast = darkness === 'dark' ? 1.24 : darkness === 'light' ? 1.05 : 1.15;
+    const bias = darkness === 'dark' ? -10 : darkness === 'light' ? 8 : -2;
+
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 12) continue;
+      let lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      lum = (lum - 128) * contrast + 128 + bias;
+      const v = lum < 0 ? 0 : lum > 255 ? 255 : Math.round(lum);
+      d[i] = v;
+      d[i + 1] = v;
+      d[i + 2] = v;
+    }
+    octx.putImageData(imgData, 0, 0);
+
+    if (grayscaleImageCache.size >= 24) {
+      const oldest = grayscaleImageCache.keys().next().value;
+      if (oldest !== undefined) grayscaleImageCache.delete(oldest);
+    }
+    grayscaleImageCache.set(cacheKey, off);
+    return off;
+  } catch {
+    return img;
+  }
+}
+
 let sharedMeasureCanvas: HTMLCanvasElement | null = null;
 function getMeasureContext(): CanvasRenderingContext2D | null {
   if (typeof document === 'undefined') return null;
@@ -142,21 +201,34 @@ function configureHighQualityContext(
   }
 }
 
+function getSourceDims(src: CanvasImageSource, fallbackImg: HTMLImageElement): { w: number; h: number } {
+  if (typeof HTMLCanvasElement !== 'undefined' && src instanceof HTMLCanvasElement) {
+    return { w: src.width, h: src.height };
+  }
+  return {
+    w: fallbackImg.naturalWidth || fallbackImg.width,
+    h: fallbackImg.naturalHeight || fallbackImg.height,
+  };
+}
+
 function drawImageContain(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
   x: number,
   y: number,
   w: number,
-  h: number
+  h: number,
+  sourceOverride?: CanvasImageSource
 ) {
-  if (!img.width || !img.height) return;
-  const scale = Math.min(w / img.width, h / img.height);
-  const dw = img.width * scale;
-  const dh = img.height * scale;
+  const src = sourceOverride || img;
+  const dims = getSourceDims(src, img);
+  if (!dims.w || !dims.h) return;
+  const scale = Math.min(w / dims.w, h / dims.h);
+  const dw = dims.w * scale;
+  const dh = dims.h * scale;
   const dx = x + (w - dw) / 2;
   const dy = y + (h - dh) / 2;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.drawImage(src, dx, dy, dw, dh);
 }
 
 function drawImageCoverTop(
@@ -165,23 +237,26 @@ function drawImageCoverTop(
   x: number,
   y: number,
   w: number,
-  h: number
+  h: number,
+  sourceOverride?: CanvasImageSource
 ) {
-  if (!img.width || !img.height) return;
-  const imgRatio = img.width / img.height;
+  const src = sourceOverride || img;
+  const dims = getSourceDims(src, img);
+  if (!dims.w || !dims.h) return;
+  const imgRatio = dims.w / dims.h;
   const boxRatio = w / h;
   let sx = 0;
   let sy = 0;
-  let sw = img.width;
-  let sh = img.height;
+  let sw = dims.w;
+  let sh = dims.h;
   if (imgRatio > boxRatio) {
-    sw = img.height * boxRatio;
-    sx = (img.width - sw) / 2;
+    sw = dims.h * boxRatio;
+    sx = (dims.w - sw) / 2;
   } else {
-    sh = img.width / boxRatio;
+    sh = dims.w / boxRatio;
     sy = 0;
   }
-  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+  ctx.drawImage(src, sx, sy, sw, sh, x, y, w, h);
 }
 
 function wrapCanvasText(
@@ -301,14 +376,25 @@ export async function drawThermalSlipToCanvas(
       : '#0f172a'
     : '#000000';
 
-  const [candImg, symImg] = await Promise.all([
-    cs.showCandidatePhoto
-      ? loadImage(config.candidatePhotoUrl || './candidate-ataur.jpg')
-      : Promise.resolve(null),
-    cs.showSymbolPhoto
-      ? loadImage(config.symbolPhotoUrl || './symbol-horse.png')
-      : Promise.resolve(null),
-  ]);
+  const effectiveColorMode: 'bw' | 'color' = previewQuality ? cs.thermalColorMode : 'bw';
+
+  const [candImg, symImg] = cs.voterOnlyMode
+    ? [null, null]
+    : await Promise.all([
+        cs.showCandidatePhoto
+          ? loadImage(config.candidatePhotoUrl || './candidate-ataur.jpg')
+          : Promise.resolve(null),
+        cs.showSymbolPhoto
+          ? loadImage(config.symbolPhotoUrl || './symbol-horse.png')
+          : Promise.resolve(null),
+      ]);
+
+  const candMediaSrc = candImg
+    ? getRenderableMediaSource(candImg, effectiveColorMode, cs.thermalDarkness)
+    : undefined;
+  const symMediaSrc = symImg
+    ? getRenderableMediaSource(symImg, effectiveColorMode, cs.thermalDarkness)
+    : undefined;
 
   const padPx = Math.max(8, Math.round(cs.paddingMm * 8));
   const spacing = cs.lineSpacingScale;
@@ -316,6 +402,266 @@ export async function drawThermalSlipToCanvas(
   const cScale = cs.candidateFontScale * baseScale;
   const vScale = cs.voterFontScale * baseScale;
   const fillMode = config.voterInfoMode || 'auto';
+
+  // ===========================================================================
+  // VOTER-ONLY FULL-PAGE EXTRA-LARGE LANDSCAPE MODE (প্রার্থীর তথ্য ছাড়া বড় ফুল-পেজ প্রিন্ট)
+  // ===========================================================================
+  if (cs.voterOnlyMode && cs.orientation === 'landscape') {
+    const cardHeight = rollDots; // 384px (58mm) or 576px (80mm)
+    const baseLandscapeWidth = cs.paperWidthMm === 80 ? 896 : 624; // 112mm or 78mm wide full page
+    const extraScale = Math.max(1, (cs.voterFontScale + spacing - 1) * 0.52);
+    const cardWidth = Math.ceil((baseLandscapeWidth * extraScale) / 8) * 8;
+
+    const targetPhysW = Math.round(cardWidth * pixelScale);
+    const targetPhysH = Math.round(cardHeight * pixelScale);
+    if (canvas.width !== targetPhysW) canvas.width = targetPhysW;
+    if (canvas.height !== targetPhysH) canvas.height = targetPhysH;
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      configureHighQualityContext(ctx, pixelScale);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, cardWidth, cardHeight);
+      ctx.fillStyle = inkColor;
+      ctx.textBaseline = 'top';
+
+      drawOuterBorder(ctx, cardWidth, cardHeight, cs.borderStyle, inkColor, 3);
+
+      const innerPad = cs.borderStyle === 'double' ? Math.max(padPx, 12) : Math.max(padPx, 10);
+      const mainX = innerPad;
+      const mainW = cardWidth - innerPad * 2;
+      let y = innerPad;
+
+      // 1. Bold Full-Width Header Bar with Big Serial Badge (No Candidate Info!)
+      const headerBarH = Math.round(42 * baseScale);
+      ctx.fillStyle = inkColor;
+      ctx.fillRect(mainX, y, mainW, headerBarH);
+
+      // Right side crisp white Serial Pill inside Header Bar
+      let serialPillW = 0;
+      if (cs.showSerial && fillMode !== 'blank') {
+        const serialLabel = `ক্রমিক: ${voter.serialNo || '-'}`;
+        ctx.font = `900 ${Math.round(18.5 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        serialPillW = Math.min(
+          Math.round(mainW * 0.42),
+          Math.ceil(ctx.measureText(serialLabel).width) + Math.round(22 * baseScale)
+        );
+        const pillH = headerBarH - 8;
+        const pillX = mainX + mainW - serialPillW - 4;
+        const pillY = y + 4;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(pillX, pillY, serialPillW, pillH);
+        ctx.fillStyle = inkColor;
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          serialLabel,
+          pillX + serialPillW / 2,
+          pillY + Math.max(2, Math.round((pillH - 21 * baseScale) / 2)),
+          serialPillW - 8
+        );
+      }
+
+      // Left side Title inside Header Bar
+      const headerTitle =
+        cs.showElectionTitle && config.electionTitle
+          ? config.electionTitle
+          : 'ভোটার তথ্য স্লিপ';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.font = `900 ${Math.round(16 * hScale)}px ${BENGALI_FONT_STACK}`;
+      const availHeaderW = mainW - serialPillW - 18;
+      ctx.fillText(
+        headerTitle,
+        mainX + 8,
+        y + Math.max(4, Math.round((headerBarH - 19 * hScale) / 2)),
+        Math.max(120, availHeaderW)
+      );
+      ctx.fillStyle = inkColor;
+      y += headerBarH + 5;
+
+      // 2. Polling Center & Ward / Area Strip
+      if (cs.showPollingCenter || cs.showWardAndArea) {
+        const stripParts: string[] = [];
+        if (cs.showPollingCenter && config.pollingCenter) {
+          stripParts.push(`ভোট কেন্দ্র: ${config.pollingCenter}`);
+        }
+        if (cs.showWardAndArea) {
+          stripParts.push(
+            `এলাকা: ${voter.villageName || config.voterArea || '-'} (ওয়ার্ড: ${config.wardNo || '-'})`
+          );
+        }
+        if (stripParts.length > 0) {
+          ctx.font = `800 ${Math.round(13.5 * vScale)}px ${BENGALI_FONT_STACK}`;
+          const stripLines = wrapCanvasText(ctx, stripParts.join('   •   '), mainW).slice(0, 2);
+          ctx.textAlign = 'left';
+          ctx.fillStyle = inkColor;
+          for (const sl of stripLines) {
+            ctx.fillText(sl, mainX, y);
+            y += Math.round(17.5 * vScale);
+          }
+          drawHorizontalRule(ctx, mainX, mainX + mainW, y + 2, inkColor, false);
+          y += 7;
+        }
+      }
+
+      const footerH = cs.showFooter ? Math.round(20 * baseScale) : 0;
+      const bottomLimit = cardHeight - innerPad - (footerH > 0 ? footerH + 5 : 0);
+      const availBodyH = Math.max(80, bottomLimit - y);
+
+      // 3. Extra-Large Full-Page Voter Rows Auto-Distributed Across Entire Page Height
+      interface BigVoterRow {
+        text: string;
+        basePx: number;
+        weight: number;
+        maxLines: number;
+      }
+      const rawRows: BigVoterRow[] = [];
+
+      if (fillMode === 'blank') {
+        rawRows.push(
+          { text: 'ভোটারের নাম: ..................................................................', basePx: 19, weight: 900, maxLines: 1 },
+          { text: 'ভোটার আইডি: ....................................   ক্রমিক: ....................', basePx: 16.5, weight: 800, maxLines: 1 },
+          { text: 'পিতা / স্বামী: ...................................................................', basePx: 16.5, weight: 800, maxLines: 1 },
+          { text: 'মাতার নাম: .....................................................................', basePx: 16.5, weight: 800, maxLines: 1 },
+          { text: 'জন্ম তারিখ: ..............................   ঠিকানা: ............................', basePx: 16, weight: 700, maxLines: 1 }
+        );
+      } else {
+        rawRows.push({
+          text: `ভোটারের নাম: ${voter.name || '-'}`,
+          basePx: 21.5,
+          weight: 900,
+          maxLines: 2,
+        });
+        if (cs.showVoterId) {
+          rawRows.push({
+            text: `ভোটার নং: ${voter.voterId || '-'}`,
+            basePx: 18,
+            weight: 800,
+            maxLines: 1,
+          });
+        }
+        if (cs.showFather) {
+          rawRows.push({
+            text: `পিতা/স্বামী: ${voter.fatherName || '-'}`,
+            basePx: 17.5,
+            weight: 800,
+            maxLines: 2,
+          });
+        }
+        if (cs.showMother) {
+          rawRows.push({
+            text: `মাতার নাম: ${voter.motherName || '-'}`,
+            basePx: 17.5,
+            weight: 800,
+            maxLines: 2,
+          });
+        }
+        const dobProfParts = [
+          cs.showDob && voter.dob ? `জন্ম তারিখ: ${voter.dob}` : '',
+          cs.showProfession && voter.profession ? `পেশা: ${voter.profession}` : '',
+        ].filter(Boolean);
+        if (dobProfParts.length > 0) {
+          rawRows.push({
+            text: dobProfParts.join('     |     '),
+            basePx: 16.5,
+            weight: 800,
+            maxLines: 1,
+          });
+        }
+        if (cs.showAddress) {
+          rawRows.push({
+            text: `ঠিকানা: ${voter.address || voter.villageName || '-'}`,
+            basePx: 16,
+            weight: 700,
+            maxLines: 1,
+          });
+        }
+      }
+
+      const measureRowsAtScale = (scaleMul: number) => {
+        const prepared: Array<{
+          lines: string[];
+          fontPx: number;
+          lineH: number;
+          weight: number;
+          blockH: number;
+        }> = [];
+        let sumH = 0;
+        for (const r of rawRows) {
+          const fontPx = Math.max(12, Math.round(r.basePx * vScale * scaleMul));
+          const lineH = Math.round(fontPx * 1.24);
+          ctx.font = `${r.weight} ${fontPx}px ${BENGALI_FONT_STACK}`;
+          const lines = wrapCanvasText(ctx, r.text, mainW - 4).slice(0, r.maxLines);
+          const blockH = lines.length * lineH;
+          prepared.push({ lines, fontPx, lineH, weight: r.weight, blockH });
+          sumH += blockH;
+        }
+        return { prepared, sumH };
+      };
+
+      let measured = measureRowsAtScale(1);
+      const minGapTotal = Math.max(0, measured.prepared.length - 1) * 4;
+      if (measured.sumH + minGapTotal > availBodyH) {
+        const shrink = Math.max(0.68, (availBodyH - minGapTotal) / Math.max(1, measured.sumH));
+        measured = measureRowsAtScale(shrink);
+      }
+
+      const extraSpace = Math.max(0, availBodyH - measured.sumH);
+      const gapBetweenRows =
+        measured.prepared.length > 1
+          ? Math.floor(extraSpace / measured.prepared.length)
+          : 0;
+      let curY = y + Math.floor(gapBetweenRows * 0.35);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = inkColor;
+
+      measured.prepared.forEach((item, idx) => {
+        ctx.font = `${item.weight} ${item.fontPx}px ${BENGALI_FONT_STACK}`;
+        for (const ln of item.lines) {
+          if (curY + item.fontPx * 0.85 > bottomLimit + 4) break;
+          ctx.fillText(ln, mainX + 2, curY);
+          curY += item.lineH;
+        }
+        if (idx < measured.prepared.length - 1) {
+          const ruleY = curY + Math.floor(gapBetweenRows / 2);
+          if (ruleY < bottomLimit - 4 && gapBetweenRows >= 6) {
+            drawLinedGuide(ctx, mainX, mainX + mainW, ruleY, inkColor);
+          }
+          curY += gapBetweenRows;
+        }
+      });
+
+      // 4. Optional Bottom Footer Bar
+      if (cs.showFooter && footerH > 0) {
+        const fy = cardHeight - innerPad - footerH;
+        ctx.fillStyle = inkColor;
+        ctx.fillRect(mainX, fy, mainW, footerH);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.font = `800 ${Math.round(11 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        ctx.fillText(
+          config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT,
+          mainX + mainW / 2,
+          fy + Math.max(2, Math.round(3 * baseScale)),
+          mainW - 10
+        );
+      }
+    }
+
+    const viewWidthMm = Math.round(cardWidth / 8);
+    const viewHeightMm = cs.paperWidthMm;
+    return {
+      orientation: 'landscape',
+      paperWidthMm: cs.paperWidthMm,
+      printableRollDots: rollDots,
+      viewWidthPx: cardWidth,
+      viewHeightPx: cardHeight,
+      viewWidthMm,
+      viewHeightMm,
+      rollFeedLengthMm: viewWidthMm,
+    };
+  }
 
   if (cs.orientation === 'landscape') {
     // =========================================================================
@@ -377,7 +723,7 @@ export async function drawThermalSlipToCanvas(
             : Math.min(Math.round(availH * 0.78 * cs.photoScale), availH - 28);
           const phW = Math.min(sideColW - 6, Math.round(phH * 0.86));
           const phX = mediaX + Math.round((sideColW - phW) / 2);
-          drawImageCoverTop(ctx, candImg, phX, my, phW, phH);
+          drawImageCoverTop(ctx, candImg, phX, my, phW, phH, candMediaSrc);
           ctx.strokeStyle = inkColor;
           ctx.lineWidth = 1.3;
           ctx.strokeRect(phX, my, phW, phH);
@@ -388,7 +734,7 @@ export async function drawThermalSlipToCanvas(
           const symH = Math.min(Math.round(66 * baseScale * cs.symbolScale), remH);
           const symW = Math.min(sideColW - 8, Math.round(84 * baseScale * cs.symbolScale));
           const symX = mediaX + Math.round((sideColW - symW) / 2);
-          drawImageContain(ctx, symImg, symX, my, symW, symH);
+          drawImageContain(ctx, symImg, symX, my, symW, symH, symMediaSrc);
           my += symH + 3;
         }
 
@@ -656,116 +1002,135 @@ export async function drawThermalSlipToCanvas(
       y += Math.round(7 * spacing);
     }
 
-    // 3. Candidate Hero Row (Symbol + Center Name/Badge + Candidate Photo, swappable!)
-    const symW = cs.showSymbolPhoto ? Math.round(78 * baseScale * cs.symbolScale) : 0;
-    const symH = cs.showSymbolPhoto ? Math.round(74 * baseScale * cs.symbolScale) : 0;
-    const photoW = cs.showCandidatePhoto ? Math.round(104 * baseScale * cs.photoScale) : 0;
-    const photoH = cs.showCandidatePhoto ? Math.round(126 * baseScale * cs.photoScale) : 0;
-
-    const leftBoxW = cs.swapPhotoSymbol ? photoW : symW;
-    const rightBoxW = cs.swapPhotoSymbol ? symW : photoW;
-    const centerXStart = innerPad + (leftBoxW > 0 ? leftBoxW + 7 : 0);
-    const centerW = Math.max(
-      92,
-      contentW - (leftBoxW > 0 ? leftBoxW + 7 : 0) - (rightBoxW > 0 ? rightBoxW + 7 : 0)
-    );
-    const centerXMid = centerXStart + centerW / 2;
-
-    // Measure & draw center column
-    let centerY = y + 3;
-    const badgeLabel = config.candidateBadge || config.postTitle || 'পদপ্রার্থী';
-    ctx.font = `700 ${Math.round(10.8 * cScale)}px ${BENGALI_FONT_STACK}`;
-    const badgeLines = wrapCanvasText(ctx, badgeLabel, centerW - 8).slice(0, 2);
-    const badgeLineH = Math.round(14.5 * cScale);
-    const badgeH = Math.max(Math.round(20 * cScale), badgeLines.length * badgeLineH + 5);
-
-    if (!dryRun) {
-      ctx.fillStyle = inkColor;
-      ctx.fillRect(centerXStart, centerY, centerW, badgeH);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.textAlign = 'center';
-      let by = centerY + 3;
-      for (const bl of badgeLines) {
-        ctx.fillText(bl, centerXMid, by);
-        by += badgeLineH;
-      }
-      ctx.fillStyle = inkColor;
-    }
-    centerY += badgeH + Math.round(6 * spacing);
-
-    ctx.font = `800 ${Math.round(15 * cScale)}px ${BENGALI_FONT_STACK}`;
-    const fullName = `${config.candidateName || config.name} ${config.candidateSuffix || 'কে'}`.trim();
-    const nameLines = wrapCanvasText(ctx, fullName, centerW);
-    for (const nl of nameLines) {
+    // 3. Candidate Hero Row (Skipped completely when cs.voterOnlyMode === true!)
+    if (cs.voterOnlyMode) {
+      const voBannerH = Math.round(28 * baseScale);
       if (!dryRun) {
-        ctx.textAlign = 'center';
         ctx.fillStyle = inkColor;
-        ctx.fillText(nl, centerXMid, centerY);
+        ctx.fillRect(innerPad, y, contentW, voBannerH);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.font = `900 ${Math.round(14 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        ctx.fillText(
+          'ভোটার তথ্য স্লিপ',
+          width / 2,
+          y + Math.max(3, Math.round((voBannerH - 17 * baseScale) / 2)),
+          contentW - 10
+        );
+        ctx.fillStyle = inkColor;
       }
-      centerY += Math.round(19 * cScale * spacing);
-    }
+      y += voBannerH + Math.round(7 * spacing);
+    } else {
+      const symW = cs.showSymbolPhoto ? Math.round(78 * baseScale * cs.symbolScale) : 0;
+      const symH = cs.showSymbolPhoto ? Math.round(74 * baseScale * cs.symbolScale) : 0;
+      const photoW = cs.showCandidatePhoto ? Math.round(104 * baseScale * cs.photoScale) : 0;
+      const photoH = cs.showCandidatePhoto ? Math.round(126 * baseScale * cs.photoScale) : 0;
 
-    const calloutStr = config.symbolCallout || `${config.symbolName} মার্কায় ভোট দিন`;
-    ctx.font = `800 ${Math.round(11 * cScale)}px ${BENGALI_FONT_STACK}`;
-    const callLines = wrapCanvasText(ctx, calloutStr, centerW);
-    for (const cl of callLines) {
+      const leftBoxW = cs.swapPhotoSymbol ? photoW : symW;
+      const rightBoxW = cs.swapPhotoSymbol ? symW : photoW;
+      const centerXStart = innerPad + (leftBoxW > 0 ? leftBoxW + 7 : 0);
+      const centerW = Math.max(
+        92,
+        contentW - (leftBoxW > 0 ? leftBoxW + 7 : 0) - (rightBoxW > 0 ? rightBoxW + 7 : 0)
+      );
+      const centerXMid = centerXStart + centerW / 2;
+
+      // Measure & draw center column
+      let centerY = y + 3;
+      const badgeLabel = config.candidateBadge || config.postTitle || 'পদপ্রার্থী';
+      ctx.font = `700 ${Math.round(10.8 * cScale)}px ${BENGALI_FONT_STACK}`;
+      const badgeLines = wrapCanvasText(ctx, badgeLabel, centerW - 8).slice(0, 2);
+      const badgeLineH = Math.round(14.5 * cScale);
+      const badgeH = Math.max(Math.round(20 * cScale), badgeLines.length * badgeLineH + 5);
+
       if (!dryRun) {
-        ctx.textAlign = 'center';
         ctx.fillStyle = inkColor;
-        ctx.fillText(cl, centerXMid, centerY + 1);
+        ctx.fillRect(centerXStart, centerY, centerW, badgeH);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        let by = centerY + 3;
+        for (const bl of badgeLines) {
+          ctx.fillText(bl, centerXMid, by);
+          by += badgeLineH;
+        }
+        ctx.fillStyle = inkColor;
       }
-      centerY += Math.round(15 * cScale * spacing);
-    }
+      centerY += badgeH + Math.round(6 * spacing);
 
-    if (cs.showSlogan && config.sloganText) {
-      ctx.font = `600 ${Math.round(9.5 * baseScale)}px ${BENGALI_FONT_STACK}`;
-      const slLines = wrapCanvasText(ctx, config.sloganText, centerW).slice(0, 2);
-      for (const sl of slLines) {
+      ctx.font = `800 ${Math.round(15 * cScale)}px ${BENGALI_FONT_STACK}`;
+      const fullName = `${config.candidateName || config.name} ${config.candidateSuffix || 'কে'}`.trim();
+      const nameLines = wrapCanvasText(ctx, fullName, centerW);
+      for (const nl of nameLines) {
         if (!dryRun) {
           ctx.textAlign = 'center';
           ctx.fillStyle = inkColor;
-          ctx.fillText(sl, centerXMid, centerY + 1);
+          ctx.fillText(nl, centerXMid, centerY);
         }
-        centerY += Math.round(13 * baseScale * spacing);
+        centerY += Math.round(19 * cScale * spacing);
       }
+
+      const calloutStr = config.symbolCallout || `${config.symbolName} মার্কায় ভোট দিন`;
+      ctx.font = `800 ${Math.round(11 * cScale)}px ${BENGALI_FONT_STACK}`;
+      const callLines = wrapCanvasText(ctx, calloutStr, centerW);
+      for (const cl of callLines) {
+        if (!dryRun) {
+          ctx.textAlign = 'center';
+          ctx.fillStyle = inkColor;
+          ctx.fillText(cl, centerXMid, centerY + 1);
+        }
+        centerY += Math.round(15 * cScale * spacing);
+      }
+
+      if (cs.showSlogan && config.sloganText) {
+        ctx.font = `600 ${Math.round(9.5 * baseScale)}px ${BENGALI_FONT_STACK}`;
+        const slLines = wrapCanvasText(ctx, config.sloganText, centerW).slice(0, 2);
+        for (const sl of slLines) {
+          if (!dryRun) {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = inkColor;
+            ctx.fillText(sl, centerXMid, centerY + 1);
+          }
+          centerY += Math.round(13 * baseScale * spacing);
+        }
+      }
+
+      // Draw Symbol & Candidate Photo on their chosen sides
+      const symBlockH = cs.showSymbolPhoto ? symH + Math.round(20 * baseScale) : 0;
+      const photoBlockH = cs.showCandidatePhoto ? photoH + Math.round(18 * baseScale) : 0;
+
+      if (!dryRun) {
+        if (cs.showSymbolPhoto) {
+          const sx = cs.swapPhotoSymbol ? width - innerPad - symW : innerPad;
+          if (symImg) {
+            drawImageContain(ctx, symImg, sx, y + 2, symW, symH, symMediaSrc);
+          }
+          ctx.textAlign = 'center';
+          ctx.fillStyle = inkColor;
+          ctx.font = `700 ${Math.round(10.2 * baseScale)}px ${BENGALI_FONT_STACK}`;
+          ctx.fillText(`মার্কা: ${config.symbolName || ''}`, sx + symW / 2, y + symH + 4, symW + 4);
+        }
+
+        if (cs.showCandidatePhoto) {
+          const px = cs.swapPhotoSymbol ? innerPad : width - innerPad - photoW;
+          if (candImg) {
+            drawImageCoverTop(ctx, candImg, px, y + 2, photoW, photoH, candMediaSrc);
+          }
+          ctx.lineWidth = 1.3;
+          ctx.strokeStyle = inkColor;
+          ctx.strokeRect(px, y + 2, photoW, photoH);
+          ctx.textAlign = 'center';
+          ctx.fillStyle = inkColor;
+          ctx.font = `700 ${Math.round(10 * baseScale)}px ${BENGALI_FONT_STACK}`;
+          ctx.fillText('প্রার্থী', px + photoW / 2, y + photoH + 4, photoW);
+        }
+      }
+
+      const heroHeight = Math.max(centerY - y, symBlockH, photoBlockH);
+      y += heroHeight + Math.round(6 * spacing);
+
+      if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, false);
+      y += Math.round(7 * spacing);
     }
-
-    // Draw Symbol & Candidate Photo on their chosen sides
-    const symBlockH = cs.showSymbolPhoto ? symH + Math.round(20 * baseScale) : 0;
-    const photoBlockH = cs.showCandidatePhoto ? photoH + Math.round(18 * baseScale) : 0;
-
-    if (!dryRun) {
-      if (cs.showSymbolPhoto) {
-        const sx = cs.swapPhotoSymbol ? width - innerPad - symW : innerPad;
-        if (symImg) {
-          drawImageContain(ctx, symImg, sx, y + 2, symW, symH);
-        }
-        ctx.textAlign = 'center';
-        ctx.fillStyle = inkColor;
-        ctx.font = `700 ${Math.round(10.2 * baseScale)}px ${BENGALI_FONT_STACK}`;
-        ctx.fillText(`মার্কা: ${config.symbolName || ''}`, sx + symW / 2, y + symH + 4, symW + 4);
-      }
-
-      if (cs.showCandidatePhoto) {
-        const px = cs.swapPhotoSymbol ? innerPad : width - innerPad - photoW;
-        if (candImg) {
-          drawImageCoverTop(ctx, candImg, px, y + 2, photoW, photoH);
-        }
-        ctx.lineWidth = 1.3;
-        ctx.strokeStyle = inkColor;
-        ctx.strokeRect(px, y + 2, photoW, photoH);
-        ctx.textAlign = 'center';
-        ctx.fillStyle = inkColor;
-        ctx.font = `700 ${Math.round(10 * baseScale)}px ${BENGALI_FONT_STACK}`;
-        ctx.fillText('প্রার্থী', px + photoW / 2, y + photoH + 4, photoW);
-      }
-    }
-
-    const heroHeight = Math.max(centerY - y, symBlockH, photoBlockH);
-    y += heroHeight + Math.round(6 * spacing);
-
-    if (!dryRun) drawHorizontalRule(ctx, innerPad, width - innerPad, y, inkColor, false);
-    y += Math.round(7 * spacing);
 
     // 4. Polling Center & Ward / Area
     if (cs.showPollingCenter && config.pollingCenter) {
@@ -815,10 +1180,11 @@ export async function drawThermalSlipToCanvas(
       y += Math.round(7 * spacing);
     }
 
-    // 5. Voter Details Section (cleanly wrapped, zero glyph distortion)
-    const vStep = Math.round(19.5 * vScale * spacing);
+    // 5. Voter Details Section (cleanly wrapped, enlarged when voterOnlyMode is active)
+    const pVoterScale = vScale * (cs.voterOnlyMode ? 1.18 : 1);
+    const vStep = Math.round(19.5 * pVoterScale * spacing);
     const drawWrappedVoterField = (labelAndVal: string) => {
-      ctx.font = `700 ${Math.round(12.5 * vScale)}px ${BENGALI_FONT_STACK}`;
+      ctx.font = `700 ${Math.round(12.5 * pVoterScale)}px ${BENGALI_FONT_STACK}`;
       const lines = wrapCanvasText(ctx, labelAndVal, contentW);
       for (const ln of lines) {
         if (!dryRun) {
@@ -830,7 +1196,7 @@ export async function drawThermalSlipToCanvas(
               ctx,
               innerPad,
               width - innerPad,
-              y + Math.round(16.5 * vScale),
+              y + Math.round(16.5 * pVoterScale),
               inkColor
             );
           }
@@ -840,7 +1206,7 @@ export async function drawThermalSlipToCanvas(
     };
 
     if (fillMode === 'blank') {
-      ctx.font = `700 ${Math.round(12 * vScale)}px ${BENGALI_FONT_STACK}`;
+      ctx.font = `700 ${Math.round(12 * pVoterScale)}px ${BENGALI_FONT_STACK}`;
       const blankFields = [
         'ভোটারের নাম : ..........................................',
         'ক্রমিক নং : ...................  ওয়ার্ড : ...............',
@@ -858,12 +1224,12 @@ export async function drawThermalSlipToCanvas(
       }
     } else {
       // Highlighted Serial + Name Box
-      ctx.font = `800 ${Math.round(14.5 * vScale)}px ${BENGALI_FONT_STACK}`;
+      ctx.font = `800 ${Math.round(14.5 * pVoterScale)}px ${BENGALI_FONT_STACK}`;
       const headVoter = cs.showSerial
         ? `ক্রমিক: ${voter.serialNo || '-'}  |  ${voter.name || '-'}`
         : `নাম: ${voter.name || '-'}`;
       const vNameLines = wrapCanvasText(ctx, headVoter, contentW - 12);
-      const lineH = Math.round(19 * vScale);
+      const lineH = Math.round(19 * pVoterScale);
       const boxH = vNameLines.length * lineH + 9;
       if (!dryRun) {
         if (previewQuality) {

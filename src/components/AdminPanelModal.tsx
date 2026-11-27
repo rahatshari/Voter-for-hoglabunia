@@ -49,6 +49,8 @@ import {
   cloudKickAllSessions,
   saveCloudAdminEmails,
   saveCloudAppConfig,
+  getUserAccessOverrideFromConfig,
+  saveCloudUserAccessOverride,
 } from '../lib/cloudStore';
 import { AdminHistoryTab } from './AdminHistoryTab';
 import { AdminControlsTab } from './AdminControlsTab';
@@ -103,6 +105,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [editNotes, setEditNotes] = useState('');
   const [editRole, setEditRole] = useState<'user' | 'admin'>('user');
   const [editMinutes, setEditMinutes] = useState<string>('0');
+
+  // Per-Gmail Granular Access Control State (গ্রাম ও ভোটার স্লিপ প্রিন্ট পারমিশন)
+  const [accessControlEmail, setAccessControlEmail] = useState<string | null>(null);
+  const [savingAccessEmail, setSavingAccessEmail] = useState<string | null>(null);
 
   // Inline confirmations
   const [confirmBlockEmail, setConfirmBlockEmail] = useState<string | null>(null);
@@ -645,6 +651,30 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     await syncRefreshIfOffline();
   };
 
+  // Save Per-Gmail Granular Access Override (গ্রাম লক ও স্লিপ প্রিন্ট অনুমতি)
+  const handleUpdateUserAccess = async (
+    targetEmail: string,
+    patch: { allowSlipPrint?: boolean; disabledVillages?: string[] },
+    noticeMsg?: string
+  ) => {
+    setSavingAccessEmail(targetEmail);
+    try {
+      const updatedCfg = await saveCloudUserAccessOverride(
+        targetEmail,
+        patch,
+        currentUserEmail,
+        data?.appConfig || DEFAULT_APP_CONFIG
+      );
+      setData((prev) => (prev ? { ...prev, appConfig: updatedCfg } : prev));
+      if (noticeMsg) showNotification(noticeMsg);
+      await syncRefreshIfOffline();
+    } catch (err: any) {
+      showNotification(`⚠️ পারমিশন সংরক্ষণে সমস্যা: ${err?.message || 'আবার চেষ্টা করুন'}`);
+    } finally {
+      setSavingAccessEmail(null);
+    }
+  };
+
   if (!isOpen) return null;
 
   const users = data?.users || [];
@@ -977,6 +1007,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     const isPrimarySuperAdmin = user.email.toLowerCase() === 'rahatsharif10448@gmail.com';
                     const isActionLoading = actionLoadingEmail === user.email;
                     const isEditing = editingEmail === user.email;
+                    const isAccessOpen = accessControlEmail === user.email;
+                    const isSavingAccess = savingAccessEmail === user.email;
+                    const userOverride = getUserAccessOverrideFromConfig(appConfig, user.email);
+                    const userSlipAllowed = userOverride.allowSlipPrint !== false;
+                    const userDisabledVillages = userOverride.disabledVillages || [];
 
                     return (
                       <div
@@ -1051,6 +1086,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     ⚪ অফলাইন
                                   </span>
                                 )}
+
+                                {user.role !== 'admin' && !userSlipAllowed && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                    🖨️🚫 স্লিপ প্রিন্ট বন্ধ
+                                  </span>
+                                )}
+                                {user.role !== 'admin' && userDisabledVillages.length > 0 && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                                    🏘️🔒 {convertToBengaliNumbers(userDisabledVillages.length)}টি গ্রাম বন্ধ
+                                  </span>
+                                )}
                               </div>
 
                               {user.notes && (
@@ -1063,6 +1109,27 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                           {/* Full Action Toolbar */}
                           <div className="flex items-center gap-1.5 flex-wrap">
+                            {/* Per-Gmail Granular Access Control (গ্রাম লক ও স্লিপ প্রিন্ট অনুমতি) */}
+                            {user.role !== 'admin' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setAccessControlEmail(isAccessOpen ? null : user.email)
+                                }
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 border ${
+                                  isAccessOpen
+                                    ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                                    : !userSlipAllowed || userDisabledVillages.length > 0
+                                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200'
+                                }`}
+                                title="এই জিমেইলের জন্য আলাদাভাবে গ্রাম ও ভোটার স্লিপ প্রিন্ট নিয়ন্ত্রণ করুন"
+                              >
+                                <span>🎛️</span>
+                                <span>{isAccessOpen ? 'কন্ট্রোল বন্ধ' : 'গ্রাম ও স্লিপ'}</span>
+                              </button>
+                            )}
+
                             {/* Jump to this user's Login History */}
                             <button
                               type="button"
@@ -1214,6 +1281,188 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               ))}
                           </div>
                         </div>
+
+                        {/* Inline Per-Gmail Granular Access Control Drawer (গ্রাম ও স্লিপ প্রিন্ট কন্ট্রোল) */}
+                        {isAccessOpen && user.role !== 'admin' && (
+                          <div className="mt-3 p-3.5 sm:p-4 bg-teal-50/60 border border-teal-200 rounded-2xl space-y-3.5 animate-in fade-in duration-150">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/70 pb-2.5">
+                              <div>
+                                <div className="text-xs sm:text-sm font-black text-teal-950 flex items-center gap-1.5">
+                                  <span>🎛️</span>
+                                  <span>জিমেইল ভিত্তিক ব্যক্তিগত কন্ট্রোল ({user.email})</span>
+                                  {isSavingAccess && (
+                                    <span className="text-[10px] bg-teal-600 text-white px-2 py-0.5 rounded-full animate-pulse">
+                                      সংরক্ষণ হচ্ছে...
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-teal-800/90 mt-0.5">
+                                  শুধুমাত্র এই জিমেইল অ্যাকাউন্টের জন্য ভোটার স্লিপ প্রিন্ট বা যেকোনো গ্রামের ভোটার তথ্য চালু/বন্ধ করুন।
+                                </p>
+                              </div>
+
+                              {(!userSlipAllowed || userDisabledVillages.length > 0) && (
+                                <button
+                                  type="button"
+                                  disabled={isSavingAccess}
+                                  onClick={() =>
+                                    handleUpdateUserAccess(
+                                      user.email,
+                                      { allowSlipPrint: true, disabledVillages: [] },
+                                      `✅ "${user.email}" অ্যাকাউন্টের সব গ্রাম ও স্লিপ প্রিন্ট উন্মুক্ত করা হয়েছে।`
+                                    )
+                                  }
+                                  className="px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-xl text-[11px] font-bold cursor-pointer shadow-2xs"
+                                >
+                                  🔓 সব উন্মুক্ত করুন
+                                </button>
+                              )}
+                            </div>
+
+                            {/* 1. Per-Gmail Voter Slip Print Permission */}
+                            <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                              <div className="space-y-0.5">
+                                <div className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                                  <span>🖨️ ভোটার স্লিপ প্রিন্ট অপশন</span>
+                                  <span
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                      userSlipAllowed
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-rose-100 text-rose-800'
+                                    }`}
+                                  >
+                                    {userSlipAllowed ? 'চালু আছে' : 'বন্ধ করা'}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500">
+                                  {appConfig.allowSlipPrint === false
+                                    ? '⚠️ গ্লোবাল সেটিংসে বর্তমানে সবার জন্য স্লিপ প্রিন্ট বন্ধ রয়েছে।'
+                                    : 'বন্ধ করলে এই জিমেইল থেকে নরমাল বা থার্মাল ভোটার স্লিপ প্রিন্ট করা যাবে না।'}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={isSavingAccess}
+                                onClick={() => {
+                                  const nextAllow = !userSlipAllowed;
+                                  handleUpdateUserAccess(
+                                    user.email,
+                                    { allowSlipPrint: nextAllow },
+                                    nextAllow
+                                      ? `✅ "${user.email}" এর জন্য ভোটার স্লিপ প্রিন্ট চালু করা হয়েছে।`
+                                      : `🚫 "${user.email}" এর জন্য ভোটার স্লিপ প্রিন্ট বন্ধ করা হয়েছে।`
+                                  );
+                                }}
+                                className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+                                  userSlipAllowed
+                                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                                }`}
+                              >
+                                {userSlipAllowed ? '🚫 স্লিপ প্রিন্ট বন্ধ করুন' : '✅ স্লিপ প্রিন্ট চালু করুন'}
+                              </button>
+                            </div>
+
+                            {/* 2. Per-Gmail Village Access Control */}
+                            <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <div className="text-xs font-extrabold text-slate-900">
+                                    🏘️ গ্রামভিত্তিক ভোটার তথ্য অ্যাক্সেস ({convertToBengaliNumbers(Math.max(0, villageNames.length - userDisabledVillages.length))}/{convertToBengaliNumbers(villageNames.length)} খোলা)
+                                  </div>
+                                  <p className="text-[11px] text-slate-500">
+                                    যে গ্রামটিতে ট্যাপ করে লক (🔒) করবেন, এই অ্যাকাউন্ট সেই গ্রামের ভোটার তালিকা দেখতে পাবে না।
+                                  </p>
+                                </div>
+
+                                {villageNames.length > 0 && (
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={isSavingAccess || userDisabledVillages.length === 0}
+                                      onClick={() =>
+                                        handleUpdateUserAccess(
+                                          user.email,
+                                          { disabledVillages: [] },
+                                          `🟢 "${user.email}" এর জন্য সব গ্রাম চালু করা হয়েছে।`
+                                        )
+                                      }
+                                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 disabled:opacity-45 cursor-pointer"
+                                    >
+                                      🟢 সব চালু
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        isSavingAccess ||
+                                        userDisabledVillages.length === villageNames.length
+                                      }
+                                      onClick={() =>
+                                        handleUpdateUserAccess(
+                                          user.email,
+                                          { disabledVillages: [...villageNames] },
+                                          `🔒 "${user.email}" এর জন্য সব গ্রাম বন্ধ করা হয়েছে।`
+                                        )
+                                      }
+                                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 disabled:opacity-45 cursor-pointer"
+                                    >
+                                      🔒 সব বন্ধ
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {villageNames.length === 0 ? (
+                                <p className="text-[11px] text-slate-400 italic">
+                                  গ্রামের তালিকা লোড হচ্ছে...
+                                </p>
+                              ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                  {villageNames.map((vName) => {
+                                    const isLockedForUser = userDisabledVillages.includes(vName);
+                                    const isLockedGlobally = (appConfig.disabledVillages || []).includes(
+                                      vName
+                                    );
+                                    return (
+                                      <button
+                                        key={vName}
+                                        type="button"
+                                        disabled={isSavingAccess}
+                                        onClick={() => {
+                                          const nextDisabled = isLockedForUser
+                                            ? userDisabledVillages.filter((x) => x !== vName)
+                                            : [...userDisabledVillages, vName];
+                                          handleUpdateUserAccess(
+                                            user.email,
+                                            { disabledVillages: nextDisabled },
+                                            isLockedForUser
+                                              ? `🟢 "${user.email}" এর জন্য "${vName}" গ্রাম চালু করা হয়েছে।`
+                                              : `🔒 "${user.email}" এর জন্য "${vName}" গ্রাম বন্ধ করা হয়েছে।`
+                                          );
+                                        }}
+                                        className={`px-2.5 py-2 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between gap-1.5 cursor-pointer ${
+                                          isLockedForUser
+                                            ? 'bg-rose-50 border-rose-300 text-rose-900'
+                                            : 'bg-emerald-50/70 border-emerald-200 text-emerald-950 hover:bg-emerald-100/70'
+                                        }`}
+                                      >
+                                        <span className="truncate">{vName}</span>
+                                        <span className="text-[10px] shrink-0 px-1.5 py-0.5 rounded-md font-extrabold bg-white/80">
+                                          {isLockedForUser
+                                            ? '🔒 বন্ধ'
+                                            : isLockedGlobally
+                                            ? '🌐 গ্লোবাল বন্ধ'
+                                            : '🟢 খোলা'}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Inline Edit User Drawer */}
                         {isEditing && (

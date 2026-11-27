@@ -33,7 +33,7 @@ jobs:
             "versionName": "${VERSION_NAME}",
             "repo": "${{ github.repository }}",
             "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/Hoglabunia-Voter-App-v${VERSION_NAME}.apk",
-            "releaseNotes": "ভার্সন v${VERSION_NAME} — পাবলিক রিপোজিটরি ইন-অ্যাপ অটো আপডেট ও ইন্সটলার, ৩x HD স্লিপ প্রিভিউ এবং ল্যান্ডস্কেপ অটো-ফিট আপডেট।"
+            "releaseNotes": "ভার্সন v${VERSION_NAME} — জিমেইল ভিত্তিক ব্যক্তিগত গ্রাম ও স্লিপ প্রিন্ট কন্ট্রোল, সকল অ্যাকাউন্টে শেয়ার্ড বুকমার্ক ও আমাদের সমর্থক হাব, থার্মাল সাদাকালো মোড এবং প্রার্থী ছাড়া ফুল-পেজ ল্যান্ডস্কেপ ভোটার স্লিপ প্রিন্ট যুক্ত।"
           }
           EOF
           cat public/version.json
@@ -43,6 +43,14 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+
+      - name: Auto-Deploy Firebase RTDB Rules (if FIREBASE_TOKEN is configured)
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -n "$FIREBASE_TOKEN" ] && [ -f database.rules.json ]; then
+            npx --yes firebase-tools deploy --only database --project voter-ba30b --token "$FIREBASE_TOKEN" || true
+          fi
 
       - name: Setup Java 17
         uses: actions/setup-java@v4

@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  Heart,
   MapPin,
   Phone,
   Plus,
@@ -26,6 +27,7 @@ interface VoterCardProps {
   viewMode?: VoterViewMode;
   annotation?: VoterAnnotation;
   onToggleStar?: (voter: Voter) => void;
+  onToggleSupporter?: (voter: Voter) => void;
   onToggleVoted?: (voter: Voter) => void;
   onOpenDetail?: (voter: Voter, tab?: VoterDetailTab) => void;
   onCopyVoterId?: (voterId: string) => void;
@@ -41,6 +43,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
   viewMode = 'card',
   annotation,
   onToggleStar,
+  onToggleSupporter,
   onToggleVoted,
   onOpenDetail,
   onCopyVoterId,
@@ -49,7 +52,9 @@ export const VoterCard: React.FC<VoterCardProps> = ({
   const calculatedAge = voter._age || calculateAge(voter.dob);
   const displayName = voter.name || (isMig ? 'মাইগ্রেট হয়েছে' : '-');
   const isFemale = (voter._gender || voter.gender) === 'মহিলা';
+  const isSupporter = annotation?.supportTag === 'supporter';
   const tagMeta = SUPPORT_TAGS_META.find((t) => t.id === annotation?.supportTag);
+  const addedByShort = annotation?.updatedBy ? annotation.updatedBy.split('@')[0] : '';
 
   if (viewMode === 'compact') {
     return (
@@ -89,6 +94,9 @@ export const VoterCard: React.FC<VoterCardProps> = ({
               {annotation?.voted && (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               )}
+              {isSupporter && (
+                <Heart className="w-3.5 h-3.5 text-teal-600 fill-current shrink-0" />
+              )}
               {annotation?.starred && (
                 <Bookmark className="w-3.5 h-3.5 text-amber-500 fill-current shrink-0" />
               )}
@@ -96,11 +104,26 @@ export const VoterCard: React.FC<VoterCardProps> = ({
             <p className="text-[11px] text-[var(--md-on-surface-variant)] truncate">
               পিতা: {voter.fatherName || '-'} • {voter.voterId || '-'}
               {voter.villageName ? ` • ${voter.villageName}` : ''}
+              {addedByShort ? ` • 👤 ${addedByShort}` : ''}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {onToggleSupporter && !isMig && (
+            <button
+              type="button"
+              onClick={() => onToggleSupporter(voter)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer ${
+                isSupporter
+                  ? 'bg-teal-600 text-white'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
+              }`}
+              title="আমাদের সমর্থক মার্ক করুন"
+            >
+              <Heart className={`w-4 h-4 ${isSupporter ? 'fill-current' : ''}`} />
+            </button>
+          )}
           {onToggleVoted && !isMig && (
             <button
               type="button"
@@ -215,6 +238,19 @@ export const VoterCard: React.FC<VoterCardProps> = ({
                 </span>
               )}
 
+              {addedByShort &&
+                (annotation?.starred ||
+                  annotation?.voted ||
+                  annotation?.supportTag ||
+                  annotation?.note) && (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)] font-bold"
+                    title={`সর্বশেষ মার্ক করেছেন: ${annotation?.updatedBy}`}
+                  >
+                    👤 {addedByShort}
+                  </span>
+                )}
+
               {isQueued && allowSlipPrint && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full m3-tonal-container font-bold">
                   প্রিন্ট কিউতে যুক্ত
@@ -224,8 +260,24 @@ export const VoterCard: React.FC<VoterCardProps> = ({
           </div>
         </div>
 
-        {/* Top-Right Quick Bookmark & Voted Toggle */}
+        {/* Top-Right Quick Supporter, Voted & Bookmark Toggle */}
         <div className="flex items-center gap-1 shrink-0">
+          {onToggleSupporter && !isMig && (
+            <button
+              type="button"
+              onClick={() => onToggleSupporter(voter)}
+              className={`h-8 px-2.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1 transition cursor-pointer active:scale-95 ${
+                isSupporter
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)] hover:text-[var(--md-on-surface)]'
+              }`}
+              title="আমাদের সমর্থক হিসেবে মার্ক করুন (সকল অ্যাকাউন্টে দেখা যাবে)"
+            >
+              <Heart className={`w-3.5 h-3.5 ${isSupporter ? 'fill-current' : ''}`} />
+              <span className="hidden sm:inline">সমর্থক</span>
+            </button>
+          )}
+
           {onToggleVoted && !isMig && (
             <button
               type="button"
@@ -235,7 +287,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)] hover:text-[var(--md-on-surface)]'
               }`}
-              title="ভোট প্রদান স্ট্যাটাস মার্ক করুন"
+              title="ভোট প্রদান স্ট্যাটাস মার্ক করুন (সকল অ্যাকাউন্টে দেখা যাবে)"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span className="hidden xs:inline">
@@ -253,7 +305,7 @@ export const VoterCard: React.FC<VoterCardProps> = ({
                   ? 'bg-amber-400/20 text-amber-500'
                   : 'bg-[var(--md-surface-container-high)] text-[var(--md-on-surface-variant)]'
               }`}
-              title="বুকমার্ক করুন"
+              title="বুকমার্ক করুন (সকল অ্যাকাউন্টে শেয়ার্ড)"
             >
               <Bookmark
                 className={`w-4 h-4 ${annotation?.starred ? 'fill-current' : ''}`}

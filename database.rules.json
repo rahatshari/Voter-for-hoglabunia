@@ -1,0 +1,44 @@
+{
+  "rules": {
+    "admin_emails": {
+      ".read": "auth != null && auth.token.email != null",
+      ".write": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)"
+    },
+    "app_config": {
+      ".read": "auth != null && auth.token.email != null",
+      ".write": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)"
+    },
+    "app_release": {
+      ".read": "auth != null && auth.token.email != null",
+      ".write": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)"
+    },
+    "shared_annotations": {
+      ".read": "auth != null && auth.token.email != null",
+      ".write": "auth != null && auth.token.email != null"
+    },
+    "users": {
+      ".read": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)",
+      "$emailKey": {
+        ".read": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase().replace('.', ',') === $emailKey || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))",
+        ".write": "auth != null && auth.token.email != null && ((auth.token.email.toLowerCase().replace('.', ',') === $emailKey && newData.exists() && (data.child('status').val() !== 'blocked' || newData.child('status').val() === 'blocked') && (newData.child('role').val() !== 'admin' || data.child('role').val() === 'admin')) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))"
+      }
+    },
+    "sessions": {
+      ".indexOn": ["email"],
+      ".read": "auth != null && auth.token.email != null && ((query.orderByChild === 'email' && query.equalTo === auth.token.email.toLowerCase()) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))",
+      "$sessionId": {
+        ".read": "auth != null && auth.token.email != null && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))",
+        ".write": "auth != null && auth.token.email != null && (((!data.exists() && newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (data.exists() && data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase() && (!newData.exists() || (newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase())))) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))"
+      }
+    },
+    "history": {
+      ".indexOn": ["email"],
+      ".read": "auth != null && auth.token.email != null && ((query.orderByChild === 'email' && query.equalTo === auth.token.email.toLowerCase()) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))",
+      ".write": "auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)",
+      "$histId": {
+        ".read": "auth != null && auth.token.email != null && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))",
+        ".write": "auth != null && auth.token.email != null && ((newData.exists() && newData.child('email').isString() && newData.child('email').val().toLowerCase() === auth.token.email.toLowerCase() && (!data.exists() || (data.child('email').isString() && data.child('email').val().toLowerCase() === auth.token.email.toLowerCase()))) || (auth != null && auth.token.email != null && (auth.token.email.toLowerCase() === 'rahatsharif10448@gmail.com' || auth.token.email.toLowerCase() === 'rahatsharif504@gmail.com' || root.child('admin_emails').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true)))"
+      }
+    }
+  }
+}

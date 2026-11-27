@@ -12,3 +12,7 @@ android/build/
 android/app/build/
 android/local.properties
 *.apk
+sessions.json
+admin_config.json
+users.json
+shared_annotations.json

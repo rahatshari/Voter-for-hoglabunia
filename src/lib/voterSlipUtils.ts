@@ -797,6 +797,7 @@ export function renderSlipCardByStyleHTML(
   config: CandidateProfile,
   colorMode: 'color' | 'bw' = 'bw'
 ): string {
+  const cs = config.customSettings || {};
   const style: SlipDesignStyle = config.designStyle || 'classic_voter_card';
   const fillMode: VoterInfoFillMode = config.voterInfoMode || 'auto';
   const candidateImg = resolveAssetUrl(config.candidatePhotoUrl || './candidate-ataur.jpg');
@@ -804,6 +805,36 @@ export function renderSlipCardByStyleHTML(
   const bwClass = colorMode === 'bw' ? 'bw-filter' : '';
   const suffix = config.candidateSuffix ?? 'কে';
   const voterDetailsHTML = renderVoterDetailsBlockHTML(voter, config, fillMode);
+
+  // VOTER-ONLY FULL-CARD MODE (প্রার্থীর তথ্য ছাড়া শুধুমাত্র ভোটারের তথ্য বড় ফন্টে প্রিন্ট)
+  if (cs.voterOnlyMode) {
+    const titleTxt =
+      cs.showElectionTitle !== false && config.electionTitle
+        ? config.electionTitle
+        : 'ভোটার তথ্য স্লিপ';
+    return `
+      <div class="slip-card style-classic-card ${bwClass}" style="padding:0;">
+        <div style="background:#000;color:#fff;padding:7px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div style="font-size:15px;font-weight:900;">${titleTxt}</div>
+          ${
+            cs.showSerial !== false
+              ? `<div style="background:#fff;color:#000;padding:2px 10px;font-size:16px;font-weight:900;border-radius:3px;">ক্রমিক: ${fillMode === 'blank' ? '..........' : voter.serialNo || '-'}</div>`
+              : ''
+          }
+        </div>
+        <div style="padding:10px 12px;font-size:15px;line-height:1.55;flex:1;display:flex;flex-direction:column;justify-content:space-around;">
+          ${voterDetailsHTML}
+        </div>
+        ${
+          cs.showFooter !== false
+            ? `<div class="classic-bottom-footer">
+                <div class="classic-foot-col classic-foot-center" style="width:100%;text-align:center;">${config.footerCenterText || DEFAULT_SLIP_FOOTER_TEXT}</div>
+              </div>`
+            : ''
+        }
+      </div>
+    `;
+  }
 
   // STYLE 1: CLASSIC VOTER CARD (Exact match to uploaded reference card!)
   if (style === 'classic_voter_card') {

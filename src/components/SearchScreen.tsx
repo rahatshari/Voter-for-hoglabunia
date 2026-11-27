@@ -14,6 +14,7 @@ import {
   CreditCard,
   Download,
   Hash,
+  Heart,
   History,
   LayoutGrid,
   List,
@@ -63,6 +64,7 @@ import {
   getRecentSearches,
   hasActiveSearchCriteria,
   toggleVoterStarred,
+  toggleVoterSupporter,
   toggleVoterVoted,
 } from '../lib/voterTrackerStore';
 import { useLockBodyScroll } from '../lib/useLockBodyScroll';
@@ -973,6 +975,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
           <button
             type="button"
+            onClick={() => toggleCampaignChip('supporter')}
+            className={`m3-chip ${search.campaignFilter === 'supporter' ? 'm3-chip-selected' : ''}`}
+          >
+            <Heart className="w-3.5 h-3.5 text-teal-600" />
+            <span>আমাদের সমর্থক</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => toggleCampaignChip('voted')}
             className={`m3-chip ${search.campaignFilter === 'voted' ? 'm3-chip-selected' : ''}`}
           >
@@ -1251,7 +1262,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 const res = toggleVoterStarred(v);
                 if (onAnnotationsChanged) onAnnotationsChanged();
                 showToast(
-                  res.starred ? 'বুকমার্ক তালিকায় যুক্ত হয়েছে' : 'বুকমার্ক সরানো হয়েছে'
+                  res.starred
+                    ? '⭐ বুকমার্কে যুক্ত হয়েছে (সকল অ্যাকাউন্টে দেখা যাবে)'
+                    : 'বুকমার্ক সরানো হয়েছে'
+                );
+              }}
+              onToggleSupporter={(v) => {
+                const res = toggleVoterSupporter(v);
+                if (onAnnotationsChanged) onAnnotationsChanged();
+                showToast(
+                  res.isSupporter
+                    ? '💚 আমাদের সমর্থক তালিকায় যুক্ত হয়েছে (সকল অ্যাকাউন্টে শেয়ার্ড)'
+                    : 'সমর্থক মার্ক সরানো হয়েছে'
                 );
               }}
               onToggleVoted={(v) => {
@@ -1259,7 +1281,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 if (onAnnotationsChanged) onAnnotationsChanged();
                 showToast(
                   res.voted
-                    ? 'ভোট সম্পন্ন হিসেবে চিহ্নিত!'
+                    ? '✅ ভোট সম্পন্ন হিসেবে চিহ্নিত (সকল অ্যাকাউন্টে আপডেটেড)!'
                     : 'ভোট মার্ক মুছে ফেলা হয়েছে'
                 );
               }}

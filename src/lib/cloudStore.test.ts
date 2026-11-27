@@ -3,6 +3,10 @@ import assert from 'node:assert';
 import {
   encodeEmailKey,
   decodeEmailKey,
+  encodeVoterRtdbKey,
+  decodeVoterRtdbKey,
+  getUserAccessOverrideFromConfig,
+  computeEffectiveUserAccess,
   DEFAULT_ADMIN_EMAILS,
   SECURE_RTDB_RULES_JSON,
   parseCloudHistorySnapshot,
@@ -24,7 +28,7 @@ test('DEFAULT_ADMIN_EMAILS contains primary admin emails', () => {
   assert.ok(DEFAULT_ADMIN_EMAILS.includes('rahatsharif504@gmail.com'));
 });
 
-test('SECURE_RTDB_RULES_JSON is valid JSON with no root read/write and scoped email indexes', () => {
+test('SECURE_RTDB_RULES_JSON is valid JSON with no root read/write and includes shared_annotations', () => {
   const parsed = JSON.parse(SECURE_RTDB_RULES_JSON);
   assert.ok(parsed && parsed.rules);
   assert.strictEqual(parsed.rules['.read'], undefined);
@@ -33,6 +37,74 @@ test('SECURE_RTDB_RULES_JSON is valid JSON with no root read/write and scoped em
   assert.deepStrictEqual(parsed.rules.history['.indexOn'], ['email']);
   assert.ok(parsed.rules.users.$emailKey['.write'].includes("status').val() !== 'blocked'"));
   assert.ok(parsed.rules.history.$histId['.write'].includes('newData.exists()'));
+  assert.strictEqual(
+    parsed.rules.shared_annotations['.read'],
+    'auth != null && auth.token.email != null'
+  );
+  assert.strictEqual(
+    parsed.rules.shared_annotations['.write'],
+    'auth != null && auth.token.email != null'
+  );
+});
+
+test('encodeVoterRtdbKey and decodeVoterRtdbKey safely round-trip Bengali voter keys with punctuation', () => {
+  const original = 'হোগলাবুনিয়া::০০১::১৯৭৫.২৬৯/২০#৩$১[ক]';
+  const encoded = encodeVoterRtdbKey(original);
+  assert.ok(!/[.#$/[\]]/.test(encoded));
+  assert.strictEqual(decodeVoterRtdbKey(encoded), original);
+});
+
+test('computeEffectiveUserAccess enforces per-Gmail village locks and per-Gmail slip print restrictions while exempting admins', () => {
+  const cfg: any = {
+    maintenanceMode: false,
+    maintenanceMessage: '',
+    announcementEnabled: false,
+    announcementText: '',
+    enforceSingleDevice: true,
+    allowSlipPrint: true,
+    disabledVillages: ['ছোট বাদুরা'],
+    userAccessOverrides: {
+      'worker1@gmail,com': {
+        email: 'worker1@gmail.com',
+        allowSlipPrint: false,
+        disabledVillages: ['পাঠামারা', 'হোগলাবুনিয়া'],
+      },
+    },
+  };
+
+  const w1Override = getUserAccessOverrideFromConfig(cfg, 'worker1@gmail.com');
+  assert.strictEqual(w1Override.allowSlipPrint, false);
+  assert.deepStrictEqual(w1Override.disabledVillages, ['পাঠামারা', 'হোগলাবুনিয়া']);
+
+  const w1Effective = computeEffectiveUserAccess({
+    isAdmin: false,
+    appConfig: cfg,
+    userEmail: 'worker1@gmail.com',
+  });
+  assert.strictEqual(w1Effective.allowSlipPrint, false);
+  assert.deepStrictEqual(w1Effective.disabledVillages, [
+    'ছোট বাদুরা',
+    'পাঠামারা',
+    'হোগলাবুনিয়া',
+  ]);
+
+  // Another user without override keeps slip print enabled and only inherits global disabledVillages
+  const w2Effective = computeEffectiveUserAccess({
+    isAdmin: false,
+    appConfig: cfg,
+    userEmail: 'worker2@gmail.com',
+  });
+  assert.strictEqual(w2Effective.allowSlipPrint, true);
+  assert.deepStrictEqual(w2Effective.disabledVillages, ['ছোট বাদুরা']);
+
+  // Admin always retains full access
+  const adminEffective = computeEffectiveUserAccess({
+    isAdmin: true,
+    appConfig: cfg,
+    userEmail: 'worker1@gmail.com',
+  });
+  assert.strictEqual(adminEffective.allowSlipPrint, true);
+  assert.deepStrictEqual(adminEffective.disabledVillages, []);
 });
 
 test('parseCloudHistorySnapshot parses all historical Firebase RTDB records without truncation', () => {
@@ -118,4 +190,3 @@ test('buildAdminDataFromSnapshots merges users, active sessions, unlimited histo
   assert.strictEqual(w1?.isOnline, true);
   assert.strictEqual(data.appConfig?.announcementEnabled, true);
 });
-

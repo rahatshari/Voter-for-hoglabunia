@@ -1238,6 +1238,52 @@ app.post('/api/admin/config/app', (req: Request, res: Response) => {
   res.json({ success: true, appConfig });
 });
 
+// Shared Multi-Account Voter Bookmarks, Supporters & Voted Store
+const SHARED_ANNOTATIONS_FILE = path.join(__dirname, 'shared_annotations.json');
+let sharedAnnotations: Record<string, any> = {};
+try {
+  if (fs.existsSync(SHARED_ANNOTATIONS_FILE)) {
+    const parsed = JSON.parse(fs.readFileSync(SHARED_ANNOTATIONS_FILE, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      sharedAnnotations = parsed;
+    }
+  }
+} catch {}
+
+function saveSharedAnnotationsToDisk() {
+  try {
+    fs.writeFileSync(SHARED_ANNOTATIONS_FILE, JSON.stringify(sharedAnnotations, null, 2), 'utf8');
+  } catch {}
+}
+
+app.get('/api/shared-annotations', (_req: Request, res: Response) => {
+  res.json({ success: true, annotations: sharedAnnotations });
+});
+
+app.post('/api/shared-annotations', (req: Request, res: Response) => {
+  const key = String(req.body?.key || '').trim();
+  const annotation = req.body?.annotation ?? null;
+  if (!key) {
+    return res.status(400).json({ error: 'key required' });
+  }
+  if (!annotation) {
+    delete sharedAnnotations[key];
+  } else {
+    sharedAnnotations[key] = annotation;
+  }
+  saveSharedAnnotationsToDisk();
+  res.json({ success: true });
+});
+
+app.post('/api/shared-annotations/batch', (req: Request, res: Response) => {
+  const incoming = req.body?.annotations;
+  if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+    sharedAnnotations = { ...sharedAnnotations, ...incoming };
+    saveSharedAnnotationsToDisk();
+  }
+  res.json({ success: true });
+});
+
 // Serve static assets from public/ and villages/
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/villages', express.static(path.join(__dirname, 'villages')));

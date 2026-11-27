@@ -46,9 +46,12 @@ import {
   cloudEndSession,
   cloudHeartbeat,
   cloudRegisterSession,
+  computeEffectiveUserAccess,
   getCloudAdminEmails,
   listenForSessionTermination,
+  pushBatchSharedVoterAnnotations,
   subscribeAppGlobalConfig,
+  subscribeSharedVoterAnnotations,
 } from './lib/cloudStore';
 import { isEmailAdmin } from './lib/adminUtils';
 import { hasValidVillagesData } from './lib/offlineVoterCache';
@@ -60,6 +63,8 @@ import {
 import {
   computeTrackerSummary,
   loadVoterAnnotations,
+  setTrackerCurrentUserEmail,
+  syncCloudVoterAnnotationsToLocal,
 } from './lib/voterTrackerStore';
 import { getSlipQueue } from './lib/voterSlipUtils';
 import { safeLocalGet, safeLocalRemove, safeLocalSet } from './lib/safeStorage';
@@ -237,20 +242,73 @@ export const App: React.FC = () => {
     };
   }, [refreshAnnotations, refreshSlipQueue]);
 
-  // Granular Admin Controls: Effective Slip Print & Accessible Villages
-  const effectiveAllowSlipPrint = isAdmin || appConfig.allowSlipPrint !== false;
+  const [sharedRulesNeeded, setSharedRulesNeeded] = useState(false);
+  const [sharedSyncSource, setSharedSyncSource] = useState<'firebase' | 'server' | 'local'>('local');
+  const hasMigratedLocalSharedRef = useRef(false);
+
+  // Sync active user email to tracker & subscribe to shared multi-account voter bookmarks/supporters/voted
+  useEffect(() => {
+    setTrackerCurrentUserEmail(currentUser?.email || null);
+    if (!currentUser?.email) {
+      hasMigratedLocalSharedRef.current = false;
+      setSharedRulesNeeded(false);
+      return;
+    }
+
+    const unsubShared = subscribeSharedVoterAnnotations(
+      (cloudMap, source) => {
+        setSharedSyncSource(source);
+        if (!hasMigratedLocalSharedRef.current) {
+          hasMigratedLocalSharedRef.current = true;
+          const localMap = loadVoterAnnotations();
+          const localOnly: Record<string, VoterAnnotation> = {};
+          for (const [k, v] of Object.entries(localMap)) {
+            if (v && !cloudMap[k]) {
+              localOnly[k] = {
+                ...v,
+                updatedBy: v.updatedBy || currentUser.email || '',
+              };
+            }
+          }
+          if (Object.keys(localOnly).length > 0) {
+            const merged = { ...localOnly, ...cloudMap };
+            setAnnotationsMap(syncCloudVoterAnnotationsToLocal(merged));
+            pushBatchSharedVoterAnnotations(localOnly).catch(() => null);
+            return;
+          }
+        }
+        setAnnotationsMap(syncCloudVoterAnnotationsToLocal(cloudMap));
+      },
+      (needed) => setSharedRulesNeeded(needed)
+    );
+
+    return () => {
+      try {
+        unsubShared();
+      } catch {}
+    };
+  }, [currentUser?.email]);
+
+  // Granular Admin Controls (Global + Per-Gmail Override): Effective Slip Print & Accessible Villages
+  const effectiveAccess = useMemo(
+    () =>
+      computeEffectiveUserAccess({
+        isAdmin,
+        appConfig,
+        userEmail: currentUser?.email,
+      }),
+    [isAdmin, appConfig, currentUser?.email]
+  );
+
+  const effectiveAllowSlipPrint = effectiveAccess.allowSlipPrint;
+  const disabledVillagesList = effectiveAccess.disabledVillages;
 
   useEffect(() => {
     if (!effectiveAllowSlipPrint && isSlipModalOpen) {
       setIsSlipModalOpen(false);
-      showToast('ভোটার স্লিপ প্রিন্ট অপশনটি অ্যাডমিন কর্তৃক বন্ধ করা হয়েছে।');
+      showToast('ভোটার স্লিপ প্রিন্ট অপশনটি আপনার অ্যাকাউন্টের জন্য বন্ধ করা হয়েছে।');
     }
   }, [effectiveAllowSlipPrint, isSlipModalOpen, showToast]);
-
-  const disabledVillagesList = useMemo(
-    () => appConfig.disabledVillages || [],
-    [appConfig.disabledVillages]
-  );
 
   const accessibleVillagesData = useMemo(() => {
     if (isAdmin || disabledVillagesList.length === 0) return villagesData;
@@ -1060,7 +1118,7 @@ export const App: React.FC = () => {
     );
   }
 
-  const savedBadgeCount = trackerSummary.starredCount + trackerSummary.notesCount;
+  const savedBadgeCount = trackerSummary.annotatedCount;
 
   return (
     <div className="min-h-screen w-full m3-surface flex flex-col justify-start antialiased">
@@ -1134,6 +1192,9 @@ export const App: React.FC = () => {
               annotationsMap={annotationsMap}
               slipQueue={slipQueue}
               allowSlipPrint={effectiveAllowSlipPrint}
+              isAdmin={isAdmin}
+              sharedRulesNeeded={sharedRulesNeeded}
+              sharedSyncSource={sharedSyncSource}
               onAnnotationsChanged={refreshAnnotations}
               onSlipQueueChanged={refreshSlipQueue}
               onBackHome={handleBackToHome}

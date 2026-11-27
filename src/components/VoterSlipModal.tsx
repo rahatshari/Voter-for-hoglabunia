@@ -1126,9 +1126,85 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
         ))}
       </div>
 
-      {/* Sub-tab 1: Orientation, Paper Width, Borders, Swap, Fill Mode */}
+      {/* Sub-tab 1: Voter-Only Mode, B&W Toggle, Orientation, Paper Width, Borders, Swap, Fill Mode */}
       {customizeTab === 'layout' && (
         <div className="space-y-3">
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              স্লিপের ধরন (প্রার্থীসহ / শুধু ভোটারের তথ্য):
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => updateCustomSettings({ voterOnlyMode: false })}
+                className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                  !customSettings.voterOnlyMode
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-slate-50 text-slate-800 border-slate-200'
+                }`}
+              >
+                🗳️ প্রার্থীসহ পূর্ণ স্লিপ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  updateCustomSettings({
+                    voterOnlyMode: true,
+                    orientation: 'landscape',
+                  });
+                  showNotice('🪪 শুধু ভোটারের তথ্য (বড় ফুল-পেজ ল্যান্ডস্কেপ) চালু হয়েছে!');
+                }}
+                className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                  customSettings.voterOnlyMode
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-slate-50 text-slate-800 border-slate-200'
+                }`}
+              >
+                🪪 শুধু ভোটার তথ্য (ফুল-পেজ বড়)
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-extrabold text-slate-700 mb-1">
+              থার্মাল ও স্লিপ রঙের মোড (সাদাকালো / রঙিন):
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  updateCustomSettings({ thermalColorMode: 'bw' });
+                  handleUpdatePrintPrefs(pageLayoutMode, 'bw');
+                }}
+                className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                  (activePrintOption === 'bluetooth'
+                    ? customSettings.thermalColorMode
+                    : colorMode) === 'bw'
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-slate-50 text-slate-800 border-slate-200'
+                }`}
+              >
+                ⚫ সাদাকালো (B&amp;W)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  updateCustomSettings({ thermalColorMode: 'color' });
+                  handleUpdatePrintPrefs(pageLayoutMode, 'color');
+                }}
+                className={`py-2 px-2.5 rounded-xl border font-extrabold cursor-pointer transition ${
+                  (activePrintOption === 'bluetooth'
+                    ? customSettings.thermalColorMode
+                    : colorMode) === 'color'
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-slate-50 text-slate-800 border-slate-200'
+                }`}
+              >
+                🎨 রঙিন (Color)
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="block font-extrabold text-slate-700 mb-1">
               ১. প্রিন্ট ও প্রিভিউ অরিয়েন্টেশন (Portrait / Landscape):
@@ -1617,6 +1693,80 @@ export const VoterSlipModal: React.FC<VoterSlipModalProps> = ({
                   <span>🖨️</span>
                   <span>পেজ প্রিন্ট</span>
                 </button>
+
+                {/* Instant Candidate vs Voter-Only (Full-Page Large Landscape) Switcher */}
+                <div className="inline-flex rounded-xl bg-white border border-slate-200 p-0.5 text-[11px] sm:text-xs font-extrabold">
+                  <button
+                    type="button"
+                    onClick={() => updateCustomSettings({ voterOnlyMode: false })}
+                    className={`px-2 py-0.5 sm:py-1 rounded-lg cursor-pointer transition ${
+                      !customSettings.voterOnlyMode
+                        ? 'bg-emerald-700 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="প্রার্থীর ছবি ও নামসহ পূর্ণ ভোটার স্লিপ"
+                  >
+                    🗳️ প্রার্থীসহ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateCustomSettings({
+                        voterOnlyMode: true,
+                        orientation: 'landscape',
+                      });
+                      showNotice('🪪 শুধু ভোটার তথ্য (বড় ফুল-পেজ ল্যান্ডস্কেপ) চালু হয়েছে!');
+                    }}
+                    className={`px-2 py-0.5 sm:py-1 rounded-lg cursor-pointer transition ${
+                      customSettings.voterOnlyMode
+                        ? 'bg-amber-600 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="প্রার্থীর তথ্য ছাড়া শুধুমাত্র ভোটারের তথ্য বড় ফন্টে ফুল-পেজ ল্যান্ডস্কেপ প্রিন্ট"
+                  >
+                    🪪 শুধু ভোটার তথ্য
+                  </button>
+                </div>
+
+                {/* Instant Black & White vs Color Switcher (works in both Thermal & Page Print) */}
+                {!customSettings.voterOnlyMode && (
+                  <div className="inline-flex rounded-xl bg-white border border-slate-200 p-0.5 text-[11px] sm:text-xs font-extrabold">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateCustomSettings({ thermalColorMode: 'bw' });
+                        handleUpdatePrintPrefs(pageLayoutMode, 'bw');
+                      }}
+                      className={`px-2 py-0.5 sm:py-1 rounded-lg cursor-pointer transition ${
+                        (activePrintOption === 'bluetooth'
+                          ? customSettings.thermalColorMode
+                          : colorMode) === 'bw'
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="সাদাকালো প্রিন্ট ও প্রিভিউ"
+                    >
+                      ⚫ সাদাকালো
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateCustomSettings({ thermalColorMode: 'color' });
+                        handleUpdatePrintPrefs(pageLayoutMode, 'color');
+                      }}
+                      className={`px-2 py-0.5 sm:py-1 rounded-lg cursor-pointer transition ${
+                        (activePrintOption === 'bluetooth'
+                          ? customSettings.thermalColorMode
+                          : colorMode) === 'color'
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="রঙিন প্রিভিউ ও প্রিন্ট"
+                    >
+                      🎨 রঙিন
+                    </button>
+                  </div>
+                )}
 
                 {/* Instant Portrait vs Landscape Switcher */}
                 <div className="inline-flex rounded-xl bg-white border border-slate-200 p-0.5 text-[11px] sm:text-xs font-extrabold">

@@ -227,3 +227,50 @@ test('Recent searches deduplicate and preserve order', () => {
   addRecentSearch('জলিল');
   assert.deepEqual(getRecentSearches(), ['জলিল', 'তানজিলা']);
 });
+
+test('Shared supporter toggle records updatedBy email, villageName, and deduplicated annotatedCount', async () => {
+  const { setTrackerCurrentUserEmail, toggleVoterSupporter, syncCloudVoterAnnotationsToLocal } =
+    await import('./voterTrackerStore');
+  const { getActiveCandidate, renderSlipCardByStyleHTML } = await import('./voterSlipUtils');
+  const { resolveSlipCustomSettings } = await import('./thermalSlipRenderer');
+
+  clearAllVoterAnnotations();
+  setTrackerCurrentUserEmail('agent1@gmail.com');
+
+  const supRes = toggleVoterSupporter(sampleVoters[0]);
+  assert.equal(supRes.isSupporter, true);
+  const entry = Object.values(supRes.map)[0];
+  assert.equal(entry.updatedBy, 'agent1@gmail.com');
+  assert.equal(entry.villageName, 'পাঠামারা');
+
+  // Marking same voter as starred keeps annotatedCount === 1 (no double counting)
+  toggleVoterStarred(sampleVoters[0]);
+  const summary = computeTrackerSummary(sampleVoters);
+  assert.equal(summary.annotatedCount, 1);
+  assert.equal(summary.supporterCount, 1);
+  assert.equal(summary.starredCount, 1);
+
+  // Syncing cloud map updates local store cleanly
+  const synced = syncCloudVoterAnnotationsToLocal(supRes.map);
+  assert.equal(Object.keys(synced).length, 1);
+
+  // Verify thermal B&W and Voter-Only mode settings + HTML card omission of candidate name
+  const baseCand = getActiveCandidate();
+  const resolvedDefault = resolveSlipCustomSettings(baseCand);
+  assert.equal(resolvedDefault.thermalColorMode, 'bw');
+  assert.equal(resolvedDefault.voterOnlyMode, false);
+
+  const voterOnlyCand = {
+    ...baseCand,
+    candidateName: 'মোঃ আতাউর রহমান',
+    customSettings: {
+      ...resolvedDefault,
+      voterOnlyMode: true,
+      orientation: 'landscape' as const,
+    },
+  };
+  const html = renderSlipCardByStyleHTML(sampleVoters[0], voterOnlyCand, 'bw');
+  assert.equal(html.includes('আব্দুল জলিল শেখ'), true);
+  assert.equal(html.includes('মোঃ আতাউর রহমান'), false);
+});
+

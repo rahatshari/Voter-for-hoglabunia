@@ -28,8 +28,8 @@ export interface SupportTagMeta {
 export const SUPPORT_TAGS_META: SupportTagMeta[] = [
   {
     id: 'supporter',
-    label: 'নিশ্চিত সমর্থক',
-    shortLabel: 'সমর্থক',
+    label: 'আমাদের সমর্থক',
+    shortLabel: 'আমাদের সমর্থক',
     badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300',
   },
   {
@@ -57,6 +57,12 @@ export const SUPPORT_TAGS_META: SupportTagMeta[] = [
     badgeClass: 'bg-rose-100 text-rose-900 border-rose-300',
   },
 ];
+
+let activeTrackerUserEmail = '';
+
+export function setTrackerCurrentUserEmail(email?: string | null): void {
+  activeTrackerUserEmail = (email || '').trim().toLowerCase();
+}
 
 const memoryFallback: Record<string, string> = {};
 
@@ -97,6 +103,17 @@ export function saveVoterAnnotations(map: Record<string, VoterAnnotation>): void
   }
 }
 
+/**
+ * Applies incoming real-time shared annotations from Firebase RTDB / server
+ * without re-echoing writes back to the cloud.
+ */
+export function syncCloudVoterAnnotationsToLocal(
+  cloudMap: Record<string, VoterAnnotation>
+): Record<string, VoterAnnotation> {
+  saveVoterAnnotations(cloudMap || {});
+  return cloudMap || {};
+}
+
 export function getVoterAnnotation(
   voter: Voter,
   map?: Record<string, VoterAnnotation>
@@ -116,6 +133,8 @@ export function upsertVoterAnnotation(
     ...existing,
     ...patch,
     key,
+    villageName: voter.villageName || patch.villageName || existing.villageName || '',
+    updatedBy: patch.updatedBy || activeTrackerUserEmail || existing.updatedBy || '',
     updatedAt: Date.now(),
   };
 
@@ -134,6 +153,15 @@ export function upsertVoterAnnotation(
   }
 
   saveVoterAnnotations(map);
+
+  if (typeof window !== 'undefined') {
+    import('./cloudStore')
+      .then(({ pushSharedVoterAnnotation }) =>
+        pushSharedVoterAnnotation(key, isEmpty ? null : merged)
+      )
+      .catch(() => null);
+  }
+
   return map;
 }
 
@@ -146,6 +174,17 @@ export function toggleVoterStarred(voter: Voter): {
   const next = !Boolean(map[key]?.starred);
   const updated = upsertVoterAnnotation(voter, { starred: next });
   return { map: updated, starred: next };
+}
+
+export function toggleVoterSupporter(voter: Voter): {
+  map: Record<string, VoterAnnotation>;
+  isSupporter: boolean;
+} {
+  const map = loadVoterAnnotations();
+  const key = getVoterUniqueKey(voter);
+  const nextTag: SupportTagType = map[key]?.supportTag === 'supporter' ? '' : 'supporter';
+  const updated = upsertVoterAnnotation(voter, { supportTag: nextTag });
+  return { map: updated, isSupporter: nextTag === 'supporter' };
 }
 
 export function toggleVoterVoted(voter: Voter): {
@@ -200,6 +239,13 @@ export function importTrackerBackupJson(jsonText: string): {
       }
     }
     saveVoterAnnotations(merged);
+    if (typeof window !== 'undefined') {
+      import('./cloudStore')
+        .then(({ pushBatchSharedVoterAnnotations }) =>
+          pushBatchSharedVoterAnnotations(merged)
+        )
+        .catch(() => null);
+    }
     return { success: true, count };
   } catch {
     return { success: false, count: 0, error: 'ফাইলটি পড়া সম্ভব হয়নি' };
@@ -211,6 +257,7 @@ export function computeTrackerSummary(
   annotationsMap?: Record<string, VoterAnnotation>
 ) {
   const map = annotationsMap || loadVoterAnnotations();
+  let annotatedCount = 0;
   let starredCount = 0;
   let votedCount = 0;
   let notesCount = 0;
@@ -223,6 +270,13 @@ export function computeTrackerSummary(
     if (!isMig) totalActive++;
     const ann = map[getVoterUniqueKey(v)];
     if (!ann) continue;
+    const hasAny =
+      ann.starred ||
+      ann.voted ||
+      Boolean(ann.supportTag) ||
+      Boolean(ann.note && ann.note.trim()) ||
+      Boolean(ann.phone && ann.phone.trim());
+    if (hasAny) annotatedCount++;
     if (ann.starred) starredCount++;
     if (ann.voted) votedCount++;
     if ((ann.note && ann.note.trim()) || (ann.phone && ann.phone.trim())) notesCount++;
@@ -235,6 +289,7 @@ export function computeTrackerSummary(
 
   return {
     totalActive,
+    annotatedCount,
     starredCount,
     votedCount,
     notesCount,

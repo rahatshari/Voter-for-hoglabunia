@@ -135,6 +135,14 @@ export interface AppUserRecord {
   loginCount?: number;
 }
 
+export interface UserAccessOverride {
+  email: string;
+  allowSlipPrint?: boolean;
+  disabledVillages?: string[];
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 export interface AppGlobalConfig {
   maintenanceMode: boolean;
   maintenanceMessage: string;
@@ -143,6 +151,7 @@ export interface AppGlobalConfig {
   enforceSingleDevice: boolean;
   allowSlipPrint: boolean;
   disabledVillages?: string[];
+  userAccessOverrides?: Record<string, UserAccessOverride>;
   autoUpdateEnabled?: boolean;
   updatedAt?: number;
   updatedBy?: string;
@@ -224,6 +233,8 @@ export type SlipBorderStyle = 'solid' | 'double' | 'dashed' | 'none';
 export interface SlipCustomSettings {
   orientation?: SlipOrientation;
   paperWidthMm?: ThermalPaperWidthMm;
+  thermalColorMode?: 'bw' | 'color';
+  voterOnlyMode?: boolean;
   headerFontScale?: number;
   candidateFontScale?: number;
   voterFontScale?: number;
@@ -297,12 +308,14 @@ export type SupportTagType = 'supporter' | 'followup' | 'neutral' | 'away' | 'el
 
 export interface VoterAnnotation {
   key: string;
+  villageName?: string;
   starred?: boolean;
   voted?: boolean;
   votedAt?: number | null;
   supportTag?: SupportTagType;
   phone?: string;
   note?: string;
+  updatedBy?: string;
   updatedAt: number;
 }
 

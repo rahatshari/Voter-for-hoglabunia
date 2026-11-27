@@ -16,6 +16,8 @@ import {
   AppGlobalConfig,
   AppUserRecord,
   SessionHistoryItem,
+  UserAccessOverride,
+  VoterAnnotation,
 } from '../types';
 import {
   calculateAdminSummary,
@@ -59,6 +61,10 @@ export const SECURE_RTDB_RULES_JSON = JSON.stringify(
       app_release: {
         '.read': 'auth != null && auth.token.email != null',
         '.write': RTDB_IS_ADMIN_EXPR,
+      },
+      shared_annotations: {
+        '.read': 'auth != null && auth.token.email != null',
+        '.write': 'auth != null && auth.token.email != null',
       },
       users: {
         '.read': RTDB_IS_ADMIN_EXPR,
@@ -230,10 +236,32 @@ export async function saveCloudAppConfig(
 export function subscribeAppGlobalConfig(
   onUpdate: (cfg: AppGlobalConfig) => void
 ): Unsubscribe {
+  let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+  const fetchServerCfg = async () => {
+    try {
+      const res = await fetch('/api/admin/config/app');
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('application/json')) {
+        const json = await res.json();
+        if (json?.appConfig && typeof json.appConfig === 'object') {
+          const merged = { ...DEFAULT_APP_CONFIG, ...json.appConfig };
+          saveStoredAppConfig(merged);
+          onUpdate(merged);
+          return;
+        }
+      }
+    } catch {}
+    onUpdate(loadStoredAppConfig());
+  };
+
   const configRef = ref(database, 'app_config');
-  return onValue(
+  const unsub = onValue(
     configRef,
     (snap) => {
+      if (fallbackTimer) {
+        clearInterval(fallbackTimer);
+        fallbackTimer = null;
+      }
       if (snap.exists() && typeof snap.val() === 'object') {
         const merged = { ...DEFAULT_APP_CONFIG, ...snap.val() };
         saveStoredAppConfig(merged);
@@ -243,9 +271,19 @@ export function subscribeAppGlobalConfig(
       }
     },
     () => {
-      onUpdate(loadStoredAppConfig());
+      fetchServerCfg();
+      if (!fallbackTimer) {
+        fallbackTimer = setInterval(fetchServerCfg, 5000);
+      }
     }
   );
+
+  return () => {
+    try {
+      unsub();
+    } catch {}
+    if (fallbackTimer) clearInterval(fallbackTimer);
+  };
 }
 
 /**
@@ -1122,3 +1160,274 @@ export function listenForSessionTermination(
     if (unsubUser) unsubUser();
   };
 }
+
+// ============================================================================
+// PER-GMAIL GRANULAR ACCESS CONTROL (গ্রাম ও ভোটার স্লিপ প্রিন্ট পারমিশন)
+// ============================================================================
+
+export function getUserAccessOverrideFromConfig(
+  appConfig?: AppGlobalConfig | null,
+  email?: string | null
+): UserAccessOverride {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    return { email: '', allowSlipPrint: true, disabledVillages: [] };
+  }
+  const overrides = appConfig?.userAccessOverrides;
+  const encodedKey = encodeEmailKey(cleanEmail);
+  const raw = overrides?.[encodedKey] || overrides?.[cleanEmail];
+  return {
+    email: cleanEmail,
+    allowSlipPrint: raw?.allowSlipPrint !== false,
+    disabledVillages: Array.isArray(raw?.disabledVillages) ? raw.disabledVillages : [],
+    updatedAt: raw?.updatedAt,
+    updatedBy: raw?.updatedBy,
+  };
+}
+
+export function computeEffectiveUserAccess(params: {
+  isAdmin: boolean;
+  appConfig?: AppGlobalConfig | null;
+  userEmail?: string | null;
+}): {
+  allowSlipPrint: boolean;
+  disabledVillages: string[];
+  userOverride: UserAccessOverride;
+} {
+  const { isAdmin, appConfig, userEmail } = params;
+  const userOverride = getUserAccessOverrideFromConfig(appConfig, userEmail);
+  if (isAdmin) {
+    return {
+      allowSlipPrint: true,
+      disabledVillages: [],
+      userOverride,
+    };
+  }
+  const globalAllowSlip = appConfig?.allowSlipPrint !== false;
+  const globalDisabled = Array.isArray(appConfig?.disabledVillages)
+    ? appConfig!.disabledVillages!
+    : [];
+  const combinedDisabled = Array.from(
+    new Set([...globalDisabled, ...(userOverride.disabledVillages || [])])
+  );
+  return {
+    allowSlipPrint: globalAllowSlip && userOverride.allowSlipPrint !== false,
+    disabledVillages: combinedDisabled,
+    userOverride,
+  };
+}
+
+export async function saveCloudUserAccessOverride(
+  targetEmail: string,
+  patch: { allowSlipPrint?: boolean; disabledVillages?: string[] },
+  adminEmail?: string,
+  baseConfig?: AppGlobalConfig | null
+): Promise<AppGlobalConfig> {
+  const cleanTarget = targetEmail.trim().toLowerCase();
+  const encodedKey = encodeEmailKey(cleanTarget);
+  const currentCfg = baseConfig || loadStoredAppConfig();
+  const prevOverride = getUserAccessOverrideFromConfig(currentCfg, cleanTarget);
+
+  const nextOverride: UserAccessOverride = {
+    email: cleanTarget,
+    allowSlipPrint:
+      patch.allowSlipPrint !== undefined ? patch.allowSlipPrint : prevOverride.allowSlipPrint,
+    disabledVillages:
+      patch.disabledVillages !== undefined
+        ? Array.from(new Set(patch.disabledVillages))
+        : prevOverride.disabledVillages || [],
+    updatedAt: Date.now(),
+    updatedBy: adminEmail || auth.currentUser?.email || '',
+  };
+
+  const isDefaultClean =
+    nextOverride.allowSlipPrint !== false &&
+    (!nextOverride.disabledVillages || nextOverride.disabledVillages.length === 0);
+
+  const nextOverridesMap: Record<string, UserAccessOverride> = {
+    ...(currentCfg.userAccessOverrides || {}),
+  };
+
+  if (isDefaultClean) {
+    delete nextOverridesMap[encodedKey];
+    delete nextOverridesMap[cleanTarget];
+  } else {
+    nextOverridesMap[encodedKey] = nextOverride;
+  }
+
+  const nextCfg: AppGlobalConfig = {
+    ...DEFAULT_APP_CONFIG,
+    ...currentCfg,
+    userAccessOverrides: nextOverridesMap,
+    updatedAt: Date.now(),
+    updatedBy: adminEmail || auth.currentUser?.email || '',
+  };
+
+  saveStoredAppConfig(nextCfg);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('voter_app_config_changed', { detail: nextCfg }));
+  }
+
+  // Persist to Express server fallback if running in local/preview environment
+  fetch('/api/admin/config/app', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(adminEmail ? { 'x-admin-email': adminEmail } : {}),
+    },
+    body: JSON.stringify({ adminEmail, appConfig: nextCfg }),
+  }).catch(() => null);
+
+  // Atomic per-user write in Firebase RTDB under app_config/userAccessOverrides/<emailKey>
+  try {
+    if (isDefaultClean) {
+      await remove(ref(database, `app_config/userAccessOverrides/${encodedKey}`));
+    } else {
+      await set(ref(database, `app_config/userAccessOverrides/${encodedKey}`), nextOverride);
+    }
+  } catch (err) {
+    console.warn('Cloud user access override notice:', err);
+  }
+
+  return nextCfg;
+}
+
+// ============================================================================
+// SHARED MULTI-ACCOUNT VOTER BOOKMARKS, SUPPORTERS & VOTED SYNC (/shared_annotations)
+// ============================================================================
+
+export function encodeVoterRtdbKey(voterKey: string): string {
+  return encodeURIComponent(voterKey)
+    .replace(/\./g, '%2E')
+    .replace(/!/g, '%21')
+    .replace(/\*/g, '%2A')
+    .replace(/'/g, '%27')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29');
+}
+
+export function decodeVoterRtdbKey(rtdbKey: string): string {
+  try {
+    return decodeURIComponent(rtdbKey);
+  } catch {
+    return rtdbKey;
+  }
+}
+
+export async function pushSharedVoterAnnotation(
+  voterKey: string,
+  annotation: VoterAnnotation | null
+): Promise<void> {
+  const safeKey = encodeVoterRtdbKey(voterKey);
+
+  // Sync with Express server fallback (for Preview / multi-tab instant sync)
+  fetch('/api/shared-annotations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: voterKey, annotation }),
+  }).catch(() => null);
+
+  try {
+    if (!annotation) {
+      await remove(ref(database, `shared_annotations/${safeKey}`));
+    } else {
+      await set(ref(database, `shared_annotations/${safeKey}`), annotation);
+    }
+  } catch {
+    // Handled gracefully if offline or rules pending
+  }
+}
+
+export async function pushBatchSharedVoterAnnotations(
+  map: Record<string, VoterAnnotation>
+): Promise<void> {
+  fetch('/api/shared-annotations/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ annotations: map }),
+  }).catch(() => null);
+
+  try {
+    const payload: Record<string, VoterAnnotation> = {};
+    for (const [k, v] of Object.entries(map)) {
+      if (v && typeof v === 'object') {
+        payload[encodeVoterRtdbKey(k)] = v;
+      }
+    }
+    if (Object.keys(payload).length > 0) {
+      await update(ref(database, 'shared_annotations'), payload);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function subscribeSharedVoterAnnotations(
+  onUpdate: (map: Record<string, VoterAnnotation>, source: 'firebase' | 'server') => void,
+  onRulesNeeded?: (needed: boolean) => void
+): Unsubscribe {
+  let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+  let rtdbConnected = false;
+
+  const fetchServerFallback = async () => {
+    try {
+      const res = await fetch('/api/shared-annotations');
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('application/json')) {
+        const json = await res.json();
+        if (json?.annotations && typeof json.annotations === 'object') {
+          onUpdate(json.annotations, 'server');
+        }
+      }
+    } catch {
+      // Static/APK host without Express
+    }
+  };
+
+  const sharedRef = ref(database, 'shared_annotations');
+  const unsubRtdb = onValue(
+    sharedRef,
+    (snap) => {
+      rtdbConnected = true;
+      onRulesNeeded?.(false);
+      if (fallbackInterval) {
+        clearInterval(fallbackInterval);
+        fallbackInterval = null;
+      }
+      const parsed: Record<string, VoterAnnotation> = {};
+      if (snap.exists() && typeof snap.val() === 'object') {
+        for (const [rawKey, val] of Object.entries(snap.val() as Record<string, any>)) {
+          if (val && typeof val === 'object') {
+            const origKey = String(val.key || decodeVoterRtdbKey(rawKey));
+            parsed[origKey] = {
+              ...(val as VoterAnnotation),
+              key: origKey,
+              updatedAt: Number(val.updatedAt || Date.now()),
+            };
+          }
+        }
+      }
+      onUpdate(parsed, 'firebase');
+    },
+    (err) => {
+      const msg = String(err?.message || '').toLowerCase();
+      if (msg.includes('permission_denied') || msg.includes('permission denied')) {
+        onRulesNeeded?.(true);
+      }
+      if (!rtdbConnected) {
+        fetchServerFallback();
+        if (!fallbackInterval) {
+          fallbackInterval = setInterval(fetchServerFallback, 4000);
+        }
+      }
+    }
+  );
+
+  return () => {
+    try {
+      unsubRtdb();
+    } catch {}
+    if (fallbackInterval) clearInterval(fallbackInterval);
+  };
+}
+
